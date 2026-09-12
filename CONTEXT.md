@@ -92,3 +92,18 @@ Bir istemcinin kullanıcı girdisi ve boyut gönderebilmesi için geçici kontro
 
 **Archive**:
 Çalışma kaydını aktif taramadan kaldırıp daha sonra bulunabilir tutma. Worktree veya branch temizliği değildir.
+
+**Doğrulanmış durdurma**:
+Süreç grubunun gerçekten bittiğinin kanıtlandığı durdurma. Liderin çıkması yetmez, grubun boşaldığı ayrıca sorgulanır; süre dolması başarı sayılmaz. Doğrulanmamış durdurmadan sonra yeni Run başlamaz ve silme yapılmaz.
+_Avoid_: kill, timeout ile durdurma
+
+**Kalan süreç grubu**:
+Lideri çıkmış ama içinde hâlâ süreç bulunan bir Run'ın süreç grubu. Kaydı düşerse kalan çocuklar durdurulamaz; yeniden sinyal göndermeden önce pid'in yeniden kullanılmadığı doğrulanır.
+_Avoid_: zombi, orphaned
+
+**Tek yazar kilidi**:
+Canonical veri dizinine bağlı, daemon'ın state'e dokunmadan önce aldığı kilit. Aynı veri dizinini farklı porttan veya symlink alias'ından açan ikinci daemon reddedilir.
+
+**Silme onayı**:
+Kullanıcının ne silineceğini gördükten sonra üretilen, süreli ve daemon ömrüne bağlı onay. Session ve Run kimliği, çalışma dizininin kimliği ve içerik durumuna bağlanır; bunlardan biri değişmişse onay eskimiştir ve silme yapılmaz.
+_Avoid_: force delete, onay bayrağı

@@ -4,21 +4,35 @@ import { Sidebar } from './components/Sidebar'
 import { TerminalPane } from './components/TerminalPane'
 import { DiffView } from './components/DiffView'
 import { NewSessionDialog } from './components/NewSessionDialog'
-import type { AgentKind, AppState, Isolation, Project } from '../shared/types'
+import type { Isolation, Project, StateResponse } from '../shared/types'
+
+const EMPTY: StateResponse = {
+  protocolVersion: 2,
+  daemonId: '',
+  revision: 0,
+  serverNow: 0,
+  projects: [],
+  sessions: [],
+  serviceError: null,
+}
 
 export function App() {
-  const [state, setState] = useState<AppState>({ projects: [], sessions: [] })
+  const [state, setState] = useState<StateResponse>(EMPTY)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [tab, setTab] = useState<'terminal' | 'diff'>('terminal')
-  const [epochs, setEpochs] = useState<Record<string, number>>({})
   const [dialogProject, setDialogProject] = useState<Project | null>(null)
-  const [pendingDelete, setPendingDelete] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<api.DeletePreview | null>(null)
+  const [orphans, setOrphans] = useState<api.OrphanScanResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = () => api.getState().then(setState).catch((e) => setError(e.message))
 
+  // Yetim keşfi salt okunurdur ve poll edilmez: açılışta ve istenince okunur.
+  const refreshOrphans = () => api.getOrphanWorktrees().then(setOrphans).catch(() => setOrphans(null))
+
   useEffect(() => {
     refresh()
+    refreshOrphans()
     const timer = setInterval(refresh, 2000)
     return () => clearInterval(timer)
   }, [])
@@ -30,7 +44,7 @@ export function App() {
     promise.then(refresh).catch((e) => setError(e.message))
   }
 
-  const createSession = (input: { name: string; agent: AgentKind; isolation: Isolation }) => {
+  const createSession = (input: { name: string; command: string | null; isolation: Isolation }) => {
     if (!dialogProject) return
     setError(null)
     api
@@ -44,27 +58,37 @@ export function App() {
       .catch((e) => setError(e.message))
   }
 
-  const restart = () => {
+  // Silme her zaman taze bir önizlemeyle başlar: kullanıcı neyin gideceğini görür.
+  const askDelete = () => {
     if (!active) return
-    const id = active.id
     setError(null)
-    // Epoch'u önceden artırırsak terminal, yeni PTY daha doğmadan bağlanmaya
-    // çalışır; sunucu "canlı değil" deyip kapatır ve pane kalıcı olarak ölür.
-    // Önce API bitsin, sonra remount.
     api
-      .restartSession(id)
-      .then(() => {
-        setEpochs((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }))
-        return refresh()
-      })
+      .previewSessionDelete(active.id)
+      .then(setPendingDelete)
       .catch((e) => setError(e.message))
   }
 
-  const remove = (deleteBranch: boolean) => {
-    if (!active) return
-    setPendingDelete(false)
-    setActiveId(null)
-    run(api.deleteSession(active.id, deleteBranch))
+  const confirmDelete = () => {
+    if (!active || !pendingDelete) return
+    const sessionId = active.id
+    const token = pendingDelete.confirmationToken
+    setPendingDelete(null)
+    setError(null)
+    api
+      .deleteSession(sessionId, token)
+      .then(() => {
+        setActiveId(null)
+        refreshOrphans()
+        return refresh()
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e))
+        // Onay eskidiyse oturum durmuş kalır ve yeni bir önizleme sunulur.
+        if (e instanceof api.ApiCallError && e.code === 'confirmation_stale') {
+          api.previewSessionDelete(sessionId).then(setPendingDelete).catch(() => setPendingDelete(null))
+        }
+        return refresh()
+      })
   }
 
   return (
@@ -74,11 +98,13 @@ export function App() {
         activeId={activeId}
         onSelect={(id) => {
           setActiveId(id)
-          setPendingDelete(false)
+          setPendingDelete(null)
         }}
         onNewSession={setDialogProject}
         onAddProject={(path) => run(api.addProject(path))}
         onDeleteProject={(id) => run(api.deleteProject(id))}
+        orphans={orphans}
+        onRefreshOrphans={refreshOrphans}
       />
 
       <main className="main">
@@ -104,21 +130,30 @@ export function App() {
               <div className="topbar-actions">
                 {pendingDelete ? (
                   <>
-                    <span className="muted">sil:</span>
-                    <button onClick={() => remove(false)}>oturum</button>
-                    <button onClick={() => remove(true)}>oturum + branch</button>
-                    <button onClick={() => setPendingDelete(false)}>vazgeç</button>
+                    <span className="muted" title={pendingDelete.cwd}>
+                      {pendingDelete.changedEntries > 0
+                        ? `${pendingDelete.changedEntries} değişiklikle birlikte klasörü sil?`
+                        : 'klasörü sil?'}
+                    </span>
+                    <button onClick={confirmDelete}>sil (branch kalır)</button>
+                    <button onClick={() => setPendingDelete(null)}>vazgeç</button>
                   </>
                 ) : (
                   <>
-                    <button onClick={restart}>yeniden başlat</button>
-                    <button onClick={() => setPendingDelete(true)}>sil</button>
+                    {active.lifecycle === 'live' && (
+                      <button onClick={() => run(api.stopSession(active.id, active.runId))}>durdur</button>
+                    )}
+                    <button onClick={() => run(api.restartSession(active.id, active.runId))}>
+                      {active.lifecycle === 'live' ? 'durdur ve yeniden çalıştır' : 'yeniden çalıştır'}
+                    </button>
+                    <button onClick={askDelete}>sil</button>
                   </>
                 )}
               </div>
             </header>
 
             {error && <div className="error">{error}</div>}
+            {state.serviceError && <div className="error">{state.serviceError}</div>}
 
             <div className="body">
               {/* Tüm terminaller mount'ta kalır; sadece aktif olan görünür.
@@ -129,7 +164,6 @@ export function App() {
                     key={session.id}
                     session={session}
                     active={session.id === activeId && tab === 'terminal'}
-                    epoch={epochs[session.id] ?? 0}
                   />
                 ))}
               </div>
@@ -139,7 +173,9 @@ export function App() {
         ) : (
           <div className="empty">
             {error && <div className="error">{error}</div>}
-            <p>Soldan bir proje ekle, sonra <strong>+</strong> ile oturum başlat.</p>
+            <p>
+              Soldan bir proje ekle, sonra <strong>+</strong> ile oturum başlat.
+            </p>
           </div>
         )}
       </main>

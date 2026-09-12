@@ -2,17 +2,15 @@ import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import type { Session } from '../../shared/types'
+import type { SessionView } from '../../shared/types'
 import { TOKEN } from '../api'
 
 interface Props {
-  session: Session
+  session: SessionView
   active: boolean
-  /** Yeniden başlatmada artar; terminal ve WS'i sıfırdan kurmayı tetikler. */
-  epoch: number
 }
 
-export function TerminalPane({ session, active, epoch }: Props) {
+export function TerminalPane({ session, active }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -30,6 +28,17 @@ export function TerminalPane({ session, active, epoch }: Props) {
     term.open(hostRef.current!)
     termRef.current = term
     fitRef.current = fit
+
+    if (session.lifecycle !== 'live') {
+      // Kayıtlı terminal görüntüsü (checkpoint) uygulama sırası §8/3'te gelir;
+      // o zamana kadar "önceki görüntü yok" denir, sahte ekran kurulmaz.
+      term.write(
+        '\x1b[90m[bu Run canlı değil; önceki terminal görüntüsü henüz saklanmıyor]\x1b[0m\r\n',
+      )
+      return () => {
+        term.dispose()
+      }
+    }
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${proto}://${location.host}/ws?session=${session.id}&token=${TOKEN}`
@@ -94,7 +103,7 @@ export function TerminalPane({ session, active, epoch }: Props) {
       ws?.close()
       term.dispose()
     }
-  }, [session.id, epoch])
+  }, [session.id, session.runId, session.lifecycle])
 
   // Gizliyken ölçüm yanlış çıkar; görünür olunca yeniden boyutla.
   useEffect(() => {

@@ -100,6 +100,12 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .session-row.active { background: var(--panel-2); border-color: var(--accent); }
 .session-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-agent { font-size: 10px; color: var(--muted); }
+.dialog-note { font-size: 11px; line-height: 1.5; margin: 0; }
+.orphans { border-top: 1px solid var(--line, #21262d); padding-bottom: 4px; }
+.orphan-row {
+  display: flex; gap: 6px; align-items: center; padding: 3px 10px;
+  font-size: 10px; color: var(--muted); word-break: break-all;
+}
 .badge {
   font-size: 9px;
   color: var(--accent);
@@ -108,8 +114,9 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   padding: 0 4px;
 }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.dot.running { background: var(--green); }
+.dot.live { background: var(--green); }
 .dot.exited { background: var(--muted); }
+.dot.orphaned { background: var(--yellow, #d6a75c); }
 
 .add-project {
   display: flex;

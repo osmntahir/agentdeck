@@ -2,7 +2,9 @@
 
 Revizyon: 2.2 — 12 Eylül 2026. **Durum: tasarım kararları kapandı ve terminal temsili ölçümle doğrulandı. Açık kalan tek şey insan onayı gerektiren CLI kabul testidir (G2); ürün kabulü (G3/G4) yapılmadı. Hatasız ürün iddiası yoktur.** [Wayfinder haritası](https://github.com/osmntahir/agentdeck/issues/1), [doğrulama kapıları](agentdeck-v0-validation-gates.md).
 
-Bu belge güncel normatif sözleşmedir; ADR'ler gerekçeyi, araştırmalar tarihli kanıtı taşır. Eski GitHub resolution yorumları tarihçedir; çelişen önceki hükümler bu revizyonla yürürlükten kalkar. İki incelemedeki 15 bulgunun karşılığı [revizyon kaydında](../reviews/2026-09-12-decision-reconciliation.md); terminal kararlarının ölçüm kanıtı [doğrulama notunda](../research/terminal-state-validation.md). Ürün kodu bu belgeyle değişmiş sayılmaz.
+Bu belge güncel normatif sözleşmedir; ADR'ler gerekçeyi, araştırmalar tarihli kanıtı taşır. Eski GitHub resolution yorumları tarihçedir; çelişen önceki hükümler bu revizyonla yürürlükten kalkar. İki incelemedeki 15 bulgunun karşılığı [revizyon kaydında](../reviews/2026-09-12-decision-reconciliation.md); terminal kararlarının ölçüm kanıtı [doğrulama notunda](../research/terminal-state-validation.md).
+
+**Uygulama durumu:** §8'in **1. dilimi** (güvenilir tek Session) ürün koduna girdi ve G3'ün üç maddesi otomatik testle kapandı; dilimin sınırları ve bilinçli daraltmaları [ADR 0007](../adr/0007-slice-1-implementation-boundaries.md)'de. Belgenin geri kalanı hâlâ sözleşmedir, uygulanmış değildir.
 
 ## 1. Hedef ve kapsam
 
@@ -167,7 +169,7 @@ State schemaVersion:2. V0 eski agent/status kaydı veya schemaVersion:1 yalnız 
 
 ## 8. Uygulama sırası ve kabul
 
-1. Güvenilir tek Session: schema, tek sahiplik, lifecycle/Run, stop doğrulaması, dosya koruma, salt okunur orphan keşfi.
+1. Güvenilir tek Session: schema, tek sahiplik, lifecycle/Run, stop doğrulaması, dosya koruma, salt okunur orphan keşfi. **Uygulandı** (12 Eylül 2026); iki hüküm §8/4'e daraltıldı: silme onayının içerik fingerprint'i ve kademeli proje silme ([ADR 0007](../adr/0007-slice-1-implementation-boundaries.md)).
 2. Gerçek bir worktree'de insanın CLI trust/auth ekranını tamamladığı ilk kullanım; onay öncesi stop ve aynı dosyalarda fresh tekrar. Bu test shell/environment ve restart çıkmazını erken yakalar.
 3. Headless terminal/snapshot/preview/encoding ve kontrol yanıtları. Tasarım kapısı (G1) ölçümle kapandı; burada yapılacak iş uygulamadır: terminal-state worker'ı, güvenli kesim tarayıcısı, sorgu ayıklama, iki katmanlı replay ve checkpoint.
 4. Çalışma diff'i/baseCommit, aynı cwd'de açık launch, arşiv ve branch bulma; sınırlı/safe delete.
