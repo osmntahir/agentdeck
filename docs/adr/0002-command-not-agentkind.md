@@ -1,0 +1,7 @@
+# Command niyeti korur; CLI yetenekleri dar ve açık kalır
+
+Durum: accepted — 2026-09-12 revizyonu. Genel komuta exec öneki veya otomatik kimlik bayrağı ekleme tarifi yürürlükten kaldırıldı.
+
+Session Command string|null tutar; preset kimliği taşımaz. Genel string Bash programı olarak aynen çalışır. Küçük LaunchPolicy modülü yalnız izin listesindeki tam çağrılara ek konuşma eylemleri sunar; genel kabuk programını parçalı dönüştürmez. V0 izin listesi yalnız argümansız, env/wrapper/yönlendirme içermeyen literal claude, gemini veya codex çağrısıdır. Bayraklı komutlar, mutlak yol veya alias dahil diğerleri geçerli serbest komut olarak aynen çalışır; destekleri CLI özellikleriyle zaman içinde açıkça genişletilebilir.
+
+Başlangıç Command değişmez; kullanıcının aynı çalışma kopyasında seçtiği yeni Run programı ayrı lastLaunch kaydıdır. Restart lastLaunch'ı tekrarlar, yeni konuşma veya resume ayrı açık eylemdir. Büyük bir ajan adaptör çatısı yoktur; komut uygunluğu ve spawn üretimi tek test edilebilir sınırdadır. Ayrıntılar [spec](../specs/agentdeck-v0.md#3-başlatma-devam-etme-ve-ortam).

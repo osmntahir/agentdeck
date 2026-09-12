@@ -1,5 +1,7 @@
 # agentdeck
 
+> Bu README mevcut prototip runtime'ını anlatır. Hedef davranış [V0 spec revizyon 2](docs/specs/agentdeck-v0.md) içindedir; [açık doğrulama kapıları](docs/specs/agentdeck-v0-validation-gates.md) tamamlanmadan hedef özellikler uygulanmış sayılmaz.
+
 Paralel AI ajan oturumlarını izole git worktree'lerde yöneten yerel çalışma tezgâhı.
 
 Claude Code, Codex ve Gemini CLI'ı aynı anda, farklı projelerde, birbirinin
@@ -101,7 +103,7 @@ Bilinçli olarak MVP dışında bırakılanlar:
 - Grid görünümü, dosya ağacı, kod editörü
 - Görev adının ajana ilk prompt olarak geçmesi
 - Otomatik PR açma, kanban
-- Masaüstü kabuğu (Electron/Tauri)
+- Yeni masaüstü kabuğuna geçiş (mevcut Electron başlatıcı vardır)
 
 ## Bilinen sınırlar
 
@@ -123,6 +125,7 @@ Bilinçli olarak MVP dışında bırakılanlar:
 
 ## Gereksinimler
 
-Node 22+, git 2.3+, ve kullanmak istediğin ajan CLI'ları (`claude`, `codex`,
-`gemini`) `PATH`'te. Ajan oturumları login kabuk üzerinden başlatılır, bu
-yüzden `~/.local/bin` ve nvm yolları bulunur.
+Node 22+, `git worktree` destekleyen Git, ve kullanmak istediğin ajan CLI'ları (`claude`, `codex`,
+`gemini`) `PATH`'te. Ajan oturumları login kabuk üzerinden başlatılır, yol çözümlemesi
+kullanıcının login profiline bağlıdır; özellikle interaktif olmayan `.bashrc` erken
+çıkışı ve nvm yolları kurulumda doğrulanmalıdır.
