@@ -1,0 +1,35 @@
+{
+  "name": "agentdeck",
+  "version": "0.1.0",
+  "description": "Paralel AI ajan oturumlarini izole git worktree lerde yoneten yerel calisma tezgahi",
+  "scripts": {
+    "dev": "concurrently -n sunucu,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx src/server/index.ts",
+    "dev:web": "vite",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "build": "tsc -p tsconfig.server.json && vite build",
+    "start": "node dist/server/index.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "node-pty": "^1.1.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "concurrently": "^10.0.5",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  },
+  "private": true
+}
