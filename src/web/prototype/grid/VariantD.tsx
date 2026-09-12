@@ -1,15 +1,28 @@
 import type { Project, Session, World } from './model'
-import { FakeScrollback, Glyph, OverlayList, StatusWord, projectOf } from './shared'
+import { uiStatus } from './model'
+import { FakeScrollback, Glyph, MetaLine, OverlayList, StatusWord, projectOf } from './shared'
 
 export function VariantD({
   world,
   selectedId,
+  mode,
   onSelect,
+  onMode,
 }: {
   world: World
   selectedId: string | null
+  mode: 'grid' | 'pty'
   onSelect: (id: string) => void
+  onMode: (mode: 'grid' | 'pty') => void
 }) {
+  const selected = world.sessions.find((s) => s.id === selectedId) ?? null
+  const selectedProject = selected ? projectOf(world, selected) : null
+
+  const enter = (id: string) => {
+    onSelect(id)
+    onMode('pty')
+  }
+
   return (
     <div className="pg-d">
       <aside className="pg-b-map">
@@ -26,7 +39,7 @@ export function VariantD({
                   key={session.id}
                   type="button"
                   className={`pg-b-row${session.id === selectedId ? ' on' : ''}`}
-                  onClick={() => onSelect(session.id)}
+                  onClick={() => enter(session.id)}
                 >
                   <span className="pg-b-dot" style={{ background: project.color }} />
                   <Glyph command={session.command} />
@@ -46,18 +59,45 @@ export function VariantD({
         })}
       </aside>
 
-      <div className="pg-d-grid">
-        {world.sessions.map((session) => (
-          <Cell
-            key={session.id}
-            session={session}
-            project={projectOf(world, session)}
-            now={world.now}
-            selected={session.id === selectedId}
-            onSelect={() => onSelect(session.id)}
+      {mode === 'grid' ? (
+        <div className="pg-d-grid">
+          {world.sessions.map((session) => (
+            <Cell
+              key={session.id}
+              session={session}
+              project={projectOf(world, session)}
+              now={world.now}
+              selected={session.id === selectedId}
+              onSelect={() => enter(session.id)}
+            />
+          ))}
+        </div>
+      ) : selected && selectedProject ? (
+        <main className="pg-b-main">
+          <header className="pg-b-top">
+            <button type="button" onClick={() => onMode('grid')}>
+              grid
+            </button>
+            <Glyph command={selected.command} />
+            <div>
+              <div className="pg-title">{selected.name}</div>
+              <div className="pg-muted">
+                {selectedProject.name} · {selected.cwd}
+              </div>
+            </div>
+            <StatusWord session={selected} now={world.now} />
+            <OverlayList session={selected} project={selectedProject} />
+            <MetaLine session={selected} now={world.now} />
+          </header>
+          <FakeScrollback
+            lines={selected.lines}
+            dim={selected.lifecycle !== 'live'}
+            cursor={uiStatus(selected, world.now) === 'running'}
           />
-        ))}
-      </div>
+        </main>
+      ) : (
+        <div className="pg-muted pg-pad">Bir oturum seç.</div>
+      )}
     </div>
   )
 }

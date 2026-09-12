@@ -11,8 +11,8 @@ export const VARIANTS = [
 export const THESES: Record<string, { cell: string; layout: string; minimap: string; marks: string }> = {
   D: {
     cell: 'ucuz önizleme — son satırlar; canlı xterm yok',
-    layout: 'sol: Project → Session; orta: tüm oturumların grid’i; kutular yerinde',
-    minimap: 'sol liste gezinme; grid tarama; ayrı ısı haritası yok',
+    layout: 'tarama: sol liste + grid; odak: sol liste + tek PTY; kutular yerinde',
+    minimap: 'sol liste her iki modda kalır; ayrı ısı haritası yok',
     marks: 'komut glifi + ad + durum sözcüğü + overlay; renk 3px şerit / nokta',
   },
   A: {

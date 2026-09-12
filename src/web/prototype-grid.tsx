@@ -20,6 +20,7 @@ function PrototypeGrid() {
   const [variant, setVariant] = useVariantParam(KEYS)
   const [world, setWorld] = useState<World>(seedWorld)
   const [selectedId, setSelectedId] = useState<string | null>('s-auth')
+  const [mode, setMode] = useState<'grid' | 'pty'>('grid')
   const [daemonDown, setDaemonDown] = useState(false)
 
   const patchSelected = (fn: (w: World) => void) => {
@@ -85,6 +86,7 @@ function PrototypeGrid() {
           onClick={() => {
             setWorld(seedWorld())
             setSelectedId('s-auth')
+            setMode('grid')
             setDaemonDown(false)
           }}
         >
@@ -94,7 +96,15 @@ function PrototypeGrid() {
 
       <div className="pg-body">
         <div className="pg-stage">
-          {variant === 'D' && <VariantD world={world} selectedId={selectedId} onSelect={setSelectedId} />}
+          {variant === 'D' && (
+            <VariantD
+              world={world}
+              selectedId={selectedId}
+              mode={mode}
+              onSelect={setSelectedId}
+              onMode={setMode}
+            />
+          )}
           {variant === 'A' && <VariantA world={world} selectedId={selectedId} onSelect={setSelectedId} />}
           {variant === 'B' && <VariantB world={world} selectedId={selectedId} onSelect={setSelectedId} />}
           {variant === 'C' && <VariantC world={world} selectedId={selectedId} onSelect={setSelectedId} />}
