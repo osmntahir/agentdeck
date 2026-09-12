@@ -29,6 +29,12 @@ function originOk(origin: string | undefined): boolean {
   }
 }
 
+// Auth'tan önce: masaüstü kabuğu porttaki sürecin bizim daemon olup
+// olmadığını token'sız ayırt edebilmeli. Hiçbir veri sızdırmaz.
+app.get('/api/health', (_req, res) => {
+  res.json({ app: 'agentdeck', pid: process.pid })
+})
+
 app.use('/api', (req, res, next) => {
   if (!originOk(req.headers.origin)) return res.status(403).json({ error: 'Origin reddedildi' })
   const supplied = req.headers['x-agentdeck-token'] ?? req.query.token

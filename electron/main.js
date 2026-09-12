@@ -1,0 +1,194 @@
+'use strict'
+
+const { app, BrowserWindow, Menu, shell, dialog } = require('electron')
+const { spawn } = require('node:child_process')
+const path = require('node:path')
+const fs = require('node:fs')
+const os = require('node:os')
+
+const PORT = Number(process.env.AGENTDECK_PORT || 4711)
+const BASE = `http://127.0.0.1:${PORT}`
+const SERVER = path.join(__dirname, '..', 'dist', 'server', 'index.js')
+const TOKEN_FILE = path.join(os.homedir(), '.agentdeck', 'token')
+
+let win = null
+
+/** Porttaki sürecin bizim daemon olup olmadığını söyler. */
+async function probe() {
+  try {
+    const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(800) })
+    if (!res.ok) return 'yabanci'
+    const body = await res.json()
+    return body.app === 'agentdeck' ? 'bizim' : 'yabanci'
+  } catch {
+    return 'yok'
+  }
+}
+
+/**
+ * Daemon'u başlatır. İki kritik nokta:
+ *
+ * 1. detached + unref — pencereyi kapatmak oturumları öldürmemeli. Kalıcılık
+ *    modelinin tamamı buna dayanıyor.
+ * 2. node'un mutlak yolu. Masaüstü kısayolundan açılan bir uygulamanın PATH'i
+ *    minimaldir ve nvm'in node'unu içermez; login kabuğu da kurtarmaz, çünkü
+ *    Ubuntu'da .bashrc non-interactive kabukta erken döner. Yol kurulum
+ *    anında AGENTDECK_NODE ile sabitlenir (bkz. scripts/install-desktop.mjs).
+ */
+function resolveNode() {
+  return process.env.AGENTDECK_NODE || 'node'
+}
+
+function daemonEnv() {
+  const nodeBin = resolveNode()
+  const extra = [
+    nodeBin.includes('/') ? path.dirname(nodeBin) : null,
+    path.join(os.homedir(), '.local', 'bin'),
+  ].filter(Boolean)
+  // Ajan CLI'ları (claude, codex, gemini) bu dizinlerde yaşıyor.
+  return { ...process.env, PATH: [...extra, process.env.PATH || ''].join(path.delimiter) }
+}
+
+function startDaemon() {
+  const child = spawn(resolveNode(), [SERVER], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: path.join(__dirname, '..'),
+    env: daemonEnv(),
+  })
+  child.unref()
+}
+
+async function waitForDaemon(timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if ((await probe()) === 'bizim') return true
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return false
+}
+
+function readToken() {
+  try {
+    return fs.readFileSync(TOKEN_FILE, 'utf8').trim()
+  } catch {
+    return ''
+  }
+}
+
+function buildMenu() {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: 'agentdeck',
+        submenu: [
+          { label: 'Yenile', accelerator: 'CmdOrCtrl+R', click: () => win?.reload() },
+          { label: 'Geliştirici araçları', accelerator: 'F12', click: () => win?.webContents.toggleDevTools() },
+          { type: 'separator' },
+          {
+            label: 'Daemon durumu…',
+            click: async () => {
+              const state = await probe()
+              dialog.showMessageBox(win, {
+                type: 'info',
+                message: state === 'bizim' ? 'Daemon çalışıyor' : 'Daemon kapalı',
+                detail:
+                  state === 'bizim'
+                    ? `${BASE} üzerinde ayakta. Bu pencereyi kapatsan da oturumlar çalışmaya devam eder.`
+                    : 'Porta erişilemiyor. Uygulamayı yeniden başlat.',
+              })
+            },
+          },
+          {
+            label: 'Tarayıcıda aç',
+            click: () => shell.openExternal(`${BASE}/?token=${readToken()}`),
+          },
+          { type: 'separator' },
+          // Pencereyi kapatmak daemon'u öldürmez: kalıcılık bunun üzerine kurulu.
+          { label: 'Pencereyi kapat (oturumlar sürer)', accelerator: 'CmdOrCtrl+W', role: 'quit' },
+        ],
+      },
+      {
+        label: 'Düzen',
+        submenu: [
+          { role: 'copy', label: 'Kopyala' },
+          { role: 'paste', label: 'Yapıştır' },
+          { role: 'selectAll', label: 'Tümünü seç' },
+        ],
+      },
+    ]),
+  )
+}
+
+function createWindow(token) {
+  win = new BrowserWindow({
+    width: 1360,
+    height: 860,
+    backgroundColor: '#0b0d11',
+    autoHideMenuBar: true,
+    title: 'agentdeck',
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  })
+
+  win.loadURL(`${BASE}/?token=${token}`)
+  win.on('closed', () => {
+    win = null
+  })
+
+  // Dış bağlantılar sistem tarayıcısında açılsın, uygulama penceresinde değil.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+}
+
+// Tek instance: ikinci kez açılırsa var olan pencereyi öne getir.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+  })
+
+  app.whenReady().then(async () => {
+    if (!fs.existsSync(SERVER)) {
+      dialog.showErrorBox('Derleme bulunamadı', `Önce "npm run build" çalıştır.\n\nBeklenen: ${SERVER}`)
+      app.quit()
+      return
+    }
+
+    const state = await probe()
+    if (state === 'yabanci') {
+      dialog.showErrorBox(
+        'Port dolu',
+        `${PORT} portunda agentdeck olmayan bir servis var.\n\nAGENTDECK_PORT ile başka bir port verebilirsin.`,
+      )
+      app.quit()
+      return
+    }
+
+    if (state === 'yok') startDaemon()
+
+    if (!(await waitForDaemon())) {
+      dialog.showErrorBox('Daemon başlatılamadı', `${BASE} yanıt vermedi.\n\nElle dene: npm start`)
+      app.quit()
+      return
+    }
+
+    buildMenu()
+    createWindow(readToken())
+  })
+
+  app.on('window-all-closed', () => {
+    // Daemon bilerek hayatta bırakılıyor; ajan oturumları devam etsin.
+    app.quit()
+  })
+
+  app.on('activate', () => {
+    if (!win) createWindow(readToken())
+  })
+}

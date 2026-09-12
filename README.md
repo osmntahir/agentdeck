@@ -36,21 +36,32 @@ Arayüz tek kullanımlık bir istemcidir; oturumların sahibi daemon'dur.
 
 ## Çalıştırma
 
+### Masaüstü uygulaması
+
 ```bash
 npm install
-npm run dev     # daemon :4711 + Vite :4710
+npm run app             # derler ve pencereyi açar
+npm run install-desktop # uygulama menüsüne kısayol ekler (bir kez)
+```
+
+Kabuk daemon'u kendisi bulur: ayakta değilse başlatır, ayaktaysa ona bağlanır.
+İkinci kez açmak yeni pencere açmaz, var olanı öne getirir.
+
+**Pencereyi kapatmak daemon'u öldürmez.** Ajan oturumları çalışmaya devam
+eder; uygulamayı tekrar açtığında kaldıkları yerden bulursun. Kalıcılık
+modelinin tamamı buna dayanıyor.
+
+### Tarayıcıyla
+
+```bash
+npm run dev                   # daemon :4711 + Vite :4710
+npm run build && npm start    # tek süreç, :4711
 ```
 
 Konsola token'lı bir URL basılır:
 
 ```
 http://127.0.0.1:4710/?token=...
-```
-
-Üretim derlemesi için:
-
-```bash
-npm run build && npm start    # tek süreç, :4711
 ```
 
 ## Güvenlik
@@ -66,6 +77,10 @@ alıp `localStorage`'a yazar ve adres çubuğundan siler.
 ## Dizin yapısı
 
 ```
+electron/main.js       masaüstü kabuğu: daemon yaşam döngüsü, pencere, menü
+scripts/
+  launch.mjs           sandbox tespiti + Electron başlatma
+  install-desktop.mjs  .desktop kısayolu (node yolunu gömer)
 src/
   shared/types.ts      daemon ve arayüzün ortak tipleri
   server/
@@ -99,7 +114,12 @@ Bilinçli olarak MVP dışında bırakılanlar:
 - Her oturum için bir xterm örneği mount'ta tutulur; çok sayıda eşzamanlı
   oturumda ağırlaşır.
 - Tek instance koruması yok. İki daemon üst üste binerse `state.json`
-  birbirini ezebilir.
+  birbirini ezebilir. (Masaüstü kabuğunda pencere için tek instance kilidi
+  var; daemon tarafında port çakışması dışında koruma yok.)
+- Electron'un `chrome-sandbox` yardımcısı npm kurulumunda root'a ait olmadığı
+  için pencere `--no-sandbox` ile açılır. Yüklenen tek içerik kendi localhost
+  daemon'umuz, `contextIsolation` açık ve `nodeIntegration` kapalı. Kalıcı
+  düzeltme `scripts/launch.mjs` başındaki yorumda.
 
 ## Gereksinimler
 
