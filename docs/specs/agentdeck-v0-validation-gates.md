@@ -28,19 +28,23 @@ Ortam: Claude Code 2.1.269, Codex CLI 0.154.0, Gemini CLI 0.59.0, gerçek PTY (n
 - [x] **Etkileşimli seçiciler çalışıyor.** `claude --resume` arama kutulu “Resume session” listesi; `codex resume` “Resume a previous session” listesi ve **varsayılan Cwd filtresi** ile açılıyor. İkisi de AgentDeck'in kimlik üretmesini gerektirmiyor. V0'ın varsayılan devam yolu bu.
 - [x] **Bilinmeyen kimlikle resume temiz hata veriyor.** `claude --resume <bilinmeyen-uuid>` etkileşimli TUI'de de `No conversation found with session ID` + exit 1. Sessiz yeni konuşmaya düşmüyor.
 - [x] **Bayrak çakışması doğrulandı.** `gemini --session-id <uuid> --session-file <path>` CLI tarafından reddediliyor (`mutually exclusive`, exit 1). Uygulamanın hiçbir bayrak enjekte etmemesi kararının somut gerekçesi.
-- [x] **Naif ANSI temizliği okunamaz metin veriyor.** Hem Claude hem Codex ekranında kelimeler birleşiyor (`Doyoutrustthecontents…`). Preview'ın headless ekran modelinden üretilmesi kararı bu yüzden doğru.
 
-İnsan gerektiren, **açık kalan** adımlar:
+Ek olarak ölçülenler (ikinci tur):
+
+- [x] **Kart preview'ı gerçek TUI çıktısında okunabilir.** Üç CLI'ın gerçek PTY çıktısı headless ekran modelinden geçirildi; üçünde de önizleme kelime ve boşluk olarak okunabilir çıktı, yapışık öbek sıfır ([script](../research/preview-readability-probe.cjs)). Naif ANSI temizliği Claude ve Codex'te bozuluyor, Gemini'de bozulmuyor — Gemini kutu içine gerçek boşlukla yazdığı için. Yani naif yöntem *her zaman* değil, *çoğu zaman* bozuk; ekran modeli hepsinde doğru.
+- [x] **LaunchPolicy izin listesi uygulanabilir.** Referans uygulama 27 vakada doğrulandı ([script](../research/launch-policy-probe.cjs)): yalnız argümansız literal `claude`/`gemini`/`codex` yönetilen; `gemini --session-file`, `--list-sessions`, `claude --from-pr`, `codex resume`, quote içi `resume`, `--` sonrası prompt, env öneki, wrapper, mutlak yol, pipeline, expansion, newline ve bileşik komutların tamamı kabuk yoluna gidiyor. Doğrulanmamış CLI'da yönetilen eylem açılmıyor.
+
+İnsan gerektiren, **açık kalan** adımlar — bunlar ajan tarafından yapılamaz ve yapılmış gibi kaydedilmemelidir. Hepsini tek komutla yürüten betik: [`g2-human-acceptance.sh`](../research/g2-human-acceptance.sh).
 
 - [ ] Gerçek worktree'de trust/auth kullanıcı tarafından tamamlanır; dosya okuma/yazma ve küçük test komutu çalışır.
 - [ ] Onay ekranından önce/sonra stop; transcript oluşmadan çıkış; aynı Session'da tekrar çalışır, worktree içindeki iş korunur.
 - [ ] Onay sonrası konuşma gerçekten oluşuyor mu, ve AgentDeck'in ürettiği kimlikle geri açılabiliyor mu? **Her CLI+sürüm için ayrı sonuç gerekir.** Bu geçmeden o CLI için yönetilen kimlik açılmaz.
 - [ ] Gemini'de auth gerektiren her yol; bu makinede hesap `IneligibleTierError` verdiği için ölçülemedi.
-- [ ] Bayraklı komutların uçtan uca aynen iletilmesi: `gemini --session-file`, `--list-sessions`, `claude --from-pr`, quote içi `resume`, `--` sonrası prompt, env/pipeline/wrapper.
-- [ ] `.bashrc` erken çıkışı, nvm PATH, `environment.json` yenilemesi, bozuk/izinsiz env dosyası, parent-agent işaretçilerinin temizlenmesi. Hiçbir değer log'a düşmez.
-- [ ] Gerçek TUI ekranından çıkarılmış kart preview'ın okunabilirliği (headless model üzerinden).
+- [ ] Bayraklı komutların **gerçek CLI'a** uçtan uca iletimi: `gemini --session-file`, `--list-sessions`, `claude --from-pr`, quote içi `resume`, `--` sonrası prompt, env/pipeline/wrapper. (Sınıflandırma tarafı yukarıda kapandı; kalan CLI'ın kendi kabulü.)
+- [ ] `.bashrc` erken çıkışı, nvm PATH, `environment.json` yenilemesi, bozuk/izinsiz env dosyası, parent-agent işaretçilerinin temizlenmesi — bunlar daemon uygulanınca test edilebilir.
+- [ ] Gerçek TUI preview'ının **üründe** okunabilirliği (ölçüm kanıtı var, ürün entegrasyonu yok).
 
-**Kapının V0 üzerindeki etkisi:** bu kutular işaretlenene kadar yönetilen kimlik hiçbir CLI için açılmaz. Ürün yine de çalışır — literal komut ve CLI'ın kendi seçicisi V0'ın devam yoludur.
+**Kapının V0 üzerindeki etkisi:** bu kutular işaretlenene kadar yönetilen kimlik hiçbir CLI için açılmaz. Ürün yine de çalışır — literal komut ve CLI'ın kendi seçicisi V0'ın devam yoludur. Betik sonucu `docs/research/g2-results-<tarih>.md` olarak yazar; kutular o dosyaya bakılarak işaretlenir.
 
 ## G3 — Dosya, yaşam döngüsü ve kalıcılık (ürün kabulü)
 

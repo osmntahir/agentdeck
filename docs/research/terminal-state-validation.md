@@ -91,6 +91,24 @@ Scrollback satır sayısının snapshot maliyeti doğrusal: 200 satır ≈ 28 KB
 
 **Sınırlar.** Hepsi sentetiktir. Gerçek ajan CLI çıktı profili, node-pty maliyeti, browser render'ı ve uzun süreli bellek davranışı dahil değildir. Bu ölçümler kapasite garantisi değil, *mimarinin engel olmadığının* kanıtıdır; 32 üst koruma sınırı olarak kalır, ürün vaadi 4–8 oturumdur.
 
+## G2 ölçüm turu — gerçek CLI çıktısı
+
+### Kart önizlemesi gerçek TUI'de okunabilir
+
+Üç CLI'ın gerçek PTY çıktısı (TERM=xterm-256color, 100×30) yakalanıp iki yöntemle önizlemeye çevrildi ([script](preview-readability-probe.cjs)):
+
+| CLI | Headless ekran modeli | Naif ANSI temizliği |
+| --- | --- | --- |
+| Claude 2.1.269 | okunabilir, yapışık öbek 0 | **bozuk** — `ClaudeCode'llbeabletoread,…` |
+| Codex 0.154.0 | okunabilir, yapışık öbek 0 | **bozuk** — `Doyoutrustthecontents…` |
+| Gemini 0.59.0 | okunabilir, yapışık öbek 0 | bozulmuyor |
+
+Dürüst nüans: naif yöntem **her CLI'da bozulmuyor**. Gemini metni kutu kenarlığı içine gerçek boşluklarla yazıyor; Claude ve Codex ise kelimeleri sütun konumlandırmasıyla yerleştiriyor. Yani "ANSI silmek her zaman bozar" yanlış olur — doğru ifade: ölçülen üç CLI'ın ikisinde bozuyor, ekran modeli üçünde de doğru. Ölçüt olarak boşluk oranı kullanılamıyor (naif çıktıdaki kutu çizgisi artıkları oranı şişiriyor); 18+ harflik boşluksuz öbek sayısı kullanıldı.
+
+### LaunchPolicy izin listesi
+
+Referans uygulama ve 27 vakalık test [ayrı script'te](launch-policy-probe.cjs). Yönetilen kabul edilen tek biçim: trim edilmiş, tek literal token, tanınan CLI adı. `gemini --session-file`, `--list-sessions`, `claude --from-pr`, `codex resume`, quote içi `resume`, `--` sonrası prompt, env öneki, wrapper, mutlak yol, pipeline, `&&`, `$()`, newline ve büyük harfli/benzer isimlerin tamamı kabuk yoluna gidiyor. Ayrıca doğrulanmamış CLI'da `fresh`/`resume` eylemlerinin açılmadığı assertion'la sabit.
+
 ## Sonuç ve açık sınırlar
 
 Headless state + serialization yönü, ham kuyruğu tekrar oynatma ve kontrol kodlarını silme yöntemlerinden bu fixture'da daha doğru; ve bariyer sorunu için **uygulanabilir, ölçülmüş** bir mekanizma vardır. G1 turundan sonra terminal temsili kararı **ölçülmüş** sayılır: sekans kapsamı, sorgu sahipliği, iki katmanlı snapshot, kaynak maliyeti ve tarayıcı buffer eşitliği. Açık kalanlar dar ve adlandırılmış: piksel/font render'ı ile paste/mouse/IME etkileşimi, ve gerçek ajan CLI'larıyla uçtan uca doğruluk (bu ikincisi G2'nin işi). Bunlar [doğrulama kapısı](../specs/agentdeck-v0-validation-gates.md) içinde kalır ve hiçbiri mimari kararı yeniden açmaz.
