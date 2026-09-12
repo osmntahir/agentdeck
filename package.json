@@ -6,6 +6,7 @@
     "dev": "concurrently -n sunucu,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "tsx src/server/index.ts",
     "dev:web": "vite",
+    "prototype:grid": "vite --open /prototype-grid.html?variant=A",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "build": "tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/index.js",
