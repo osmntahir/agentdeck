@@ -37,9 +37,63 @@ Script'teki tarayıcı **gösterim amaçlıdır**: tamamlanmış CSI, sonlanmı�
 
 `€` karakterinin UTF-8 baytları iki ayrı `write()` çağrısına bölündüğünde ekranda `U��` oluştu. node-pty varsayılan `utf8` modunda PTY okuma sınırını kendi decoder'ıyla korur; bu risk **daemon'ın kendi yeniden parçalamasında** doğar. Chunk sınırları hem UTF-8 kod noktasını hem de JS surrogate çiftini bölmemelidir.
 
+
+## G1 ölçüm turu — 12 Eylül 2026
+
+İki ek script: [protokol](terminal-protocol-probe.cjs) ve [yük](terminal-load-probe.cjs). Aynı izole kurulum, aynı sürümler.
+
+### Sekans kapsamı — geçti
+
+Güvenli kesim tarayıcısı on iki sınıfta sınandı: tamamlanmamış CSI, alt parametreli CSI (`38:2:…`), ara baytlı CSI, tamamlanmamış OSC, gömülü veri taşıyan DCS, APC, PM, 8-bit C1 girişli CSI ve OSC, charset seçimi, yalnız ESC, tek karakterli ESC. Her sınıfta bekletilen prefix aktarımıyla kurulan ekran kesintisiz referansa **eşit**. Geriye tarama penceresi 4096 baytla sınırlandı.
+
+### Terminal sorgu sahipliği — mekanizma belirlendi
+
+- Headless terminal DA1, DA2, DSR-cursor ve DSR-status sorgularının **dördüne de** cevap üretiyor (`onData`). Yani istemci bağlı olmasa bile sorgu soran program kilitlenmez.
+- Cevabın zamanlaması ölçüldü: `write()` **döndükten sonra**, write callback'inden **önce**. Sıra `['write-döndü','cevap','callback']`. Dolayısıyla istemcide "şu an write içindeyim" senkron bayrağıyla ayırmak güvenilir değil.
+- Seçilen çözüm: daemon giden akıştan sorgu dizilerini **ayıklar**. Ekranı değiştirmiyor — ayıklanmış akışla kurulan ekran tam akışla kurulana birebir eşit; tarayıcı terminali sıfır otomatik cevap üretti; gerçek kullanıcı girdisi (`input('x')`) geçmeye devam etti.
+
+### İki katmanlı snapshot — 33× kazanç
+
+Dolu 1000 satırlık scrollback üzerinde:
+
+| Katman | Boyut | Süre |
+| --- | --- | --- |
+| Yalnız ekran (`scrollback: 0`) | **3.8 KB** | 2.8 ms |
+| Tam scrollback | 126 KB | ~11 ms |
+
+Yalnız-ekran snapshot görünür ekranı, alternate buffer türünü, imleç konumunu ve modları doğru kurdu; alternate ekrandan çıkıldığında normal buffer görünümü de referansla aynı kaldı. Attach'in varsayılanı bu yüzden ekran katmanıdır.
+
+### Gerçek tarayıcı eşitliği — geçti
+
+`@xterm/headless` 6.0.0 ile üretilen yalnız-ekran snapshot (496 B), gerçek Chrome'da `@xterm/xterm` 6.0.0 derlemesine yazıldı ve karşılaştırıldı ([script](terminal-browser-parity.cjs)):
+
+```
+[PARITY] {"satirEsit":true,"farkliSatir":[],
+          "bufferTuru":{"headless":"alternate","browser":"alternate"},
+          "imlec":{"headless":[4,11],"browser":[4,11]},
+          "modFarki":[],"SONUC":"PARITY_PASS"}
+```
+
+Fixture kapsamı: normal buffer geçmişi, alternate ekran, CSI sütun konumlandırma, truecolor ön plan, 256-renk arka plan, CJK wide karakter, combining aksan, emoji, altı çizili/italik/ters stiller, bracketed paste ve application cursor modları, belirli imleç konumu. 20 satırın tamamı eşit, imleç eşit, mod farkı sıfır.
+
+Sınır: bu **buffer durumu** eşitliğidir. Piksel render'ı, font/ligature davranışı, paste/mouse/IME etkileşimi ve WebGL/canvas renderer farkları ölçülmedi.
+
+### 32 terminal kaynak maliyeti
+
+120×32, scrollback 1000, Node 22.19.0, bu makine:
+
+| Profil | Akış | RSS | heap | write p95 | event-loop p95 (max) | backpressure |
+| --- | --- | --- | --- | --- | --- | --- |
+| Etkileşimli (TUI yeniden çizimi) | 0.2 MiB/s | 64 MB | 13 MB | 1.4 ms | 5.6 ms (6.3) | 0 |
+| Yoğun (derleme logu) | 8.8 MiB/s | 84 MB | 21 MB | 5.2 ms | 5.6 ms (20.6) | 0 |
+
+Scrollback satır sayısının snapshot maliyeti doğrusal: 200 satır ≈ 28 KB, 500 ≈ 65 KB, 1000 ≈ 126 KB, 2000 ≈ 248 KB (terminal başına, dolu normal buffer). 1000 satır korundu; iki katmanlı attach zaten bu maliyeti her attach'ten çıkarıyor.
+
+**Sınırlar.** Hepsi sentetiktir. Gerçek ajan CLI çıktı profili, node-pty maliyeti, browser render'ı ve uzun süreli bellek davranışı dahil değildir. Bu ölçümler kapasite garantisi değil, *mimarinin engel olmadığının* kanıtıdır; 32 üst koruma sınırı olarak kalır, ürün vaadi 4–8 oturumdur.
+
 ## Sonuç ve açık sınırlar
 
-Headless state + serialization yönü, ham kuyruğu tekrar oynatma ve kontrol kodlarını silme yöntemlerinden bu fixture'da daha doğru; ve bariyer sorunu için **uygulanabilir, ölçülmüş** bir mekanizma vardır. Bu gözlem şunları kanıtlamaz: tüm ANSI/OSC/DCS sekans kapsamı, browser renderer davranışı, terminal query yanıtlarının sahipliği, 32 eşzamanlı PTY'de CPU/bellek maliyeti ve gerçek ajan TUI'leriyle uçtan uca doğruluk. Bunlar [doğrulama kapısı G1](../specs/agentdeck-v0-validation-gates.md) içindedir.
+Headless state + serialization yönü, ham kuyruğu tekrar oynatma ve kontrol kodlarını silme yöntemlerinden bu fixture'da daha doğru; ve bariyer sorunu için **uygulanabilir, ölçülmüş** bir mekanizma vardır. G1 turundan sonra terminal temsili kararı **ölçülmüş** sayılır: sekans kapsamı, sorgu sahipliği, iki katmanlı snapshot, kaynak maliyeti ve tarayıcı buffer eşitliği. Açık kalanlar dar ve adlandırılmış: piksel/font render'ı ile paste/mouse/IME etkileşimi, ve gerçek ajan CLI'larıyla uçtan uca doğruluk (bu ikincisi G2'nin işi). Bunlar [doğrulama kapısı](../specs/agentdeck-v0-validation-gates.md) içinde kalır ve hiçbiri mimari kararı yeniden açmaz.
 
 Resize dürtmesi çözüm olarak seçilmedi: çıktı üretmeyen bir programın resize sonrası redraw yapacağına protokol garantisi yoktur. İstemci cache'i de yeni istemcinin veya uzun kopuşun ekranını kurmaz.
 

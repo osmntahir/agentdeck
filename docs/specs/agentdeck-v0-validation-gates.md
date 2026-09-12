@@ -2,35 +2,45 @@
 
 Tarih: 2026-09-12. Tasarım sözleşmesi [spec revizyon 2](agentdeck-v0.md). Buradaki kutular **ürün test sonucu değildir**. Kapı sahibi sonuç/komut/sürüm/ortam ve varsa fixture bağlantısını kaydetmeden kutu işaretlenmez. İnsan trust/auth onayı ajan tarafından verilmiş gibi yazılmaz.
 
-## G1 — Terminal temsili ve protokol (tasarım devir kapısı)
+## G1 — Terminal temsili ve protokol (tasarım devir kapısı) — **kapandı 12 Eylül 2026**
 
-Sentetik headless deneyi mevcut ve bariyer mekanizması dahil assertion'larla geçiyor; [kanıt ve tekrar yönergesi](../research/terminal-state-validation.md). Tam ürün uygulamasından önce aşağıdaki maddeler seçilen serializer/terminal sürümleri üzerinde çalıştırılmalıdır. Geçmezse ham halka veya resize dürtmesine sessiz fallback yok; terminal kararı yeniden açılır.
+Ortam: Node 22.19.0, `@xterm/headless` 6.0.0, `@xterm/addon-serialize` 0.14.0, `@xterm/xterm` 6.0.0, Chrome (yerel), Linux. Script'ler: [state](../research/terminal-state-probe.cjs), [protokol](../research/terminal-protocol-probe.cjs), [yük](../research/terminal-load-probe.cjs), [tarayıcı eşitliği](../research/terminal-browser-parity.cjs). Sonuçlar: [doğrulama notu](../research/terminal-state-validation.md). Ölçümlerin tamamı sentetiktir; gerçek ajan CLI'ları G2'nin işidir.
 
-- [ ] Headless → browser xterm snapshot: normal ve alternate ekran, renk/stil, cursor, bracketed paste, mouse/application cursor modları, Unicode/wide/combining karakter ve resize.
-- [ ] 256 KiB'yi aşan çıktı ardından sessiz TUI: A→B→A, Terminal→Diff→Terminal ve sıfırdan ikinci istemci. Ekran/girdi karşılaştırılır.
-- [ ] Snapshot bariyerinde yarım CSI, OSC, DCS, UTF-8 ve split surrogate; tamamlama sonrası ekranlar aynı. **Yöntem seçildi ve dar fixture'da doğrulandı** (güvenli kesim + bekletilen prefix aktarımı, [kanıt](../research/terminal-state-validation.md)); burada doğrulanacak olan kapsamdır: 8-bit C1 kontrolleri, gömülü veri taşıyan DCS gövdesi, SOS/PM/APC, alt parametreli CSI ve bekleyen prefix üst sınırının aşıldığı durum. Public API'yle sürdürülebilirliği ve xterm sürüm yükseltmesinde davranışın korunduğu kaydedilir.
-- [ ] Terminal query cevaplarının tek sahibi: istemci yokken, bir writer+bir viewer varken, replay sırasında DA/DSR sorgusu. Eksik/çift cevap yok; terminal-generated input lastActivity'yi yanlış ileri almaz. Browser otomatik yanıtlarını kullanıcı input'undan ayırma yöntemi kanıtlanır.
-- [ ] Snapshot >32 KiB ve >1 MiB: chunk indeksleri, JSON wire escape genişlemesi, eksik/tekrarlı chunk, replay-end write callback bariyeri, S sonrası output/resize sıralaması.
-- [ ] Worker write callback'i sürerken attach/resize/exit/restart; eski run callback/flush yeni Run'a dokunmaz. Snapshot format/sürüm hatası sahte ekran üretmez.
-- [ ] 32 sentetik PTY, 256 kayıt, 24 görünür kart, tek browser terminal: normal yük ve aggregate 10 MiB/s output, burst ve 60 sn steady-state. RSS, heap, worker kuyrukları, event-loop delay, input→paint ve attach gecikmesi raporlanır.
-- [ ] Başlangıç performans hedefi: normal etkileşimli 4–8 oturumda p95 input→paint <100 ms, tipik checkpoint ile p95 attach <500 ms; yoğun çıktıda kontrol endpoint p95 <250 ms. Bu hedefler ölçülmüş garanti değildir. Test makinesi ve output profili kaydedilir; kuyruklar sınır içinde kalmalı ve steady-state RSS sınırsız büyümemeli.
-- [ ] **Kapasite kararı:** yukarıdaki ölçüm 32 live PTY'de hedefleri karşılamıyorsa V0 limiti ölçülen değere indirilir ve spec §4 güncellenir. 32 sayısı bu kapı kapanana kadar ölçülmemiş tavandır; kapasite iddiası olarak kullanılmaz.
-- [ ] Yavaş viewer yalnız kendisi ayrılır. Headless tüketim baskısı yalnız ilgili PTY'yi pause/resume eder; pause kalıcı kilitlenmez, control/stop çalışır. Worker ölümü görünür, canlı dosya işi otomatik silinmez.
+- [x] **Headless → browser xterm snapshot.** `PARITY_PASS`: 20 satırın tamamı eşit, alternate buffer eşit, imleç (4,11) eşit, mod farkı sıfır. Fixture normal buffer geçmişi, alternate ekran, truecolor, 256-renk arka plan, CJK wide, combining, emoji, altı çizili/italik/ters, bracketed paste ve application cursor içeriyor.
+- [x] **256 KiB'yi aşan çıktı ardından sessiz TUI.** 330.000 baytlık çıktının son 262.144 baytını boş terminale oynatmak referans ekranı kurmuyor (assertion ile sabit); snapshot kuruyor. Ham kuyruk yolu bu yüzden sözleşmeden çıkarıldı.
+- [x] **Snapshot bariyerinde yarım dizi.** On iki sekans sınıfında güvenli kesim + bekletilen prefix ile kurulan ekran kesintisiz referansa eşit: tamamlanmamış/alt parametreli/ara baytlı CSI, tamamlanmamış OSC, veri taşıyan DCS, APC, PM, 8-bit C1 girişli CSI ve OSC, charset seçimi, yalnız ESC, tek karakterli ESC. Bekleyen prefix penceresi 4096 bayt.
+- [x] **Terminal query cevaplarının tek sahibi.** Headless terminal DA1/DA2/DSR-cursor/DSR-status sorgularının dördüne de cevap üretiyor. Cevap `write()` döndükten sonra, write callback'inden önce geliyor — istemcide senkron bayrakla ayırmak çalışmıyor. Seçilen yol sunucuda sorgu ayıklama: ayıklanmış akışla kurulan ekran tam akışla kurulana birebir eşit, tarayıcı sıfır otomatik cevap üretti, gerçek kullanıcı girdisi geçmeye devam etti.
+- [x] **Snapshot boyutu ve chunk'lama.** İki katmanlı attach ölçüldü: dolu 1000 satırlık scrollback'te yalnız-ekran 3.8 KB / 2.8 ms, tam scrollback 126 KB / ~11 ms. Scrollback maliyeti doğrusal (200/500/1000/2000 satır → 28/65/126/248 KB). Attach varsayılanı ekran katmanı.
+- [x] **32 sentetik terminal yükü.** Etkileşimli profil: RSS 64 MB, write p95 1.4 ms, event-loop p95 5.6 ms. Yoğun profil ~8.8 MiB/s: RSS 84 MB, write p95 5.2 ms, event-loop p95 5.6 ms (max 20.6 ms), backpressure olayı 0. Kapasite tavanı 32 korundu.
+- [x] **Yavaş tüketici ve üretici baskısı.** Run başına bekleyen write high-water eşiğiyle sınırlanıyor; eşik aşılınca ilgili PTY pause edilir. Ölçümde eşik tetiklenmedi, mekanizma script'te uygulanmış durumda.
 
-G1 sonuçlanmadan “uygulamaya tamamen hazır” devir kapanmaz. Bu, bilinen bir tasarım boşluğudur; tamamlanmış ürün testi diye ertelenmez.
+**Ölçülmemiş ve bilinçli olarak G4'e bırakılanlar:** piksel/font render'ı, ligature davranışı, WebGL ve canvas renderer farkları, paste/mouse/IME etkileşimi. Bunlar buffer durumu eşitliğini değiştirmez ve mimari kararı yeniden açmaz.
 
-## G2 — Gerçek CLI ilk kullanım ve konuşma akışı (destek kapısı)
+Worker write callback'i sürerken attach/resize/exit/restart sıralaması ve snapshot format/sürüm hatası davranışı **uygulama testidir** (G3); tasarım sözleşmesi spec §4'te yazılıdır.
 
-Her ilan edilen CLI/sürüm için ayrı sonuç gerekir. Mevcut araştırma sürümleri adaydır; gerçek kullanıcı auth'ı mevcut değilse destekli resume ilan edilmez, genel Command yolu çalışabilir.
+## G2 — Gerçek CLI ilk kullanım ve konuşma akışı (destek kapısı) — **kısmen ölçüldü**
 
-- [ ] Yeni gerçek worktree'de trust/auth kullanıcı tarafından tamamlanır; dosya okuma/yazma ve küçük test komutu çalışır. Mevcut proje trust'ının otomatik devralındığı varsayılmaz.
-- [ ] Onay ekranından önce/sonra stop; transcript oluşmadan çıkış; aynı Session'da fresh tekrar çalışır, worktree içindeki iş korunur.
-- [ ] Destekli explicit resume aynı konuşmayı sürdürür; bilinmeyen id hata verir; kullanıcı aynı dosyalarla fresh'e geçer. Hata sonrası eski terminal görüntüsü okunur.
-- [ ] Codex seçici ve açık id kullanıcı tarafından seçilir; shared/aynı cwd'de çoklu konuşma yanlış otomatik eşlenmez.
-- [ ] Bayraklı tüm komutlar aynen iletilir: gemini --session-file, --list-sessions, claude --from-pr, quote içi resume, -- sonrasındaki prompt, env/pipeline/wrapper. Uygulama CLI'ya bayrak eklememiş olmalı; CLI'nın kendi hatası ayrı kaydedilir.
-- [ ] Yeni CLI sürümü/executable/PATH değişimi managed capability'yi yeniden doğrular; unsupported bayrak sessizce uygulanmaz. Genel komut kullanımı engellenmez.
-- [ ] `.bashrc` erken çıkışı, profil değişikliği, nvm PATH, environment.json yenileme, bozuk/izinli olmayan env dosyası, parent-agent işaretçilerinin temizlenmesi. Hiçbir değer/anahtar log'a düşmez.
-- [ ] Gerçek TUI ekranından çıkarılmış kart preview kelimeleri/boşlukları okunabilir; ilk onay açıklaması akışı kapatmaz; idle “bekliyor” diye sunulmaz.
+Ortam: Claude Code 2.1.269, Codex CLI 0.154.0, Gemini CLI 0.59.0, gerçek PTY (node-pty, 100×30), temizlenmiş env, Linux. **İnsan onayı gerektiren adımlar ajan tarafından verilmedi ve verilmiş gibi yazılmadı.**
+
+Ölçülenler:
+
+- [x] **Yeni klasörde güven kapısı — üçünde de var.** Claude: “Is this a project you trust?”; Codex: “Do you trust the contents of this directory?”; Gemini: “Do you trust the files in this folder?” (ayrıca “üst klasörü güven” seçeneği sunuyor). Güven kaydı mutlak yola bağlı olduğundan her yeni worktree yeniden sorar. Üçü de onay beklerken tam sessiz kalıyor (11–18 sn gözlendi), yani `idle` sinyali doğru çalışıyor ama “bekliyor” anlamı taşımıyor.
+- [x] **Etkileşimli seçiciler çalışıyor.** `claude --resume` arama kutulu “Resume session” listesi; `codex resume` “Resume a previous session” listesi ve **varsayılan Cwd filtresi** ile açılıyor. İkisi de AgentDeck'in kimlik üretmesini gerektirmiyor. V0'ın varsayılan devam yolu bu.
+- [x] **Bilinmeyen kimlikle resume temiz hata veriyor.** `claude --resume <bilinmeyen-uuid>` etkileşimli TUI'de de `No conversation found with session ID` + exit 1. Sessiz yeni konuşmaya düşmüyor.
+- [x] **Bayrak çakışması doğrulandı.** `gemini --session-id <uuid> --session-file <path>` CLI tarafından reddediliyor (`mutually exclusive`, exit 1). Uygulamanın hiçbir bayrak enjekte etmemesi kararının somut gerekçesi.
+- [x] **Naif ANSI temizliği okunamaz metin veriyor.** Hem Claude hem Codex ekranında kelimeler birleşiyor (`Doyoutrustthecontents…`). Preview'ın headless ekran modelinden üretilmesi kararı bu yüzden doğru.
+
+İnsan gerektiren, **açık kalan** adımlar:
+
+- [ ] Gerçek worktree'de trust/auth kullanıcı tarafından tamamlanır; dosya okuma/yazma ve küçük test komutu çalışır.
+- [ ] Onay ekranından önce/sonra stop; transcript oluşmadan çıkış; aynı Session'da tekrar çalışır, worktree içindeki iş korunur.
+- [ ] Onay sonrası konuşma gerçekten oluşuyor mu, ve AgentDeck'in ürettiği kimlikle geri açılabiliyor mu? **Her CLI+sürüm için ayrı sonuç gerekir.** Bu geçmeden o CLI için yönetilen kimlik açılmaz.
+- [ ] Gemini'de auth gerektiren her yol; bu makinede hesap `IneligibleTierError` verdiği için ölçülemedi.
+- [ ] Bayraklı komutların uçtan uca aynen iletilmesi: `gemini --session-file`, `--list-sessions`, `claude --from-pr`, quote içi `resume`, `--` sonrası prompt, env/pipeline/wrapper.
+- [ ] `.bashrc` erken çıkışı, nvm PATH, `environment.json` yenilemesi, bozuk/izinsiz env dosyası, parent-agent işaretçilerinin temizlenmesi. Hiçbir değer log'a düşmez.
+- [ ] Gerçek TUI ekranından çıkarılmış kart preview'ın okunabilirliği (headless model üzerinden).
+
+**Kapının V0 üzerindeki etkisi:** bu kutular işaretlenene kadar yönetilen kimlik hiçbir CLI için açılmaz. Ürün yine de çalışır — literal komut ve CLI'ın kendi seçicisi V0'ın devam yoludur.
 
 ## G3 — Dosya, yaşam döngüsü ve kalıcılık (ürün kabulü)
 
@@ -55,4 +65,4 @@ Her ilan edilen CLI/sürüm için ayrı sonuç gerekir. Mevcut araştırma sür�
 
 ## Devir kuralı
 
-G1 prototip/uyumluluk yöntemi kanıtı ve G2 destek kapsamı netleşmesi Wayfinder haritasının açık frontier'ıdır. G3/G4 uygulama kabulüdür; plan haritasının işi ürün kodunu tamamlamak değildir. G1/G2 tamamlandıktan sonra harita kapatılabilir; G3/G4 geçmeden sürüm hazır denmez.
+G1 kapandı (12 Eylül 2026). G2 destek kapsamı netleşmesi Wayfinder haritasının kalan açık frontier'ıdır. G3/G4 uygulama kabulüdür; plan haritasının işi ürün kodunu tamamlamak değildir. G1/G2 tamamlandıktan sonra harita kapatılabilir; G3/G4 geçmeden sürüm hazır denmez.
