@@ -2,12 +2,19 @@ import type { Project, Session, UiStatus, World } from './model'
 import { commandGlyph, commandLabel, exitLabel, overlays, relative, uiStatus } from './model'
 
 export const VARIANTS = [
+  { key: 'D', name: 'Sol liste + grid' },
   { key: 'A', name: 'Proje şeritleri' },
   { key: 'B', name: 'Minimap + tek PTY' },
   { key: 'C', name: 'Dikkat mozaiği' },
 ] as const
 
 export const THESES: Record<string, { cell: string; layout: string; minimap: string; marks: string }> = {
+  D: {
+    cell: 'ucuz önizleme — son satırlar; canlı xterm yok',
+    layout: 'sol: Project → Session; orta: tüm oturumların grid’i; kutular yerinde',
+    minimap: 'sol liste gezinme; grid tarama; ayrı ısı haritası yok',
+    marks: 'komut glifi + ad + durum sözcüğü + overlay; renk 3px şerit / nokta',
+  },
   A: {
     cell: 'ucuz önizleme — son satırlar; canlı xterm yok',
     layout: 'proje şeritleri — kutular yerinde kalır; dikkat işaretle, sıra değiştirme',

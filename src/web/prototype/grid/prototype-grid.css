@@ -241,6 +241,20 @@
 }
 .pg-b-main .pg-term { flex: 1; }
 
+/* --- D: sol liste + orta grid --- */
+.pg-d { flex: 1; min-width: 0; display: flex; }
+.pg-d-grid {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-auto-rows: 168px;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+}
+
 /* --- C: mozaik --- */
 .pg-c { flex: 1; min-width: 0; display: flex; }
 .pg-c-mosaic {

@@ -8,11 +8,11 @@ import { StateDump, VARIANTS } from './prototype/grid/shared'
 import { VariantA } from './prototype/grid/VariantA'
 import { VariantB } from './prototype/grid/VariantB'
 import { VariantC } from './prototype/grid/VariantC'
+import { VariantD } from './prototype/grid/VariantD'
 import type { World } from './prototype/grid/model'
 
-// Three variants of the session overview, switchable via ?variant=,
-// on throwaway /prototype-grid.html. Answers: cell contents (preview vs live),
-// grouping vs attention-sort, minimap vs grid, marks besides project color.
+// Four variants of the session overview, switchable via ?variant=,
+// on throwaway /prototype-grid.html. D is the mix: left Project/Session list + center grid.
 
 const KEYS = VARIANTS.map((v) => v.key)
 
@@ -94,6 +94,7 @@ function PrototypeGrid() {
 
       <div className="pg-body">
         <div className="pg-stage">
+          {variant === 'D' && <VariantD world={world} selectedId={selectedId} onSelect={setSelectedId} />}
           {variant === 'A' && <VariantA world={world} selectedId={selectedId} onSelect={setSelectedId} />}
           {variant === 'B' && <VariantB world={world} selectedId={selectedId} onSelect={setSelectedId} />}
           {variant === 'C' && <VariantC world={world} selectedId={selectedId} onSelect={setSelectedId} />}
