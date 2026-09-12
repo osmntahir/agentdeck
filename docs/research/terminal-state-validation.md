@@ -2,7 +2,9 @@
 
 Tarih: 2026-09-12. Node 22.19.0, @xterm/headless 6.0.0, @xterm/addon-serialize 0.14.0. Paketler izole geçici dizine kuruldu; ürün `package.json`/lockfile değişmedi. [Tekrarlanabilir script](terminal-state-probe.cjs).
 
-Tekrar: izole geçici dizinde bu iki kesin paket sürümünü `npm install` ile kur; script'i o dizine kopyala ve `node terminal-state-probe.cjs` çalıştır. CLI hesabı veya model çağrısı gerekmez. Bu bir terminal protokol testi alt kümesidir; ürün test takımı değildir. Script'teki bütün beklentiler `assert` ile zorlanır; çıktı yalnız ölçülen değerleri raporlar.
+Tekrar: izole geçici dizinde bu iki kesin paket sürümünü `npm install` ile kur; script'i o dizine kopyala ve `node terminal-state-probe.cjs` çalıştır.
+
+**Güncelleme (12 Eylül 2026, §8/1 dilimi):** yukarıdaki ölçüm anındaki durum korunmuştur — o gün paketler izole dizine kurulmuştu. Bugün `@xterm/headless` ve `@xterm/addon-serialize` aynı sabit sürümlerle depo devDependency'sidir; tekrar için kopyalama gerekmez, depo kökünden `node docs/research/terminal-state-probe.cjs` yeterlidir. Bu paketler hâlâ **üretim** bağımlılığı değildir; terminal-state worker'ı (§8/3) uygulanınca oraya taşınacaktır. CLI hesabı veya model çağrısı gerekmez. Bu bir terminal protokol testi alt kümesidir; ürün test takımı değildir. Script'teki bütün beklentiler `assert` ile zorlanır; çıktı yalnız ölçülen değerleri raporlar.
 
 ## Gözlem
 

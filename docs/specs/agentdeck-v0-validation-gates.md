@@ -83,3 +83,17 @@ Ortam: Node 22.19.0, Linux, gerçek node-pty ve gerçek `git`. Kanıt: depodaki 
 G1 kapandı (12 Eylül 2026). G2 destek kapsamı netleşmesi Wayfinder haritasının kalan açık frontier'ıdır. G3/G4 uygulama kabulüdür; plan haritasının işi ürün kodunu tamamlamak değildir. G1/G2 tamamlandıktan sonra harita kapatılabilir; G3/G4 geçmeden sürüm hazır denmez.
 
 Uygulama durumu (12 Eylül 2026): spec §8/1 dilimi ürün koduna girdi ve G3'ün 3 maddesi otomatik testle kapandı. Kalan 7 madde §8/2–§8/4 dilimlerine ve insan kabulüne bağlıdır. Testlerin geçmesi ürünün doğrulandığı anlamına gelmez: G4'ün tamamı ve gerçek kullanıcı akışı ölçülmedi.
+
+## Sıradaki iş ve açık kararlar
+
+Son durum: spec §8/1 uygulandı (commit `c3cee0a`), `npm test` 87 test geçiyor, `npm run typecheck` üç config'i kapsıyor. Dilimin sınırları [ADR 0007](../adr/0007-slice-1-implementation-boundaries.md).
+
+Sıradaki üç dilim birbirinden bağımsız yürüyebilir:
+
+1. **§8/2 — gerçek CLI ilk kullanımı.** Ajan tarafından yapılamaz: trust/auth onayı kullanıcı eylemidir. Tek komutla yürüyen betik [`g2-human-acceptance.sh`](../research/g2-human-acceptance.sh); sonuç `docs/research/g2-results-<tarih>.md` olarak yazılır ve G2 kutuları o dosyaya bakılarak işaretlenir. Gemini'nin auth gerektiren yolları bu makinede `IneligibleTierError` verdiği için ölçülemedi; bu bir ürün kararı değil, kanıt eksikliğidir.
+2. **§8/3 — terminal temsili.** Kart önizlemesi, canlı olmayan Run'ın geçmişi ve replay protokolü buna bağlıdır. G1 tasarım kapısı ölçümle kapandı; burada yapılacak iş uygulamadır: terminal-state worker'ı, güvenli kesim tarayıcısı, sorgu ayıklama, iki katmanlı replay ve checkpoint. `@xterm/headless` + `@xterm/addon-serialize` şu an devDependency; bu dilimde üretim bağımlılığına taşınır.
+3. **§8/5 — grid/odak arayüzü.** Mevcut arayüz hâlâ prototip kabuğudur (sol liste + tek terminal); §8/1 görünmeyen katmanı değiştirdi.
+
+**Açık karar — grid varyantı.** `src/web/prototype/grid/` içinde dört varyant var ve hepsi `mock.ts` ile beslenir, `/api/state`'i hiç görmez. **Varyant B ve C sözleşmeye aykırı düşmüştür:** kartları `attentionRank` ile dizerler, revizyon 2.2 ise "sıra `createdAt,id` ile sabit" ve "idle hata rozeti gibi gösterilmez" diyor. Seçim **A** (proje şeritleri) ile **D** (grid ↔ odak modu) arasındadır ve kullanıcıya aittir. Hangisi seçilirse seçilsin kart önizlemesi §8/3'e bağlıdır; o gelmeden kart, spec §4 gereği "Önizleme hazırlanıyor/erişilemiyor" demelidir — uydurma düz çıktı yazılmaz.
+
+**Depo notu.** `main` dalı grid prototipinin commit'lerini de taşır. Bu, doküman senkronu sırasında istenmeden olmuş, kullanıcıya bildirilmiş ve kullanıcı kararıyla **olduğu gibi bırakılmıştır**; düzeltmek force-push gerektirirdi. `main` ile `prototype/grid-cell-layout` aynı noktadadır.

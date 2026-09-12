@@ -1,6 +1,6 @@
 // AgentDeck terminal state kararı için dar doğrulama.
-// Kurulum: izole dizinde `npm i @xterm/headless@6.0.0 @xterm/addon-serialize@0.14.0`,
-// sonra bu dosyayı o dizine kopyalayıp `node terminal-state-probe.cjs`.
+// Koşum: depo kökünden `node docs/research/terminal-state-probe.cjs`.
+// @xterm/headless ve @xterm/addon-serialize artık depo devDependency'si (sabit sürüm).
 // CLI hesabı veya model çağrısı gerekmez.
 const {Terminal}=require('@xterm/headless');
 const {SerializeAddon}=require('@xterm/addon-serialize');

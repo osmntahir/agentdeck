@@ -1,8 +1,7 @@
 // Headless snapshot'ın gerçek tarayıcı xterm'inde aynı ekranı kurup kurmadığını ölçer.
 //
-// Kurulum (izole dizinde):
-//   npm i @xterm/headless@6.0.0 @xterm/addon-serialize@0.14.0 @xterm/xterm@6.0.0
-//   node terminal-browser-parity.cjs          # parity.html üretir
+// Koşum (bağımlılıklar depo devDependency'si, sabit sürüm):
+//   node docs/research/terminal-browser-parity.cjs   # parity.html üretir
 //   python3 -m http.server 8731 --bind 127.0.0.1
 //   tarayıcıda http://127.0.0.1:8731/parity.html aç, konsolda [PARITY] satırını oku
 //

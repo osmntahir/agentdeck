@@ -1,8 +1,7 @@
 // Kart önizlemesinin gerçek ajan TUI çıktısında okunabilir olup olmadığını ölçer.
 //
-// Kurulum (izole dizinde):
-//   npm i @xterm/headless@6.0.0
-//   node preview-readability-probe.cjs <yakalanan.raw> [...]
+// Koşum (bağımlılık depo devDependency'si, sabit sürüm):
+//   node docs/research/preview-readability-probe.cjs <yakalanan.raw> [...]
 //
 // Girdi dosyaları gerçek bir PTY'de çalıştırılan CLI'ın ham çıktısıdır
 // (TERM=xterm-256color, 100x30). Yakalama yöntemi doğrulama notunda.

@@ -1,6 +1,6 @@
 // AgentDeck terminal protokol kararları için doğrulama.
-// Kurulum: izole dizinde `npm i @xterm/headless@6.0.0 @xterm/addon-serialize@0.14.0`,
-// sonra bu dosyayı o dizine kopyalayıp `node terminal-protocol-probe.cjs`.
+// Koşum: depo kökünden `node docs/research/terminal-protocol-probe.cjs`.
+// @xterm/headless ve @xterm/addon-serialize artık depo devDependency'si (sabit sürüm).
 // Kapsam: sekans sınıfı kapsamı, terminal sorgu sahipliği, sorgu ayıklamanın
 // görsel kayıpsızlığı, iki katmanlı snapshot. CLI hesabı gerekmez.
 const {Terminal} = require('@xterm/headless')

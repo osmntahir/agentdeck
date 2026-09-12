@@ -1,5 +1,5 @@
 // AgentDeck headless terminal kaynak maliyeti ölçümü.
-// Kurulum: izole dizinde `npm i @xterm/headless@6.0.0 @xterm/addon-serialize@0.14.0`,
+// Koşum: depo kökünden `node docs/research/terminal-load-probe.cjs` (bağımlılıklar depoda).
 // sonra: `node terminal-load-probe.cjs [terminalSayisi] [saniye] [hedefMBs]`
 // hedefMBs=0 → etkileşimli profil (ajan TUI benzeri düşük hacimli yeniden çizim).
 const {Terminal} = require('@xterm/headless')
