@@ -107,6 +107,7 @@ export interface StateResponse {
   terminals?: Record<string, {
     failure: { code: string; message: string } | null
     checkpoint: { lastSuccessAt: number | null; lastError: string | null }
+    outputPressure: boolean
   }>
   previews?: Record<string, {
     state: 'ready' | 'preparing' | 'unavailable'

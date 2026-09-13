@@ -118,12 +118,21 @@ test('Run başına in-flight bütçesi aşılınca PTY duraklatılır ve boşal�
       onPause: () => paused.push('r1'),
       onResume: () => resumed.push('r1'),
     })
+    const events: TerminalEvent[] = []
+    h.host.attach('r1', (e) => events.push(e))?.resume()
     const block = 'x'.repeat(64 * 1024)
     for (let i = 0; i < 40; i++) h.host.feed('r1', block)
     assert.ok(paused.length > 0, 'bütçe aşıldığı hâlde üretici duraklatılmadı')
+    assert.equal(h.host.outputPressure('r1'), true)
+    assert.ok(
+      events.some((event) => event.type === 'pressure' && event.active),
+      'baskı izleyiciye görünür bilgi olarak inmez',
+    )
 
     await h.host.drain('r1')
     assert.ok(resumed.length > 0, 'kuyruk boşaldığı hâlde üretici sürdürülmedi')
+    assert.equal(h.host.outputPressure('r1'), false)
+    assert.ok(events.some((event) => event.type === 'pressure' && !event.active))
   } finally {
     await h.close()
   }

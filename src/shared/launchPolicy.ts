@@ -19,3 +19,16 @@ export function explicitResumeCommand(cli: LaunchCli, conversationId: string): s
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null
   return `${CLI_COMMANDS[cli].picker} ${id}`
 }
+
+/** Kullanıcının açık UUID komutu; yönetilen kimlik üretimi değildir. */
+export function explicitResumeOf(command: string | null): { cli: LaunchCli; conversationId: string } | null {
+  const trimmed = command?.trim()
+  if (!trimmed) return null
+  for (const cli of Object.keys(CLI_COMMANDS) as LaunchCli[]) {
+    const prefix = `${CLI_COMMANDS[cli].picker} `
+    if (!trimmed.startsWith(prefix)) continue
+    const conversationId = trimmed.slice(prefix.length)
+    if (explicitResumeCommand(cli, conversationId) === trimmed) return { cli, conversationId }
+  }
+  return null
+}

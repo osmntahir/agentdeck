@@ -216,7 +216,9 @@ export function TerminalPane({
     <div className="terminal-pane">
       <div className={`terminal-status${compact ? ' compact' : ''}${attention ? ' attention' : ''}`} role="status">
         <span title="F6 uygulama çubuğuna geçer; menü gerçek F6'yı terminale gönderir.">
-          {!stateHealthy ? 'Durum güncel değil · girdi kapalı' : status?.message || (status?.owned ? 'Kontrol sizde' : 'Salt okunur izleyici')}
+          {!stateHealthy
+            ? 'Durum güncel değil · girdi kapalı'
+            : `${status?.message || (status?.owned ? 'Kontrol sizde' : 'Salt okunur izleyici')}${status?.pressure ? ' · Çıktı işleniyor' : ''}`}
         </span>
         {needsControl && <button onClick={() => actions.current.control()}>Kontrolü al</button>}
         {status?.ready && status.live && !status.historyLoaded && (

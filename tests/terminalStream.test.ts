@@ -51,6 +51,29 @@ test('büyük paste Unicode kod noktalarını bölmeden 64 KiB parçalara ayrıl
   }
 })
 
+test('çıktı baskısı girdi kapatmaz; pressure işareti iner', async () => {
+  let failed = false
+  const seen = { ready: false, pressure: false }
+  const stream = new TerminalStream(
+    { reset() {}, resize() {}, write(_t, cb) { cb() } },
+    identity,
+    (next) => {
+      seen.ready = next.ready
+      seen.pressure = next.pressure
+    },
+    () => { failed = true },
+  )
+  await stream.receive(JSON.stringify(start({ totalBytes: 0 })))
+  await stream.receive(JSON.stringify({ type: 'replay-end', snapshotId: 'snap', chunkCount: 0 }))
+  await stream.receive(JSON.stringify({ type: 'output-pressure', active: true }))
+  assert.equal(failed, false)
+  assert.equal(seen.ready, true)
+  assert.equal(seen.pressure, true)
+  await stream.receive(JSON.stringify({ type: 'output-pressure', active: false }))
+  assert.equal(seen.pressure, false)
+  stream.dispose()
+})
+
 test('eksik ve okunamayan geçmiş ayrı mesajla girdi kapatır', async () => {
   for (const [type, message] of [
     ['history-missing', 'Bu Run için saklanmış terminal görüntüsü yok'],

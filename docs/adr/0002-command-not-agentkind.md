@@ -11,3 +11,8 @@ uygunluğunu ve kullanıcının açık UUID'sinden komut üretimini tek sınırd
 Komut diyaloğu seçici kısayollarını aynı tanımdan okur. Genel komut aynen
 çalışmaya devam eder; bu modül sürüm doğrulaması veya yönetilen kimlik desteği
 iddia etmez. Yönetilen eylemlerin destek matrisi G2 kabulünden sonra açılacaktır.
+
+Odak çubuğu (13 Eylül): `sessionWorkActions` spec §3 sırasını üretir. Tanınan
+CLI'da “konuşmayı sürdür” seçici komutudur, “aynı dosyalarla yeni konuşma”
+literal komuttur. Aynı sonucu veren düğme yinelenmez. Sürüm sondası yoktur;
+tanınan CLI'da “yönetilen konuşma devamı doğrulanmadı” bilgisi görünür.

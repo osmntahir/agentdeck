@@ -51,6 +51,9 @@ WebSocket/API ve tarayıcı protokol tüketicisi. Eksik parça, sıra boşluğu,
 kimlik/format, son write callback'inden önce input, kontrol devri, eski Run,
 worker kaybı ve kapanış/flush yarışı kapsanır.
 
+Emülatör yetişemeyince PTY duraklatılır ve izleyiciye `output-pressure` /
+“Çıktı işleniyor” görünür; girdi kapanmaz, PTY ölmez.
+
 Piksel/font, mouse/paste/IME, >1 MiB renkli replay'in gerçek tarayıcı tüketim
 hızı ve 4–8 gerçek CLI kabulü G4'te açıktır. G1'in önceki sentetik ölçümleri
 bu runtime için otomatik ürün kabulü sayılmaz.

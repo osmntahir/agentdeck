@@ -33,6 +33,7 @@ export type TerminalEvent =
   | { type: 'resize'; sequence: number; cols: number; rows: number }
   | { type: 'failure'; failure: TerminalFailure }
   | { type: 'overflow' }
+  | { type: 'pressure'; active: boolean }
   | { type: 'ended' }
 
 export interface Replay {
@@ -90,6 +91,8 @@ export interface TerminalHost {
   listRuns(sessionId: string): StoredRun[]
   failure(runId: string): TerminalFailure | null
   checkpointStatus(runId: string): CheckpointStatus
+  /** Emülatör yetişemediği için PTY duraklatıldı; görünür “çıktı işleniyor” bilgisi. */
+  outputPressure(runId: string): boolean
   shutdown(): Promise<void>
 }
 
@@ -268,6 +271,7 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
     if (!over) return
     run.paused = true
     run.onPause?.()
+    deliver(run, { type: 'pressure', active: true })
   }
 
   function maybeResume(run: HostRun): void {
@@ -275,6 +279,7 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
     if (run.inflightBytes > RUN_LOW_WATER || totalInflight > TOTAL_LOW_WATER) return
     run.paused = false
     run.onResume?.()
+    deliver(run, { type: 'pressure', active: false })
   }
 
   function markDirty(run: HostRun): void {
@@ -595,6 +600,10 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
     checkpointStatus(runId: string): CheckpointStatus {
       const entry = checkpointStatus.get(runId)
       return entry ? { ...entry } : { lastSuccessAt: null, lastError: null }
+    },
+
+    outputPressure(runId: string): boolean {
+      return runs.get(runId)?.paused === true
     },
 
     async shutdown(): Promise<void> {

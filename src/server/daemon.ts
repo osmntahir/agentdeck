@@ -570,7 +570,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       sessions: state.sessions.map(sessionView),
       previews,
       terminals: Object.fromEntries(state.sessions.filter((s) => s.runId).map((s) => [s.id, {
-        failure: host.failure(s.runId!), checkpoint: host.checkpointStatus(s.runId!),
+        failure: host.failure(s.runId!),
+        checkpoint: host.checkpointStatus(s.runId!),
+        outputPressure: host.outputPressure(s.runId!),
       }])),
       serviceError: store.serviceError(),
     })
@@ -1371,6 +1373,21 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
    * gösteren kayıt yoksa görev bilgisi uydurulmaz; Git hatası boş listeyle
    * karıştırılmaz. Klasör projesinde her alt depo ayrı okunur.
    */
+  /**
+   * Worktree preset'i HEAD yoksa açıklamayla kapanır; bu okuma oluşturmaz.
+   * Klasör projesinde alt depo HEAD'i oturum açılışında bakılır.
+   */
+  app.get('/api/projects/:id/head', async (req, res) => {
+    const project = store.get().projects.find((p) => p.id === req.params.id)
+    if (!project) return jsonError(res, 404, 'not_found', 'Proje yok')
+    if (project.kind === 'folder') {
+      res.json({ kind: 'folder', hasHead: null })
+      return
+    }
+    const oid = await git.headOid(project.path)
+    res.json({ kind: 'git', hasHead: oid !== null })
+  })
+
   app.get('/api/projects/:id/branches', async (req, res) => {
     const project = store.get().projects.find((p) => p.id === req.params.id)
     if (!project) return jsonError(res, 404, 'not_found', 'Proje yok')
@@ -1659,6 +1676,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           inputOpen = false
           sendJson({ type: 'terminal-error', message: event.failure.message })
           return
+        case 'pressure':
+          sendJson({ type: 'output-pressure', active: event.active })
+          return
         case 'overflow':
           ws.close(1013, 'izleyici yetişemiyor')
           return
@@ -1695,6 +1715,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         attachment!.resume()
         if (ok && sessions.isLive(sessionId as string, runId) && !host.failure(runId)) inputOpen = true
         notifyControl()
+        if (host.outputPressure(runId)) sendJson({ type: 'output-pressure', active: true })
       } catch (err) {
         inputOpen = false
         sendJson({ type: 'terminal-error', message: (err as Error).message })

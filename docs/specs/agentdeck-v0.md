@@ -5,7 +5,9 @@ Revizyon: 2.2 — 12 Eylül 2026. **Durum: tasarım kararları kapandı ve termi
 Bu belge güncel normatif sözleşmedir; ADR'ler gerekçeyi, araştırmalar tarihli kanıtı taşır. Eski GitHub resolution yorumları tarihçedir; çelişen önceki hükümler bu revizyonla yürürlükten kalkar. İki incelemedeki 15 bulgunun karşılığı [revizyon kaydında](../reviews/2026-09-12-decision-reconciliation.md); terminal kararlarının ölçüm kanıtı [doğrulama notunda](../research/terminal-state-validation.md).
 
 **Uygulama durumu:** §8/1, §8/3 terminal dilimi, §8/4 çalışma sonucu dilimi, §8/5 tarama/odak/poll
-entegrasyonu (environment.json dahil) ve §8/6 dayanıklılık ürün koduna girdi. Sınırlar
+entegrasyonu (environment.json dahil) ve §8/6 dayanıklılık ürün koduna girdi. Spec §3 eylem
+sunumu, HEAD'siz worktree kapanışı, kayıp cevap 10 dk TTL ve “çıktı işleniyor” 13 Eylül
+akşamında bağlandı. Sınırlar
 [ADR 0007](../adr/0007-slice-1-implementation-boundaries.md),
 [ADR 0008](../adr/0008-terminal-slice-implementation.md),
 [ADR 0011](../adr/0011-work-result-slice-implementation.md),

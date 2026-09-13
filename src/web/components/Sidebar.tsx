@@ -232,7 +232,7 @@ function OrphanList({ scan, onRefresh }: { scan: OrphanScanResult | null; onRefr
  * sonucu çıkarılmaz. Dikkat bilgisi yalnız açık hata ve orphaned ile ayrılır.
  */
 export function stateLabel(session: SessionView): string {
-  if (session.lifecycle === 'live') return session.activity === 'idle' ? 'Sessiz' : 'Çalışıyor'
+  if (session.lifecycle === 'live') return session.activity === 'idle' ? 'Sessiz · 30 sn' : 'Çalışıyor'
   if (session.lifecycle === 'orphaned') return 'Bağlantı yok'
   if (session.exitCode !== null) return `Çıktı · kod ${session.exitCode}`
   if (session.exitSignal !== null) return `Çıktı · sinyal ${session.exitSignal}`

@@ -13,6 +13,8 @@ export interface StreamStatus {
   vacant: boolean
   generation: number
   historyLoaded: boolean
+  /** Emülatör yetişemiyor; girdi kapanmaz. */
+  pressure: boolean
   message: string
 }
 
@@ -27,7 +29,7 @@ const integer = (value: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): value 
   typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max
 
 export class TerminalStream {
-  status: StreamStatus = { ready: false, live: false, owned: false, vacant: false, generation: 0, historyLoaded: false, message: 'Bağlanıyor…' }
+  status: StreamStatus = { ready: false, live: false, owned: false, vacant: false, generation: 0, historyLoaded: false, pressure: false, message: 'Bağlanıyor…' }
   private queue = Promise.resolve()
   private queuedBytes = 0
   private stopped = false
@@ -124,7 +126,11 @@ export class TerminalStream {
         return
       case 'run-ended':
         if (m.runId !== this.identity.runId) throw new Error('Run kimliği değişti')
-        this.update({ live: false, owned: false, message: 'Run sonlandı · salt okunur görüntü' })
+        this.update({ live: false, owned: false, pressure: false, message: 'Run sonlandı · salt okunur görüntü' })
+        return
+      case 'output-pressure':
+        if (typeof m.active !== 'boolean') throw new Error('Çıktı baskısı geçersiz')
+        this.update({ pressure: m.active })
         return
       case 'history-missing':
       case 'history-unreadable':

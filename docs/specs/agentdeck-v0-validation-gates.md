@@ -89,7 +89,7 @@ Uygulama durumu (13 Eylül 2026): spec §8/1, §8/3, §8/4, §8/5 ve §8/6 ürü
 
 ## Sıradaki iş ve açık kararlar
 
-Son durum (13 Eylül 2026): §8/1, §8/3, §8/4, §8/5 ve §8/6 ürün koduna girdi ([ADR 0013](../adr/0013-durability-slice-implementation.md)). G2 insan kabulü, G3 kalan 3 madde ve G4 açıktır. ADR 0001–0013 kodla kapanabilecek maddeleri sistemde.
+Son durum (13 Eylül 2026): §8/1, §8/3, §8/4, §8/5 ve §8/6 ürün koduna girdi ([ADR 0013](../adr/0013-durability-slice-implementation.md)). Spec §3 eylem sunumu, HEAD'siz worktree kapanışı, istemci `requestId` 10 dk TTL ve çıktı baskısı ürün koduna girdi. G2 insan kabulü, G3 kalan 3 madde ve G4 açıktır.
 
 Sıradaki işler:
 

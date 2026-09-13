@@ -11,11 +11,12 @@ import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
 import { savedGridSessionIds } from './gridLayout'
 import { createStatePoller, pollPreviewIds } from '../shared/statePoll'
+import { launchCli } from '../shared/launchPolicy'
+import { sessionWorkActions } from '../shared/sessionActions'
 import {
   commandLabel,
   formatAge,
   hasRunningProcesses,
-  lastCommand,
   sessionAgeMs,
   type Isolation,
   type Project,
@@ -178,12 +179,14 @@ export function App() {
   }, [active?.id, active?.runId])
 
   const [actionHint, setActionHint] = useState<string | null>(null)
+  const [setupHelp, setSetupHelp] = useState(false)
   const [copiedPath, setCopiedPath] = useState(false)
   // Düğmeler değişince eski açıklama ve kopyalama bildirimi ekranda kalmaz.
   useEffect(() => {
     setActionHint(null)
     setCopiedPath(false)
     setTrustHidden(false)
+    setSetupHelp(false)
   }, [active?.id, active?.archivedAt, active?.lifecycle])
 
   const leaveToScan = () => {
@@ -519,7 +522,7 @@ export function App() {
                   <span className={`dot ${active.lifecycle}`} />
                   {active.lifecycle === 'live'
                     ? active.activity === 'idle'
-                      ? 'Sessiz'
+                      ? 'Sessiz · 30 sn'
                       : 'Çalışıyor'
                     : active.lifecycle === 'orphaned'
                       ? 'Bağlantı yok'
@@ -541,6 +544,9 @@ export function App() {
                     {activeProject.degraded}
                   </span>
                 )}
+                {state.terminals?.[active.id]?.outputPressure && (
+                  <span className="band-chip warn">Çıktı işleniyor</span>
+                )}
               </div>
 
               <div className="topbar-actions">
@@ -558,38 +564,40 @@ export function App() {
                   </>
                 ) : (
                   <>
-                    {hasRunningProcesses(active) && (
-                      <button
-                        {...describe('Süreç grubunu doğrulanmış biçimde durdurur; kayıt, dosyalar ve branch kalır.')}
-                        onClick={() => run(api.stopSession(active.id, active.runId))}
-                      >
-                        durdur
-                      </button>
-                    )}
-                    {/* Arşivdeki oturum görünmeden canlanmaz; önce arşivden çıkarılır. */}
-                    {active.archivedAt === null && (
-                      <>
-                        <button
-                          {...describe(
-                            `Komutu bu çalışma kopyasında aynen yeniden çalıştırır: ${commandLabel(lastCommand(active))}`,
-                          )}
-                          onClick={() => run(api.restartSession(active.id, active.runId))}
-                        >
-                          {hasRunningProcesses(active) ? 'durdur ve yeniden çalıştır' : 'yeniden çalıştır'}
-                        </button>
-                        <button
-                          {...describe(
-                            'Bu çalışma kopyasında başka bir komut veya CLI seçicisi çalıştırır; başlangıç programı değişmez.',
-                          )}
-                          onClick={() => {
-                            setError(null)
-                            setLaunchOpen(true)
-                          }}
-                        >
-                          komut çalıştır…
-                        </button>
-                      </>
-                    )}
+                    {active.archivedAt === null &&
+                      sessionWorkActions(active).map((action) => {
+                        const cwdMissing = Boolean(active.degraded) && action.kind !== 'stop'
+                        return (
+                          <button
+                            key={action.kind}
+                            disabled={cwdMissing}
+                            {...describe(
+                              cwdMissing
+                                ? `Çalışma dizini yok; yeni Run açılmaz: ${active.cwd}`
+                                : action.description,
+                            )}
+                            onClick={() => {
+                              if (cwdMissing) return
+                              if (action.kind === 'stop') {
+                                run(api.stopSession(active.id, active.runId))
+                                return
+                              }
+                              if (action.kind === 'restart') {
+                                run(api.restartSession(active.id, active.runId))
+                                return
+                              }
+                              if (action.kind === 'continue' || action.kind === 'fresh') {
+                                run(api.launchSession(active.id, active.runId, action.command))
+                                return
+                              }
+                              setError(null)
+                              setLaunchOpen(true)
+                            }}
+                          >
+                            {action.label}
+                          </button>
+                        )
+                      })}
                     <button
                       {...describe(
                         active.archivedAt !== null
@@ -613,6 +621,17 @@ export function App() {
                     >
                       {copiedPath ? 'kopyalandı' : 'yolu kopyala'}
                     </button>
+                    {active.isolation === 'worktree' && (
+                      <button
+                        className="btn-quiet"
+                        {...describe(
+                          '.env, bağımlılıklar ve servis portları kopyalanmaz; secret aktarılmaz. Gerekirse bu klasörde kendiniz kurun.',
+                        )}
+                        onClick={() => setSetupHelp((open) => !open)}
+                      >
+                        kurulum
+                      </button>
+                    )}
                     <button
                       className="btn-quiet"
                       {...describe('Terminali grid görünümünde açar.')}
@@ -644,6 +663,23 @@ export function App() {
                 </button>
               </div>
             )}
+            {launchCli(active.command) && (
+              <div className="trust-note" role="note">
+                <span>
+                  Bu sürümde yönetilen konuşma devamı doğrulanmadı; CLI’ın kendi seçicisini veya elinizdeki açık
+                  UUID’yi kullanın.
+                </span>
+              </div>
+            )}
+            {setupHelp && active.isolation === 'worktree' && (
+              <div className="trust-note" role="note">
+                <span>
+                  .env, bağımlılıklar ve servis portları kopyalanmaz; secret aktarılmaz. Gerekirse bu klasörde
+                  kendiniz kurun.
+                </span>
+                <button onClick={() => setSetupHelp(false)}>gizle</button>
+              </div>
+            )}
 
             {pendingDelete && (
               <div className="pad muted delete-target">
@@ -652,6 +688,11 @@ export function App() {
               </div>
             )}
 
+            {state.terminals?.[active.id]?.failure && (
+              <div className="error">
+                Terminal temsili: {state.terminals[active.id].failure!.message}
+              </div>
+            )}
             {state.terminals?.[active.id]?.checkpoint.lastError && (
               <div className="error">
                 Terminal geçmişi kaydedilemedi: {state.terminals[active.id].checkpoint.lastError}

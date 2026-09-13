@@ -195,6 +195,15 @@ export interface BranchesResult {
   truncated: boolean
 }
 
+export interface ProjectHead {
+  kind: 'git' | 'folder'
+  /** Git projesinde commit var mı. Klasör projesinde bakılmaz. */
+  hasHead: boolean | null
+}
+
+/** Worktree preset'i bu okumaya göre kapanır; oluşturmaz. */
+export const getProjectHead = (projectId: string) => call<ProjectHead>(`/api/projects/${projectId}/head`)
+
 /** Projedeki agentdeck/ branch'leri; oturum silinse de branch burada bulunur. */
 export const getBranches = (projectId: string) => call<BranchesResult>(`/api/projects/${projectId}/branches`)
 

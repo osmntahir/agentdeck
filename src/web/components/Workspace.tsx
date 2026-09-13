@@ -348,7 +348,7 @@ export function Workspace({
           {healthy ? 'Yerel daemon bağlı' : 'Daemon bağlantısı bekleniyor'}
         </span>
         <span>
-          {state.projects.length} proje · {state.sessions.length} oturum
+          {state.projects.length} proje · {state.sessions.length} / 256 kayıt (arşivler dahil; otomatik silme yok)
         </span>
         <span>Oturumlar pencere kapansa da çalışır.</span>
       </footer>

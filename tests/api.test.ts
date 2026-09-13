@@ -1386,6 +1386,9 @@ test('commit i olmayan depoda worktree oturumu açıklamayla kapalıdır', async
   try {
     const added = await api.post<{ id: string }>('/api/projects', { path: empty })
     assert.equal(added.status, 200)
+    const head = await api.get<{ kind: string; hasHead: boolean | null }>(`/api/projects/${added.body.id}/head`)
+    assert.equal(head.status, 200, JSON.stringify(head.body))
+    assert.deepEqual(head.body, { kind: 'git', hasHead: false })
     const created = await api.post<{ code: string; message: string }>(
       '/api/sessions',
       createBody(added.body.id),
@@ -1398,6 +1401,14 @@ test('commit i olmayan depoda worktree oturumu açıklamayla kapalıdır', async
     removeDir(dataDir)
     removeDir(empty)
   }
+})
+
+test('commit i olan Git projesinde HEAD worktree için açıktır', async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const head = await api.get<{ kind: string; hasHead: boolean | null }>(`/api/projects/${projectId}/head`)
+    assert.equal(head.status, 200)
+    assert.deepEqual(head.body, { kind: 'git', hasHead: true })
+  })
 })
 
 test('ortak çalışma kopyasında silme dosyalara dokunmaz', { timeout: 30000 }, async () => {

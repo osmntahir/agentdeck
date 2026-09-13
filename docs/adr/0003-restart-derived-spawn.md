@@ -14,3 +14,8 @@ UUID alanında Enter yalnız incelenebilir literal komutu hazırlar. Yeni Run an
 ayrı “Çalıştır” eylemiyle başlar. Ad/yol/latest/kabuk ifadeleri UUID alanından
 geçmez; serbest komut alanı değişmez. Başarılı çalıştırma `lastLaunch.command`
 olarak kaydedilir; yönetilen `resume` veya otomatik kimlik üretimi değildir.
+
+Odak çubuğu (13 Eylül): açık UUID lastLaunch konuşma adayıdır ve “konuşmayı
+sürdür” birincil olur; `lastLaunch.mode = fresh` ise “yeniden çalıştır”
+gizlenir. Canlı işte eylemler durdurmayı söyler. cwd yokken yeni Run düğmeleri
+kapanır.

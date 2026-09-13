@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Isolation, Project } from '../../shared/types'
 import { PRESETS } from '../../shared/types'
+import { getProjectHead } from '../api'
 
 interface Props {
   busy: boolean
@@ -18,11 +19,33 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
   const [name, setName] = useState('')
   // Preset yalnız başlangıç Command'ını doldurur; kalıcı ajan kimliği değildir.
   const [presetIndex, setPresetIndex] = useState(0)
-  const [isolation, setIsolation] = useState<Isolation>(project.kind === 'folder' ? 'shared' : 'worktree')
+  const [isolation, setIsolation] = useState<Isolation | null>(project.kind === 'folder' ? 'shared' : 'worktree')
+  const [hasHead, setHasHead] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (project.kind === 'folder') return
+    let cancelled = false
+    getProjectHead(project.id)
+      .then((head) => {
+        if (cancelled) return
+        setHasHead(head.hasHead)
+        if (head.hasHead === false) setIsolation(null)
+      })
+      .catch(() => {
+        if (!cancelled) setHasHead(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [project.id, project.kind])
+
+  const worktreeClosed = project.kind === 'git' && hasHead === false
+  const ready =
+    isolation !== null &&
+    (isolation === 'shared' || (isolation === 'worktree' && (project.kind === 'folder' || hasHead === true)))
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (busy) return
+    if (busy || !ready || isolation === null) return
     onCreate({ name: name.trim(), command: PRESETS[presetIndex].command, isolation })
   }
 
@@ -46,7 +69,7 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="İsteğe bağlı, örn. kimlik doğrulama"
+            placeholder="İsteğe bağlı, en çok 80 karakter"
           />
         </label>
 
@@ -63,12 +86,19 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
 
         <div className="radio-group">
           <label className="radio">
-            <input type="radio" checked={isolation === 'worktree'} onChange={() => setIsolation('worktree')} />
+            <input
+              type="radio"
+              checked={isolation === 'worktree'}
+              disabled={worktreeClosed}
+              onChange={() => setIsolation('worktree')}
+            />
             <span>
               <strong>İzole</strong> —{' '}
-              {project.kind === 'folder'
-                ? "alt klasörlerdeki her Git deposu için worktree ve branch"
-                : "kendi worktree'si ve branch'i"}
+              {worktreeClosed
+                ? 'projede commit yok; worktree açılamaz'
+                : project.kind === 'folder'
+                  ? "alt klasörlerdeki her Git deposu için worktree ve branch"
+                  : "kendi worktree'si ve branch'i"}
             </span>
           </label>
           <label className="radio">
@@ -78,6 +108,12 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
             </span>
           </label>
         </div>
+        {worktreeClosed && (
+          <p className="dialog-note muted">
+            İlk commit sonrası izole oturum açılabilir. Ortak çalışma kopyasını bilinçli seçin; otomatik
+            seçilmez.
+          </p>
+        )}
 
         {project.kind === 'folder' && (
           <p className="dialog-note muted">
@@ -102,7 +138,7 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
           <button type="button" disabled={busy} onClick={onCancel}>
             vazgeç
           </button>
-          <button type="submit" className="primary" disabled={busy}>
+          <button type="submit" className="primary" disabled={busy || !ready}>
             {busy ? 'Başlatılıyor…' : 'Oturumu başlat'}
           </button>
         </div>

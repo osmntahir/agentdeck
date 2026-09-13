@@ -53,3 +53,18 @@ test('complete yalnız kendi kimliğini düşürür', () => {
   ids.complete('restart', 'başka')
   assert.equal(ids.id('restart', 'd', { expectedRunId: 'r1' }), current)
 })
+
+test('on dakika sonra aynı daemon ve payload yeni kimlik alır', () => {
+  let n = 0
+  let now = 1_000
+  const ids = createMutationIds(
+    () => `id-${++n}`,
+    () => now,
+  )
+  const payload = { projectId: 'p1' }
+  assert.equal(ids.id('create', 'd', payload), 'id-1')
+  now += 10 * 60 * 1000 - 1
+  assert.equal(ids.id('create', 'd', payload), 'id-1', 'süre dolmadan kimlik korunur')
+  now += 1
+  assert.equal(ids.id('create', 'd', payload), 'id-2', 'sunucu defteri düşmüş kimlik ikinci Run açardı')
+})

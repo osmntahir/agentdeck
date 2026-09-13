@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { explicitResumeCommand, launchCli } from '../src/shared/launchPolicy'
+import { explicitResumeCommand, explicitResumeOf, launchCli } from '../src/shared/launchPolicy'
 
 test('yalnız argümansız literal CLI yönetilen kısayola uygundur', () => {
   assert.equal(launchCli(' claude '), 'claude')
@@ -22,4 +22,12 @@ test('kullanıcının açık UUID komutu tam hedefi korur; otomatik devam seçme
     `${id}; touch marker`, `${id}\nexit`, `$(echo ${id})`, `${id}'`, id.slice(0, -1)]) {
     assert.equal(explicitResumeCommand('claude', invalid), null)
   }
+})
+
+test('açık UUID komutu tanınır; seçici ve serbest komut konuşma adayı değildir', () => {
+  const id = '12345678-1234-1234-1234-123456789abc'
+  assert.deepEqual(explicitResumeOf(`claude --resume ${id}`), { cli: 'claude', conversationId: id })
+  assert.equal(explicitResumeOf('claude --resume'), null)
+  assert.equal(explicitResumeOf('claude'), null)
+  assert.equal(explicitResumeOf(`claude --resume ${id}; rm -rf /`), null)
 })

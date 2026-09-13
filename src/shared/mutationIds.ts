@@ -18,19 +18,25 @@ function payloadKey(payload: unknown): string {
   })
 }
 
-export function createMutationIds(random: () => string = () => crypto.randomUUID()): MutationIds {
-  const slots = new Map<string, { daemonId: string; payloadKey: string; requestId: string }>()
+const TTL_MS = 10 * 60 * 1000
+
+export function createMutationIds(
+  random: () => string = () => crypto.randomUUID(),
+  now: () => number = Date.now,
+): MutationIds {
+  const slots = new Map<string, { daemonId: string; payloadKey: string; requestId: string; at: number }>()
   return {
     id(slot, daemonId, payload) {
       const key = payloadKey(payload)
       const existing = slots.get(slot)
+      const fresh = existing && now() - existing.at < TTL_MS
       // Henüz poll edilmemiş boş kimlik aynı daemon'dır; ilk state onu doldurur.
-      if (existing && existing.payloadKey === key && (existing.daemonId === daemonId || existing.daemonId === '' || daemonId === '')) {
+      if (fresh && existing.payloadKey === key && (existing.daemonId === daemonId || existing.daemonId === '' || daemonId === '')) {
         if (daemonId && !existing.daemonId) existing.daemonId = daemonId
         return existing.requestId
       }
       const requestId = random()
-      slots.set(slot, { daemonId, payloadKey: key, requestId })
+      slots.set(slot, { daemonId, payloadKey: key, requestId, at: now() })
       return requestId
     },
     complete(slot, requestId) {
