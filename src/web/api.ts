@@ -1,4 +1,4 @@
-import type { DiffResult, Isolation, Project, SessionView, StateResponse } from '../shared/types'
+import type { DiffResult, DiffScope, Isolation, Project, SessionView, StateResponse } from '../shared/types'
 
 // Token URL'den bir kez alınır, sonra adres çubuğundan temizlenir.
 const fromUrl = new URLSearchParams(location.search).get('token')
@@ -105,7 +105,8 @@ export const deleteSession = (id: string, confirmationToken: string) =>
     body: JSON.stringify({ confirmationToken }),
   })
 
-export const getDiff = (id: string) => call<DiffResult>(`/api/sessions/${id}/diff`)
+export const getDiff = (id: string, scope: DiffScope) =>
+  call<DiffResult>(`/api/sessions/${id}/diff?scope=${scope}`)
 
 export interface OrphanScanResult {
   entries: { path: string; kind: string; gitLink: string | null }[]

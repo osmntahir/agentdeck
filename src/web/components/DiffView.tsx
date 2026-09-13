@@ -1,40 +1,85 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as api from '../api'
-import type { DiffResult } from '../../shared/types'
+import type { DiffResult, DiffScope, Isolation } from '../../shared/types'
 
-export function DiffView({ sessionId }: { sessionId: string }) {
+const SCOPES: [DiffScope, string][] = [
+  ['work', 'Bu çalışma'],
+  ['uncommitted', 'Commit edilmemiş'],
+]
+
+export function DiffView({ sessionId, isolation }: { sessionId: string; isolation: Isolation }) {
+  // Worktree'de varsayılan toplam görünümdür; ortak kopya commit edilmemiş farkla açılır.
+  const [scope, setScope] = useState<DiffScope>(isolation === 'worktree' ? 'work' : 'uncommitted')
   const [data, setData] = useState<DiffResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  // Geç gelen eski cevap yeni isteğin sonucunu ezmez.
+  const generation = useRef(0)
 
   const load = () => {
-    api.getDiff(sessionId).then(setData).catch((e) => setError(e.message))
+    const current = ++generation.current
+    setLoading(true)
+    setError(null)
+    api
+      .getDiff(sessionId, scope)
+      .then((next) => {
+        if (current === generation.current) setData(next)
+      })
+      .catch((e) => {
+        if (current !== generation.current) return
+        setData(null)
+        setError(e.message)
+      })
+      .finally(() => {
+        if (current === generation.current) setLoading(false)
+      })
   }
 
-  useEffect(load, [sessionId])
-
-  if (error) return <div className="pad muted">{error}</div>
-  if (!data) return <div className="pad muted">yükleniyor…</div>
+  useEffect(load, [sessionId, scope])
 
   // Git projesinde tek depo vardır ve eski görünüm korunur.
-  const single = data.repos.length === 1 && data.repos[0].path === '.'
-  const changed = data.repos.filter((repo) => repo.status !== '').length
+  const single = data?.repos.length === 1 && data.repos[0].path === '.'
+  const changed = data?.repos.filter((repo) => repo.status !== '').length ?? 0
 
   return (
     <div className="diff-view">
       <div className="diff-bar">
-        {single ? (
-          <span className="branch">{data.repos[0].branch}</span>
-        ) : (
-          <span className="muted">
-            {data.repos.length} depo · {changed} değişiklikli
-          </span>
-        )}
-        <button onClick={load}>yenile</button>
+        <div className="tabs" role="group" aria-label="Diff kapsamı">
+          {SCOPES.map(([value, label]) => (
+            <button
+              key={value}
+              className={scope === value ? 'on' : ''}
+              aria-pressed={scope === value}
+              onClick={() => setScope(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {data &&
+          (single ? (
+            <span className="branch">{data.repos[0].branch}</span>
+          ) : (
+            <span className="muted">
+              {data.repos.length} depo · {changed} değişiklikli
+            </span>
+          ))}
+        {data && <span className="muted">okundu {new Date(data.capturedAt).toLocaleTimeString()}</span>}
+        <button onClick={load} disabled={loading}>
+          {loading ? 'yükleniyor…' : 'yenile'}
+        </button>
       </div>
-      {data.truncated && (
+      {isolation === 'shared' && (
+        <div className="pad muted">
+          Ortak çalışma kopyasındaki değişiklikler bu oturuma atfedilmez; başka süreçler de yazmış olabilir.
+        </div>
+      )}
+      {error && <div className="pad muted">{error}</div>}
+      {!data && !error && <div className="pad muted">yükleniyor…</div>}
+      {data?.truncated && (
         <div className="pad muted">Alt klasör taraması sınıra ulaştı; bazı depolar listede yok.</div>
       )}
-      {data.repos.map((repo) => (
+      {data?.repos.map((repo) => (
         <section key={repo.path} className="diff-repo">
           {!single && (
             <header className="diff-repo-head">
@@ -42,17 +87,39 @@ export function DiffView({ sessionId }: { sessionId: string }) {
               <span className="branch">{repo.branch}</span>
             </header>
           )}
-          {repo.status && <pre className="diff-status">{repo.status}</pre>}
-          {repo.diff ? (
-            <pre className="diff-body">
-              {repo.diff.split('\n').map((line, i) => (
-                <div key={i} className={lineClass(line)}>
-                  {line || ' '}
-                </div>
-              ))}
-            </pre>
+          {data.scope === 'work' && repo.baseCommit && (
+            <div className="pad muted">Başlangıç commit'i: {repo.baseCommit.slice(0, 12)}</div>
+          )}
+          {repo.error ? (
+            <div className="error">{repo.error}</div>
           ) : (
-            <div className="pad muted">Değişiklik yok.</div>
+            <>
+              {repo.stale && <div className="error">Okuma sırasında HEAD değişti; sonuç eski olabilir. Yenileyin.</div>}
+              {repo.status && <pre className="diff-status">{repo.status}</pre>}
+              {repo.statusTruncated && (
+                <div className="pad muted">Durum listesi sınırda kesildi (10.000 giriş / 1 MiB).</div>
+              )}
+              {repo.diff ? (
+                <pre className="diff-body">
+                  {repo.diff.split('\n').map((line, i) => (
+                    <div key={i} className={lineClass(line)}>
+                      {line || ' '}
+                    </div>
+                  ))}
+                </pre>
+              ) : (
+                <div className="pad muted">
+                  {repo.status
+                    ? 'Net patch boş; index ve çalışma ağacı değişiklikleri durum listesinde.'
+                    : 'Değişiklik yok.'}
+                </div>
+              )}
+              {repo.patchTruncated && (
+                <div className="pad muted">
+                  Patch sınırda kesildi (1 MiB veya 50 yeni dosya); tamamı için yerel Git araçlarını kullanın.
+                </div>
+              )}
+            </>
           )}
         </section>
       ))}

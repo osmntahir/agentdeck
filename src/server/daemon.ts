@@ -6,7 +6,7 @@ import express from 'express'
 import { WebSocketServer } from 'ws'
 import { openStore, type Store } from './store'
 import { acquireDaemonLock, type DaemonLock } from './lock'
-import { createExclusiveLocks, createSerialQueues } from './locks'
+import { createExclusiveLocks, createLimiter, createSerialQueues } from './locks'
 import { createRequestLedger, DedupConflictError } from './dedup'
 import { scanOrphanWorktrees } from './orphans'
 import { findSubRepos } from './repos'
@@ -17,6 +17,8 @@ import { createTerminalHost, type TerminalEvent, type PreviewResult } from './te
 import { chunkText, type SnapshotScope } from './terminalState'
 import {
   commandLabel,
+  type DiffScope,
+  type RepoDiff,
   type Isolation,
   type Project,
   type Session,
@@ -222,6 +224,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const host = createTerminalHost({ checkpoints: openCheckpointStore(options.dataDir) })
   const sessionLocks = createExclusiveLocks()
   const gitQueues = createSerialQueues()
+  /** Diff okuması HTTP kontrol işlerini boğmaz: aynı anda en çok iki Git işi (spec §5). */
+  const diffSlots = createLimiter(2)
   const createLedger = createRequestLedger<Session>()
   const launchLedger = createRequestLedger<Session>()
   const confirmations = new Map<string, Confirmation>()
@@ -1056,6 +1060,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   app.get('/api/sessions/:id/diff', async (req, res) => {
     const session = findSession(req.params.id)
     if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
+    const rawScope = req.query.scope
+    if (rawScope !== undefined && rawScope !== 'work' && rawScope !== 'uncommitted') {
+      return jsonError(res, 400, 'validation', 'scope work veya uncommitted olmalı')
+    }
+    // Worktree'de varsayılan "Bu çalışma"dır; ortak kopya commit edilmemiş farkla
+    // açılır ve bir ajana atfedilmez.
+    const scope: DiffScope = rawScope ?? (session.isolation === 'worktree' ? 'work' : 'uncommitted')
     if (dirIdentityOf(session.cwd) === null) {
       return jsonError(res, 409, 'cwd_missing', `Çalışma dizini yok: ${session.cwd}`)
     }
@@ -1077,14 +1088,41 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         { truncated: scan.truncated },
       )
     }
-    const repos = []
+    const capturedAt = Date.now()
+    const repos: RepoDiff[] = []
     // Her depo birkaç git süreci açar; depolar sırayla okunur.
     for (const rel of scan.repos) {
       const dir = path.join(session.cwd, rel)
-      const [{ diff, status }, branch] = await Promise.all([git.diff(dir), git.currentBranch(dir)])
-      repos.push({ path: rel, branch, diff, status })
+      // Klasör oturumunda her alt depo worktree'si kendi başlangıç commit'ini taşır.
+      const baseCommit =
+        session.worktrees.length > 0
+          ? (session.worktrees.find((w) => w.path === rel)?.baseCommit ?? null)
+          : rel === '.'
+            ? session.baseCommit
+            : null
+      const branch = await git.currentBranch(dir)
+      if (scope === 'work' && baseCommit === null) {
+        // Base bilinmiyorsa hareketli HEAD/main ile sessiz ikame yapılmaz.
+        repos.push({
+          path: rel,
+          branch,
+          baseCommit,
+          diff: '',
+          status: '',
+          patchTruncated: false,
+          statusTruncated: false,
+          stale: false,
+          error:
+            session.isolation === 'shared'
+              ? 'Ortak çalışma kopyasının başlangıç commit\'i yoktur; "Commit edilmemiş" görünümünü kullanın.'
+              : 'Bu deponun başlangıç commit\'i bilinmiyor; toplam görünüm kapalı.',
+        })
+        continue
+      }
+      const read = await diffSlots.run(() => git.diff(dir, scope === 'work' ? (baseCommit as string) : 'HEAD'))
+      repos.push({ path: rel, branch, baseCommit, ...read })
     }
-    res.json({ repos, truncated: scan.truncated })
+    res.json({ scope, capturedAt, repos, truncated: scan.truncated })
   })
 
   if (options.serveWeb) {

@@ -90,15 +90,34 @@ export interface StateResponse {
   }>
 }
 
-/** Tek bir Git deposunun commit edilmemiş değişikliği; path çalışma dizinine göredir. */
+/**
+ * work: base commit'ten mevcut çalışma ağacına toplam fark + takip edilmeyenler.
+ * uncommitted: HEAD'e göre net fark + takip edilmeyenler.
+ */
+export type DiffScope = 'work' | 'uncommitted'
+
+/** Tek bir Git deposunun farkı; path çalışma dizinine göredir. */
 export interface RepoDiff {
   path: string
   branch: string
+  /** Toplam görünümün sabit referansı; bilinmiyorsa null ve toplam görünüm kapalıdır. */
+  baseCommit: string | null
   diff: string
+  /** Porcelain satırları: index ve çalışma ağacı durumu ayrı sütunlardadır. */
   status: string
+  /** Patch 1 MiB sınırında kesildi. */
+  patchTruncated: boolean
+  /** Status listesi 10.000 giriş veya 1 MiB sınırında kesildi. */
+  statusTruncated: boolean
+  /** Okuma sırasında HEAD değişti; sonuç eski olabilir. */
+  stale: boolean
+  /** Git hatası veya kapalı görünüm; boş diff temiz çalışma kopyası sayılmaz. */
+  error: string | null
 }
 
 export interface DiffResult {
+  scope: DiffScope
+  capturedAt: number
   /** Git projesinde tek değer "."; klasör projesinde alt klasörlerdeki depolar. */
   repos: RepoDiff[]
   /** Alt depo taraması sınırda kesildi; liste eksik. */

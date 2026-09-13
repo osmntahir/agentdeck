@@ -868,6 +868,97 @@ test('Git projesinde diff tek depo olarak "." yolunda döner', { timeout: 30000 
   })
 })
 
+test('"Bu çalışma" base commit ten toplam farkı, "Commit edilmemiş" yalnız HEAD e göre farkı gösterir', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    assert.equal(created.status, 200, JSON.stringify(created.body))
+    const cwd = created.body.cwd
+    const git = (...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' })
+
+    fs.writeFileSync(path.join(cwd, 'README.md'), '# ajan commit etti\n')
+    git('commit', '-qam', 'ajan işi')
+    fs.writeFileSync(path.join(cwd, 'notlar.txt'), 'commit edilmemiş\n')
+    git('add', 'notlar.txt')
+    fs.writeFileSync(path.join(cwd, 'yeni.txt'), 'takip edilmeyen\n')
+
+    const work = await api.get<DiffResult>(`/api/sessions/${created.body.id}/diff`)
+    assert.equal(work.status, 200, JSON.stringify(work.body))
+    assert.equal(work.body.scope, 'work', 'izole oturumda varsayılan toplam görünümdür')
+    const [repo] = work.body.repos
+    assert.equal(repo.baseCommit, created.body.baseCommit)
+    assert.equal(repo.error, null)
+    assert.match(repo.diff, /\+# ajan commit etti/, 'commit edilmiş iş toplam görünümde bulunur')
+    assert.match(repo.diff, /\+commit edilmemiş/)
+    assert.match(repo.diff, /\+takip edilmeyen/)
+
+    const uncommitted = await api.get<DiffResult>(`/api/sessions/${created.body.id}/diff?scope=uncommitted`)
+    assert.equal(uncommitted.status, 200, JSON.stringify(uncommitted.body))
+    assert.equal(uncommitted.body.scope, 'uncommitted')
+    assert.doesNotMatch(uncommitted.body.repos[0].diff, /ajan commit etti/, 'HEAD e göre farkta commit edilmiş iş yok')
+    assert.match(uncommitted.body.repos[0].diff, /\+commit edilmemiş/)
+    assert.match(uncommitted.body.repos[0].diff, /\+takip edilmeyen/)
+
+    const invalid = await api.get<{ code: string }>(`/api/sessions/${created.body.id}/diff?scope=main`)
+    assert.equal(invalid.status, 400)
+    assert.equal(invalid.body.code, 'validation')
+  })
+})
+
+test('staged ve unstaged birbirini geri alsa da status kirli kalır; ortak kopyada toplam görünüm uydurulmaz', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, repo, projectId }) => {
+    const isolated = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const cwd = isolated.body.cwd
+    fs.writeFileSync(path.join(cwd, 'README.md'), '# staged\n')
+    execFileSync('git', ['add', 'README.md'], { cwd, stdio: 'pipe' })
+    fs.writeFileSync(path.join(cwd, 'README.md'), '# test\n')
+
+    const net = await api.get<DiffResult>(`/api/sessions/${isolated.body.id}/diff?scope=uncommitted`)
+    assert.equal(net.status, 200, JSON.stringify(net.body))
+    assert.equal(net.body.repos[0].diff, '', 'net patch boş')
+    assert.match(net.body.repos[0].status, /^MM README\.md$/m, 'index ve çalışma ağacı ayrı belirtilir')
+    assert.equal(net.body.repos[0].error, null)
+
+    const shared = await api.post<SessionView>('/api/sessions', createBody(projectId, { isolation: 'shared' }))
+    fs.writeFileSync(path.join(repo, 'ortak.txt'), 'ortak iş\n')
+    const byDefault = await api.get<DiffResult>(`/api/sessions/${shared.body.id}/diff`)
+    assert.equal(byDefault.body.scope, 'uncommitted', 'ortak kopyanın varsayılanı commit edilmemiş görünümdür')
+    assert.match(byDefault.body.repos[0].diff, /\+ortak iş/)
+
+    const work = await api.get<DiffResult>(`/api/sessions/${shared.body.id}/diff?scope=work`)
+    assert.equal(work.status, 200, JSON.stringify(work.body))
+    assert.equal(work.body.repos[0].baseCommit, null)
+    assert.equal(work.body.repos[0].diff, '', 'hareketli HEAD ile ikame yapılmaz')
+    assert.match(String(work.body.repos[0].error), /başlangıç commit/)
+  })
+})
+
+test('diff patch sınırında kesildiğini söyler; Git hatası temiz diff sayılmaz', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const cwd = created.body.cwd
+    fs.writeFileSync(path.join(cwd, 'README.md'), 'büyük satır\n'.repeat(200_000))
+
+    const big = await api.get<DiffResult>(`/api/sessions/${created.body.id}/diff?scope=uncommitted`)
+    assert.equal(big.status, 200)
+    assert.equal(big.body.repos[0].patchTruncated, true)
+    assert.ok(Buffer.byteLength(big.body.repos[0].diff) <= 1024 * 1024, 'patch 1 MiB sınırını aşmaz')
+    assert.ok(big.body.repos[0].diff.endsWith('\n'), 'kesik patch son tam satırda biter')
+
+    if (isRoot) return
+    const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd, encoding: 'utf8' }).trim()
+    const index = path.join(gitDir, 'index')
+    fs.chmodSync(index, 0o000)
+    try {
+      const broken = await api.get<DiffResult>(`/api/sessions/${created.body.id}/diff?scope=uncommitted`)
+      assert.equal(broken.status, 200)
+      assert.notEqual(broken.body.repos[0].error, null, 'okunamayan index temiz diff diye gösterilmez')
+      assert.equal(broken.body.repos[0].diff, '')
+    } finally {
+      fs.chmodSync(index, 0o644)
+    }
+  })
+})
+
 test('bulunmayan yol, dosya, bare depo ve yönetilen normal klasör reddedilir', async () => {
   await withDaemon(async ({ api, dataDir, repo }) => {
     const missing = await api.post('/api/projects', { path: '/tmp/agentdeck-yok-xyz' })

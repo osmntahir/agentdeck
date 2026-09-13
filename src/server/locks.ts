@@ -31,6 +31,30 @@ export function createExclusiveLocks(): ExclusiveLocks {
   }
 }
 
+export interface Limiter {
+  run<T>(fn: () => Promise<T>): Promise<T>
+}
+
+/** Aynı anda en çok `max` iş çalışır; fazlası geliş sırasıyla bekler. */
+export function createLimiter(max: number): Limiter {
+  let active = 0
+  const waiting: (() => void)[] = []
+  return {
+    async run<T>(fn: () => Promise<T>): Promise<T> {
+      if (active >= max) await new Promise<void>((resolve) => waiting.push(resolve))
+      else active += 1
+      try {
+        return await fn()
+      } finally {
+        // Yer bekleyene devredilir; sayaç yalnız kimse beklemiyorsa düşer.
+        const next = waiting.shift()
+        if (next) next()
+        else active -= 1
+      }
+    },
+  }
+}
+
 export interface SerialQueues {
   run<T>(key: string, fn: () => Promise<T>): Promise<T>
 }

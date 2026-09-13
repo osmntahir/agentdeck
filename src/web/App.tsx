@@ -286,7 +286,7 @@ export function App() {
                   />
                 </div>
               )}
-              {tab === 'diff' && <DiffView sessionId={active.id} />}
+              {tab === 'diff' && <DiffView key={active.id} sessionId={active.id} isolation={active.isolation} />}
             </div>
           </>
         ) : (
