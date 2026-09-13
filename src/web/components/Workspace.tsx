@@ -1,3 +1,6 @@
+import { projectStyle, usePreferences } from '../preferences'
+import { AgentMark } from './AgentMark'
+import { Icon } from './Icon'
 import { useEffect, useState } from 'react'
 import type { ProjectView, SessionView, StateResponse } from '../../shared/types'
 import { commandLabel, formatAge, sessionAgeMs } from '../../shared/types'
@@ -16,6 +19,7 @@ interface Props {
   focusId: string | null
   onFocusHandled: () => void
   onSelect: (id: string) => void
+  onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onNewSession: (project: ProjectView) => void
   onAddProject: () => void
   onPreviewIds: (ids: string[]) => void
@@ -41,11 +45,13 @@ export function Workspace({
   focusId,
   onFocusHandled,
   onSelect,
+  onSessionMenu,
   onNewSession,
   onAddProject,
   onPreviewIds,
   onAddToGrid,
 }: Props) {
+  const preferences = usePreferences()
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const [candidate, setCandidate] = useState<string | null>(null)
@@ -110,16 +116,6 @@ export function Workspace({
         </button>
       </header>
       <div className="workspace-scroll">
-        <div className="workspace-intro">
-          <div>
-            <h2>Birçok iş. Tek çalışma alanı.</h2>
-            <p>Projelerini bir araya getir, ajanlarını paralel çalıştır.</p>
-          </div>
-          <span className="live-count">
-            <span className={`dot ${healthy ? 'live' : 'orphaned'}`} />
-            {healthy ? `${live} canlı oturum` : 'Bağlantı kuruluyor'}
-          </span>
-        </div>
         <div className="workspace-tools">
           <div className="filter-tabs">
             {[
@@ -186,7 +182,7 @@ export function Workspace({
               const owned = sessions.filter((s) => s.projectId === project.id)
               if (!owned.length && (query || filter !== 'all')) return null
               return (
-                <section className="project-section" key={project.id}>
+                <section className="project-section" key={project.id} style={projectStyle(project.id, preferences)}>
                   <header>
                     <div className="project-monogram">{project.name.slice(0, 2).toUpperCase()}</div>
                     <div>
@@ -227,6 +223,7 @@ export function Workspace({
                           onFocus={() => setCandidate(session.id)}
                           onDragStart={(e) => e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id)}
                           onClick={() => onSelect(session.id)}
+                          onContextMenu={event => onSessionMenu(session.id, event)}
                           onKeyDown={(e) => {
                             if (e.target !== e.currentTarget) return
                             if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
@@ -263,10 +260,7 @@ export function Workspace({
                           }}
                         >
                           <div className="card-heading">
-                            <span className="program-mark">
-                              {session.command ? commandLabel(session.command).slice(0, 1) : '>_'}
-                            </span>
-                            <span className="card-program">{commandLabel(session.command)}</span>
+                            <AgentMark session={session} />
                             <span className="card-state">
                               <span className={`dot ${session.lifecycle}`} />
                               {stateLabel(session)}
@@ -276,14 +270,14 @@ export function Workspace({
                           <div className="card-meta">
                             <span className="card-project">{project.name}</span>
                             <span aria-hidden="true">·</span>
-                            <span className="card-branch">{session.branch ?? 'Ortak çalışma kopyası'}</span>
+                            <span className="card-branch" title={session.cwd}>{session.isolation === 'worktree' ? 'İzole çalışma' : 'Proje klasörü'}</span>
                           </div>
                           {session.degraded && (
                             <div className="card-degraded" title={session.degraded}>
                               {session.degraded}
                             </div>
                           )}
-                          <pre className="card-preview">
+                          {preferences.previews && <pre className="card-preview">
                             {preview?.state === 'ready'
                               ? preview.preview?.text || 'Terminal henüz çıktı üretmedi.'
                               : preview?.state === 'unavailable'
@@ -291,7 +285,7 @@ export function Workspace({
                                 : sessions.findIndex((s) => s.id === session.id) >= 24
                                   ? 'Önizleme için terminali açın.'
                                   : 'Terminal önizlemesi hazırlanıyor…'}
-                          </pre>
+                          </pre>}
                           <footer>
                             <span>
                               {session.archivedAt !== null && 'Arşivde · '}
@@ -302,15 +296,17 @@ export function Workspace({
                             <span className="card-actions">
                               <button
                                 className="card-grid-add"
+                                title="Grid’e ekle"
+                                aria-label="Grid’e ekle"
                                 tabIndex={-1}
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   onAddToGrid(session.id)
                                 }}
                               >
-                                ⊞ Grid'e ekle
+                                <Icon name="grid" />
                               </button>
-                              <span>Terminali aç ↗</span>
+<button title="Oturum işlemleri" aria-label={`${session.name} işlemleri`} onClick={e => { e.stopPropagation(); onSessionMenu(session.id, e) }}><Icon name="more" /></button>
                             </span>
                           </footer>
                         </div>

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { ActionMenu, type MenuPosition } from './ActionMenu'
+import { Icon } from './Icon'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -34,6 +36,9 @@ export function TerminalPane({
   onFocusHandled,
   runId: inspectRunId = null,
 }: Props) {
+  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
+  const [clipboardError, setClipboardError] = useState<string | null>(null)
+  const closeMenu = useCallback(() => setMenuPosition(null), [])
   const runId = inspectRunId ?? session.runId
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -213,7 +218,20 @@ export function TerminalPane({
   // Salt okunur kalma veya bağlantı mesajı kompakt şeritte de sürekli görünür.
   const attention = !stateHealthy || Boolean(status?.message) || needsControl
   return (
-    <div className="terminal-pane">
+    <div className="terminal-pane" onContextMenu={event => {
+      event.preventDefault(); event.stopPropagation()
+      setMenuPosition({ x: event.clientX, y: event.clientY, origin: document.activeElement as HTMLElement })
+    }}>
+      {menuPosition && <ActionMenu position={menuPosition} onClose={closeMenu} actions={[
+        { label: 'Seçimi kopyala', icon: 'copy', disabled: !termRef.current?.hasSelection(), run: () => { navigator.clipboard.writeText(termRef.current?.getSelection() ?? '').catch(() => setClipboardError('Pano erişimi reddedildi. Ctrl+Shift+C ile kopyalayabilirsiniz.')) } },
+        { label: 'Yapıştır', icon: 'terminal', disabled: !stateHealthy || !status?.ready || !status.live || !status.owned, run: () => { navigator.clipboard.readText().then(text => termRef.current?.paste(text)).catch(() => setClipboardError('Pano erişimi reddedildi. Ctrl+Shift+V ile yapıştırabilirsiniz.')) } },
+        { label: 'Tümünü seç', icon: 'copy', run: () => termRef.current?.selectAll() },
+        { label: 'En alta git', icon: 'back', run: () => termRef.current?.scrollToBottom() },
+        { label: 'Terminal geçmişini yükle', icon: 'archive', disabled: !status?.ready || !status.live || status.historyLoaded, run: () => actions.current.history() },
+        { label: 'Terminale F6 gönder', icon: 'terminal', disabled: !stateHealthy || !status?.owned, run: () => actions.current.f6() },
+        { label: 'Yeniden bağlan', icon: 'refresh', run: () => setRetry(value => value + 1) },
+      ]} />}
+      {clipboardError && <div className="error" role="alert">{clipboardError}<button onClick={() => setClipboardError(null)}>×</button></div>}
       <div className={`terminal-status${compact ? ' compact' : ''}${attention ? ' attention' : ''}`} role="status">
         <span title="F6 uygulama çubuğuna geçer; menü gerçek F6'yı terminale gönderir.">
           {!stateHealthy
@@ -223,11 +241,11 @@ export function TerminalPane({
         {needsControl && <button onClick={() => actions.current.control()}>Kontrolü al</button>}
         {status?.ready && status.live && !status.historyLoaded && (
           <button title="Terminal geçmişini yükle" onClick={() => actions.current.history()}>
-            {compact ? 'Geçmiş' : 'Terminal geçmişini yükle'}
+            Geçmiş
           </button>
         )}
         <button title="Yeniden bağlan" aria-label="Yeniden bağlan" onClick={() => setRetry((value) => value + 1)}>
-          {compact ? '↻' : 'Yeniden bağlan'}
+          <Icon name="refresh" />
         </button>
       </div>
       {!runId && <p>Bu oturumda henüz Run çalışmadı.</p>}

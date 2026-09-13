@@ -1,3 +1,4 @@
+import { processAgent } from './processAgent'
 import fs from 'node:fs'
 import * as pty from 'node-pty'
 import { DEFAULT_STOP_TIMING, realProcessGroup, verifiedStop, type ProcessGroup, type StopOutcome, type StopTiming } from './stop'
@@ -32,6 +33,7 @@ interface LiveRun {
   exited: Promise<void>
   markExited: () => void
   lastActivityAt: number
+  agentRead?: { at: number; value: string | null }
 }
 
 const live = new Map<string, LiveRun>()
@@ -262,4 +264,11 @@ export async function stopAll(timing: StopTiming = DEFAULT_STOP_TIMING): Promise
   const results = new Map<string, StopOutcome>()
   for (const id of ids) results.set(id, await stop(id, timing))
   return results
+}
+
+export function foregroundAgent(sessionId: string): string | null {
+  const entry = live.get(sessionId)
+  if (!entry) return null
+  if (!entry.agentRead || Date.now() - entry.agentRead.at >= 3000) entry.agentRead = { at: Date.now(), value: processAgent(entry.pid) }
+  return entry.agentRead.value
 }

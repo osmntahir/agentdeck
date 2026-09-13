@@ -1,3 +1,4 @@
+import { readGitWorkspace, switchWorkspaceBranch } from './branchControl'
 import http from 'node:http'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -304,6 +305,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const cwdProblem = directoryProblem(session.cwd)
     return {
       ...session,
+      foregroundAgent: sessions.foregroundAgent(session.id),
       activity: live?.activity ?? null,
       lastActivityAt: live?.lastActivityAt ?? null,
       remainingProcessGroup: sessions.hasLingeringGroup(session.id),
@@ -1435,6 +1437,61 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       })
     }
     res.json({ repos, truncated: scan.truncated })
+  })
+
+  async function workspaceRepos(session: Session) {
+    const project = store.get().projects.find(p => p.id === session.projectId)
+    if (dirIdentityOf(session.cwd) === null) throw new HttpError(409, 'cwd_missing', 'Çalışma klasörü erişilemiyor')
+    return project?.kind === 'folder'
+      ? findSubRepos(session.cwd)
+      : { repos: (await git.repoRoot(session.cwd)) ? ['.'] : [], truncated: false }
+  }
+
+  const workspaceGitCache = new Map<string, { at: number; read: ReturnType<typeof readGitWorkspace> }>()
+  app.get('/api/sessions/:id/git', async (req, res) => {
+    const session = findSession(req.params.id)
+    if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
+    try {
+      const scan = await workspaceRepos(session)
+      const repos = []
+      for (const rel of scan.repos) {
+        const cwd = path.join(session.cwd, rel)
+        const key = `${cwd}:${req.query.branches === '1'}`
+        let cached = workspaceGitCache.get(key)
+        if (!cached || Date.now() - cached.at >= 2000) {
+          if (workspaceGitCache.size >= 128) workspaceGitCache.clear()
+          cached = { at: Date.now(), read: gitReadSlots.run(() => readGitWorkspace(cwd, req.query.branches === '1')) }
+          workspaceGitCache.set(key, cached)
+        }
+        const current = await cached.read
+        repos.push({ ...current, path: rel })
+      }
+      res.json({ repos, truncated: scan.truncated })
+    } catch (error) { jsonError(res, 409, 'git_read_failed', (error as Error).message) }
+  })
+
+  app.post('/api/sessions/:id/git/switch', async (req, res) => {
+    const session = findSession(req.params.id)
+    if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
+    const body = req.body ?? {}
+    if (typeof body.repo !== 'string' || typeof body.branch !== 'string' || body.branch.length > 255 || typeof body.create !== 'boolean' ||
+        !(body.expectedHead === null || typeof body.expectedHead === 'string') || !(body.expectedBranch === null || typeof body.expectedBranch === 'string') ||
+        Object.keys(body).some(key => !['repo', 'branch', 'create', 'expectedHead', 'expectedBranch', 'expectedRunId'].includes(key))) {
+      return jsonError(res, 400, 'validation', 'Branch isteği geçersiz')
+    }
+    const held = sessionLocks.tryAcquire(session.id)
+    if (!held) return jsonError(res, 409, 'operation_in_progress', 'Bu oturumda başka bir işlem sürüyor')
+    try {
+      if (body.expectedRunId !== session.runId) throw new Error('Oturum yeniden başladı; görünümü yenileyin')
+      if (projectsBeingDeleted.has(session.projectId)) throw new Error('Proje kaldırılıyor; branch değiştirilemez')
+      const scan = await workspaceRepos(session)
+      if (!scan.repos.includes(body.repo)) throw new Error('Depo bu çalışma alanına ait değil')
+      const cwd = path.join(session.cwd, body.repo)
+      const current = await gitQueues.run(await git.commonGitDir(cwd), () => switchWorkspaceBranch(cwd, body))
+      workspaceGitCache.clear()
+      res.json({ ...current, path: body.repo })
+    } catch (error) { jsonError(res, 409, 'git_switch_failed', (error as Error).message) }
+    finally { held.release() }
   })
 
   app.get('/api/sessions/:id/diff', async (req, res) => {

@@ -10,4 +10,4 @@ Ignored dosyalar dahil silinecek çalışma kopyasının kapsamı, maliyet sın�
 
 Güncelleme (13 Eylül 2026): create rollback'inin kirli kopyayı koruması [ADR 0013](0013-durability-slice-implementation.md) ile ölçüldü. `git worktree remove` kilit yüzünden başarısızsa kaynak yine korunur; `rmSync` fallback yoktur.
 
-Git projesinde commit yoksa izole worktree açıklamayla kapalıdır (`head_missing`); ortak kopya otomatik seçilmez. Klasör projesindeki commit'siz alt depo [ADR 0009](0009-folder-project-sub-repos.md) ile aynı kuralı kullanır.
+Git projesinde commit yoksa izole worktree açıklamayla kapalıdır (`head_missing`). Yeni oturumun varsayılanı [ADR 0014](0014-workspace-ux-current-branch-and-recovery.md) ile proje klasörüdür (shared); worktree ve Session branch yalnız izole çalışma seçilince açılır. Klasör projesindeki commit'siz alt depo [ADR 0009](0009-folder-project-sub-repos.md) ile aynı kuralı kullanır.

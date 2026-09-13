@@ -19,7 +19,7 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
   const [name, setName] = useState('')
   // Preset yalnız başlangıç Command'ını doldurur; kalıcı ajan kimliği değildir.
   const [presetIndex, setPresetIndex] = useState(0)
-  const [isolation, setIsolation] = useState<Isolation | null>(project.kind === 'folder' ? 'shared' : 'worktree')
+  const [isolation, setIsolation] = useState<Isolation | null>('shared')
   const [hasHead, setHasHead] = useState<boolean | null>(null)
   useEffect(() => {
     if (project.kind === 'folder') return
@@ -28,7 +28,7 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
       .then((head) => {
         if (cancelled) return
         setHasHead(head.hasHead)
-        if (head.hasHead === false) setIsolation(null)
+        if (head.hasHead === false) setIsolation((current) => current === 'worktree' ? 'shared' : current)
       })
       .catch(() => {
         if (!cancelled) setHasHead(null)
@@ -93,7 +93,7 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
               onChange={() => setIsolation('worktree')}
             />
             <span>
-              <strong>İzole</strong> —{' '}
+              <strong>İzole çalışma</strong> —{' '}
               {worktreeClosed
                 ? 'projede commit yok; worktree açılamaz'
                 : project.kind === 'folder'
@@ -104,14 +104,13 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
           <label className="radio">
             <input type="radio" checked={isolation === 'shared'} onChange={() => setIsolation('shared')} />
             <span>
-              <strong>Ortak</strong> — doğrudan proje klasöründe
+              <strong>Proje klasörü</strong> — mevcut branch, yeni branch oluşturulmaz
             </span>
           </label>
         </div>
         {worktreeClosed && (
           <p className="dialog-note muted">
-            İlk commit sonrası izole oturum açılabilir. Ortak çalışma kopyasını bilinçli seçin; otomatik
-            seçilmez.
+            İlk commit sonrası izole çalışma da kullanılabilir.
           </p>
         )}
 

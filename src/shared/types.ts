@@ -1,3 +1,4 @@
+import { AGENTS } from './agents'
 export type Isolation = 'worktree' | 'shared'
 
 /** Yönetilen PTY'nin durumu. Activity ve çalışma kopyası sağlığı ayrı kavramlardır. */
@@ -67,6 +68,8 @@ export interface PersistedState {
 
 /** Kalıcı kayda türetilmiş alanların eklendiği API görünümü. */
 export interface SessionView extends Session {
+  /** Çalışan alt süreçten gözlenen ajan; yalnız sunum, konuşma kimliği değildir. */
+  foregroundAgent?: string | null
   activity: Activity | null
   lastActivityAt: number | null
   /** Kalan süreç grubu: Run'ın lideri çıktı ama grubunda hâlâ süreç var. */
@@ -158,9 +161,7 @@ export interface Preset {
 }
 
 export const PRESETS: Preset[] = [
-  { label: 'Claude Code', command: 'claude' },
-  { label: 'Codex', command: 'codex' },
-  { label: 'Gemini CLI', command: 'gemini' },
+  ...AGENTS.map(({ label, command }) => ({ label, command })),
   { label: 'Kabuk', command: null },
 ]
 
@@ -191,3 +192,14 @@ export function commandLabel(command: string | null): string {
   if (command === null) return 'Kabuk'
   return PRESETS.find((p) => p.command === command)?.label ?? command
 }
+
+/** Anlık Git durumu; Session.branch açılış kaydıyla karıştırılmaz. */
+export interface GitWorkspace {
+  path: string
+  branch: string | null
+  head: string | null
+  dirty: boolean
+  branches: string[]
+  truncated: boolean
+}
+export interface GitWorkspaces { repos: GitWorkspace[]; truncated: boolean }

@@ -1,3 +1,6 @@
+import { BranchPicker } from './BranchPicker'
+import { projectStyle, usePreferences } from '../preferences'
+import { AgentMark } from './AgentMark'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
   DockviewDefaultTab,
@@ -16,7 +19,6 @@ import {
 } from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
 import type { SessionView, StateResponse } from '../../shared/types'
-import { commandLabel } from '../../shared/types'
 import { clearGridLayout, loadGridLayout, MAX_GRID_PANELS, saveGridLayout, SESSION_DRAG_TYPE } from '../gridLayout'
 import { stateLabel } from './Sidebar'
 import { TerminalPane } from './TerminalPane'
@@ -27,6 +29,7 @@ interface GridContextValue {
   healthy: boolean
   focusRequest: { sessionId: string; sequence: number; origin: HTMLElement } | null
   onFocusHandled: () => void
+  onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onOpen: (sessionId: string) => void
 }
 
@@ -81,6 +84,7 @@ function addSession(
 
 function TerminalPanel({ params, api }: IDockviewPanelProps) {
   const grid = useContext(GridContext)
+  const preferences = usePreferences()
   const [visible, setVisible] = useState(api.isVisible)
   useEffect(() => {
     const listener = api.onDidVisibilityChange((event) => setVisible(event.isVisible))
@@ -93,7 +97,7 @@ function TerminalPanel({ params, api }: IDockviewPanelProps) {
   // Gizli sekmede xterm açık tutulmaz; öne gelince ekran daemon'dan yeniden kurulur.
   if (!visible) return null
   return (
-    <div className="grid-panel">
+    <div className="grid-panel colored-terminal" style={projectStyle(session.projectId, preferences)}>
       <TerminalPane
         key={`${grid.state.daemonId}:${session.id}:${session.runId}`}
         session={session}
@@ -115,12 +119,14 @@ function GroupActions({ activePanel }: IDockviewHeaderActionsProps) {
   if (!grid || !session) return null
   const project = grid.state.projects.find((p) => p.id === session.projectId)
   return (
-    <div className="grid-group-actions">
+    <div className="grid-group-actions" onContextMenu={event => grid.onSessionMenu(session.id, event)}>
+      <AgentMark session={session} />
       <span className={`dot ${session.lifecycle}`} />
       <span className="grid-group-meta" title={session.degraded ?? session.cwd}>
-        {project?.name ?? 'proje kaydı yok'} · {commandLabel(session.command)} · {stateLabel(session)}
+        {project?.name ?? 'proje kaydı yok'} · {stateLabel(session)}
         {session.degraded ? ' · dizin kullanılamıyor' : ''}
       </span>
+      <BranchPicker session={session} healthy={grid.healthy} />
       <button title="Tek görünümde aç: diff ve oturum eylemleri" onClick={() => grid.onOpen(session.id)}>
         Aç ↗
       </button>
@@ -167,11 +173,12 @@ interface Props {
   /** Başka görünümden eklenmek istenen oturum; grid hazır olunca işlenir. */
   pendingAdd: string | null
   onPendingHandled: () => void
+  onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onOpen: (sessionId: string) => void
   onPanelsChange: (sessionIds: string[]) => void
 }
 
-export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onOpen, onPanelsChange }: Props) {
+export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onOpen, onSessionMenu, onPanelsChange }: Props) {
   const [api, setApi] = useState<DockviewApi | null>(null)
   const [panelIds, setPanelIds] = useState<string[]>([])
   const [candidate, setCandidate] = useState<string | null>(null)
@@ -234,7 +241,7 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
   }, [api, healthy, state.sessions])
 
   return (
-    <GridContext.Provider value={{ state, healthy, onOpen, focusRequest, onFocusHandled: () => setFocusRequest(null) }}>
+    <GridContext.Provider value={{ state, healthy, onOpen, onSessionMenu, focusRequest, onFocusHandled: () => setFocusRequest(null) }}>
       <section className="terminal-grid">
         <header className="workspace-header">
           <div>

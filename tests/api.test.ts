@@ -2377,3 +2377,28 @@ test('eski desteklenmeyen launch reddedilir; başlangıç programı ve yeni Run 
     removeDir(cwd)
   }
 })
+
+test('branch API ortak klasörü kullanır; yol kaçışı ve eski Run reddedilir', async () => {
+  await withDaemon(async ({ api, repo, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId, { isolation: 'shared', command: null }))
+    const id = created.body.id
+    execFileSync('git', ['branch', 'feature/api'], { cwd: repo })
+    const read = await api.get<import('../src/shared/types').GitWorkspaces>(`/api/sessions/${id}/git?branches=1`)
+    assert.equal(read.status, 200)
+    const initial = read.body.repos[0]
+    assert.equal(initial.branch, 'main')
+    assert.ok(initial.branches.includes('feature/api'))
+    const input = { repo: '.', branch: 'feature/api', create: false, expectedHead: initial.head, expectedBranch: 'main', expectedRunId: created.body.runId }
+    assert.equal((await api.post(`/api/sessions/${id}/git/switch`, { ...input, repo: '../' })).status, 409)
+    assert.equal((await api.post(`/api/sessions/${id}/git/switch`, { ...input, expectedRunId: 'wrong' })).status, 409)
+    assert.equal((await api.post(`/api/sessions/${id}/git/switch`, { ...input, force: true })).status, 400)
+    const switched = await api.post<import('../src/shared/types').GitWorkspace>(`/api/sessions/${id}/git/switch`, input)
+    assert.equal(switched.status, 200, JSON.stringify(switched.body))
+    assert.equal(switched.body.branch, 'feature/api')
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions[0].runId, created.body.runId, 'branch değişimi PTY açmaz')
+    assert.equal(state.body.sessions[0].branch, null, 'açılış branch kaydı güncel branch diye değiştirilmez')
+    const current = await api.get<import('../src/shared/types').GitWorkspaces>(`/api/sessions/${id}/git`)
+    assert.equal(current.body.repos[0].branch, 'feature/api')
+  })
+})

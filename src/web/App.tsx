@@ -1,3 +1,10 @@
+import { ActionMenu, type MenuAction, type MenuPosition } from './components/ActionMenu'
+import { Icon } from './components/Icon'
+import { AgentMark } from './components/AgentMark'
+import { BranchPicker } from './components/BranchPicker'
+import { SettingsDialog } from './components/SettingsDialog'
+import { usePreferences, projectStyle } from './preferences'
+import { useWorkspaceLifecycle } from './useWorkspaceLifecycle'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as api from './api'
 import { AddProjectDialog } from './components/AddProjectDialog'
@@ -11,15 +18,13 @@ import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
 import { savedGridSessionIds } from './gridLayout'
 import { createStatePoller, pollPreviewIds } from '../shared/statePoll'
-import { sessionWorkActions, sessionWorkCli } from '../shared/sessionActions'
+import { sessionWorkActions } from '../shared/sessionActions'
 import {
-  commandLabel,
-  formatAge,
   hasRunningProcesses,
-  sessionAgeMs,
   type Isolation,
   type Project,
   type StateResponse,
+  type SessionView,
 } from '../shared/types'
 
 const TRUST_NOTE = 'Ajan klasör güveni veya giriş onayı isteyebilir; terminalden tamamlayın.'
@@ -59,6 +64,11 @@ const EMPTY: StateResponse = {
 }
 
 export function App() {
+  const preferences = usePreferences()
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [menu, setMenu] = useState<{ id: string; position: MenuPosition } | null>(null)
+  const closeMenu = useCallback(() => setMenu(null), [])
   const [state, setState] = useState<StateResponse>(EMPTY)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [tab, setTab] = useState<'terminal' | 'diff'>('terminal')
@@ -92,6 +102,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
 
   const refresh = () => pollerRef.current?.refresh() ?? Promise.resolve()
+  const lifecycle = useWorkspaceLifecycle(state, stateHealthy, preferences, refresh)
 
   // Yetim keşfi salt okunurdur ve poll edilmez: açılışta ve istenince okunur.
   const refreshOrphans = () =>
@@ -177,15 +188,11 @@ export function App() {
     }
   }, [active?.id, active?.runId])
 
-  const [actionHint, setActionHint] = useState<string | null>(null)
-  const [setupHelp, setSetupHelp] = useState(false)
   const [copiedPath, setCopiedPath] = useState(false)
   // Düğmeler değişince eski açıklama ve kopyalama bildirimi ekranda kalmaz.
   useEffect(() => {
-    setActionHint(null)
     setCopiedPath(false)
     setTrustHidden(false)
-    setSetupHelp(false)
   }, [active?.id, active?.archivedAt, active?.lifecycle])
 
   const leaveToScan = () => {
@@ -208,7 +215,7 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'F6') {
         event.preventDefault()
-        if (document.querySelector('dialog[open]')) return
+        if (document.querySelector('dialog[open], [role=menu]')) return
         if (inTerminal(event.target)) {
           ;(document.querySelector<HTMLElement>('.topbar-back') ?? document.querySelector<HTMLElement>('.mobile-navigation button') ?? document.querySelector<HTMLElement>('.home-nav'))?.focus()
           return
@@ -224,7 +231,7 @@ export function App() {
       }
       if (event.key !== 'Escape') return
       if (inTerminal(event.target) || inField(event.target)) return
-      if (document.querySelector('dialog[open]')) return
+      if (document.querySelector('dialog[open], [role=menu]')) return
       if (launchOpen) {
         if (!launching) setLaunchOpen(false)
         event.preventDefault()
@@ -299,22 +306,15 @@ export function App() {
   }
 
   // Arşiv dosyalara dokunmaz; canlı iş yalnız açıkça görünen "durdur ve arşivle" ile kapanır.
-  const toggleArchive = () => {
-    if (!active) return
+  const toggleArchive = (target = active) => {
+    if (!target) return
+    const active = target
     run(
       active.archivedAt !== null
         ? api.unarchiveSession(active.id)
         : api.archiveSession(active.id, active.runId, hasRunningProcesses(active)),
     )
   }
-
-  // Eylem başlamadan önce ne yapacağını tek cümleyle söyler; fareyle ve klavye odağıyla görünür.
-  const describe = (text: string) => ({
-    onMouseEnter: () => setActionHint(text),
-    onMouseLeave: () => setActionHint(null),
-    onFocus: () => setActionHint(text),
-    onBlur: () => setActionHint(null),
-  })
 
   const copyPath = () => {
     if (!active) return
@@ -342,8 +342,10 @@ export function App() {
   }
 
   // Silme her zaman taze bir önizlemeyle başlar: kullanıcı neyin gideceğini görür.
-  const askDelete = () => {
-    if (!active) return
+  const askDelete = (target = active) => {
+    if (!target) return
+    const active = target
+    setActiveId(active.id)
     setError(null)
     api
       .previewSessionDelete(active.id)
@@ -411,10 +413,36 @@ export function App() {
       })
   }
 
+  const showMenu = (id: string, event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault(); event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    setMenu({ id, position: { x: event.clientX || rect.left, y: event.clientY || rect.bottom, origin: event.currentTarget } })
+  }
+  const executeAction = (session: SessionView, action: ReturnType<typeof sessionWorkActions>[number]) => {
+    if (action.kind === 'stop') return run(api.stopSession(session.id, session.runId))
+    if (action.kind === 'restart') return run(api.restartSession(session.id, session.runId))
+    if (action.kind === 'continue' || action.kind === 'fresh') return run(api.launchSession(session.id, session.runId, action.command, action.kind === 'fresh' ? 'fresh' : 'picker'))
+    setActiveId(session.id); setError(null); setLaunchOpen(true)
+  }
+  const menuSession = state.sessions.find(session => session.id === menu?.id)
+  const menuActions: MenuAction[] = menuSession ? [
+    { label: 'Terminali aç', icon: 'terminal', run: () => openSession(menuSession.id) },
+    { label: 'Değişiklikleri incele', icon: 'diff', run: () => { openSession(menuSession.id); setTab('diff') } },
+    { label: 'Grid’e ekle', icon: 'grid', run: () => addToGrid(menuSession.id) },
+    ...(menuSession.archivedAt === null ? sessionWorkActions(menuSession).map(action => ({ label: action.label, description: action.description, icon: action.kind === 'stop' ? 'stop' as const : 'play' as const, disabled: !stateHealthy || Boolean(menuSession.degraded && action.kind !== 'stop'), run: () => executeAction(menuSession, action) })) : []),
+    { label: menuSession.archivedAt !== null ? 'Arşivden çıkar' : hasRunningProcesses(menuSession) ? 'Durdur ve arşivle' : 'Arşivle', icon: 'archive', disabled: !stateHealthy, run: () => toggleArchive(menuSession) },
+    { label: 'Workspace yolunu kopyala', icon: 'copy', run: () => { navigator.clipboard.writeText(menuSession.cwd).catch(() => setError(`Yol kopyalanamadı: ${menuSession.cwd}`)) } },
+    { label: 'Silme seçenekleri…', icon: 'trash', danger: true, disabled: !stateHealthy, run: () => askDelete(menuSession) },
+  ] : []
+
   return (
-    <div className="app">
+    <div className={`app${preferences.compact ? ' compact-ui' : ''}`}>
+
       <SidebarShell>{(navigate) => <Sidebar
         state={state}
+        onSessionMenu={showMenu}
+        onSettings={() => setSettingsOpen(true)}
+        notifications={preferences.notifications && <div className="notification-center"><button aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(!notificationsOpen)}>Bildirimler {lifecycle.notices.length > 0 && <span className="badge">{lifecycle.notices.length}</span>}</button>{notificationsOpen && <div className="notification-list"><header><strong>Terminal çıkışları</strong><button onClick={lifecycle.clearNotices}>Temizle</button></header>{lifecycle.notices.length === 0 && <p className="muted">Yeni bildirim yok.</p>}{lifecycle.notices.map(notice => <button key={notice.id} onClick={() => { setNotificationsOpen(false); navigate(() => openSession(notice.sessionId)) }}><strong>{notice.title}</strong><span>{notice.detail}</span></button>)}</div>}</div>}
         healthy={stateHealthy}
         onHome={() => navigate(() => {
           leaveToScan()
@@ -444,6 +472,8 @@ export function App() {
       />}</SidebarShell>
 
       <main className="main">
+        {lifecycle.recoveryMessage && <div className="recovery-notice" role="status"><span>{lifecycle.recoveryMessage}</span><button aria-label="Geri açma bilgisini kapat" onClick={lifecycle.dismissRecovery}>×</button></div>}
+
         {connectionError && (
           <div className="error" role="alert">
             {connectionError}
@@ -465,10 +495,11 @@ export function App() {
             state={state}
             healthy={stateHealthy}
             now={now}
-            previewsEnabled={!active && view === 'sessions'}
+            previewsEnabled={preferences.previews && !active && view === 'sessions'}
             focusId={scanFocusId}
             onFocusHandled={() => setScanFocusId(null)}
             onSelect={openSession}
+            onSessionMenu={showMenu}
             onNewSession={setDialogProject}
             onAddProject={() => setAddingProject(true)}
             onAddToGrid={addToGrid}
@@ -481,181 +512,26 @@ export function App() {
             pendingAdd={pendingGridAdd}
             onPendingHandled={() => setPendingGridAdd(null)}
             onOpen={openSession}
+            onSessionMenu={showMenu}
             onPanelsChange={setGridIds}
           />
         )}
         {active && (
           <>
-            <header className="topbar">
-              <button
-                className="topbar-back"
-                aria-keyshortcuts="F6 Escape"
-                title={view === 'grid' ? 'Terminal grid’e dön' : 'Tüm oturumlara dön'}
-                onClick={leaveToScan}
-              >
-                {view === 'grid' ? '← Grid' : '← Oturumlar'}
-              </button>
-              <div className="topbar-info">
-                <div className="title">{active.name}</div>
-                <div className="subtitle" title={active.cwd}>
-                  {activeProject?.name ?? 'proje kaydı yok'}
-                  {' · '}
-                  {commandLabel(active.command)}
-                  {' · '}
-                  {active.branch ?? 'ortak çalışma kopyası'}
-                  {active.archivedAt !== null && ' · arşivde'}
-                </div>
-              </div>
-
-              <div className="tabs">
-                <button className={tab === 'terminal' ? 'on' : ''} onClick={() => setTab('terminal')}>
-                  Terminal
-                </button>
-                <button className={tab === 'diff' ? 'on' : ''} onClick={() => setTab('diff')}>
-                  Değişiklikler
-                </button>
-              </div>
-
-              <div className="topbar-band">
-                <span className="band-chip">
-                  <span className={`dot ${active.lifecycle}`} />
-                  {active.lifecycle === 'live'
-                    ? active.activity === 'idle'
-                      ? 'Sessiz · 30 sn'
-                      : 'Çalışıyor'
-                    : active.lifecycle === 'orphaned'
-                      ? 'Bağlantı yok'
-                      : active.exitCode !== null
-                        ? `Çıktı · kod ${active.exitCode}`
-                        : active.exitSignal !== null
-                          ? `Çıktı · sinyal ${active.exitSignal}`
-                          : 'Çıktı'}
-                </span>
-                <span className="band-chip muted">{formatAge(sessionAgeMs(active, now))}</span>
-                <span className="band-chip muted">{active.isolation === 'worktree' ? 'İzole' : 'Ortak'}</span>
-                {active.degraded && (
-                  <span className="band-chip warn" title={active.degraded}>
-                    {active.degraded}
-                  </span>
-                )}
-                {activeProject?.degraded && (
-                  <span className="band-chip warn" title={activeProject.degraded}>
-                    {activeProject.degraded}
-                  </span>
-                )}
-                {state.terminals?.[active.id]?.outputPressure && (
-                  <span className="band-chip warn">Çıktı işleniyor</span>
-                )}
-              </div>
-
-              <div className="topbar-actions">
-                {pendingDelete ? (
-                  <>
-                    <span className="muted" title={pendingDelete.cwd}>
-                      {pendingDelete.isolation === 'shared'
-                        ? 'Oturum kaydı kaldırılsın mı? Klasör ve dosyalar korunur.'
-                        : deleteQuestion(pendingDelete)}
-                    </span>
-                    <button onClick={confirmDelete}>
-                      {pendingDelete.isolation === 'shared' ? 'Kaydı kaldır' : 'sil (branch kalır)'}
-                    </button>
-                    <button onClick={() => setPendingDelete(null)}>vazgeç</button>
-                  </>
-                ) : (
-                  <>
-                    {active.archivedAt === null &&
-                      sessionWorkActions(active).map((action) => {
-                        const cwdMissing = Boolean(active.degraded) && action.kind !== 'stop'
-                        return (
-                          <button
-                            key={action.kind}
-                            disabled={cwdMissing}
-                            {...describe(
-                              cwdMissing
-                                ? `Çalışma dizini yok; yeni Run açılmaz: ${active.cwd}`
-                                : action.description,
-                            )}
-                            onClick={() => {
-                              if (cwdMissing) return
-                              if (action.kind === 'stop') {
-                                run(api.stopSession(active.id, active.runId))
-                                return
-                              }
-                              if (action.kind === 'restart') {
-                                run(api.restartSession(active.id, active.runId))
-                                return
-                              }
-                              if (action.kind === 'continue' || action.kind === 'fresh') {
-                                run(
-                                  api.launchSession(
-                                    active.id,
-                                    active.runId,
-                                    action.command,
-                                    action.kind === 'fresh' ? 'fresh' : 'picker',
-                                  ),
-                                )
-                                return
-                              }
-                              setError(null)
-                              setLaunchOpen(true)
-                            }}
-                          >
-                            {action.label}
-                          </button>
-                        )
-                      })}
-                    <button
-                      {...describe(
-                        active.archivedAt !== null
-                          ? 'Kaydı aktif taramaya döndürür; Run başlatmaz, dosyalara dokunmaz.'
-                          : hasRunningProcesses(active)
-                            ? 'Süreç grubunu doğrulanmış biçimde durdurur, sonra kaydı aktif taramadan kaldırır; dosyalar ve branch kalır.'
-                            : 'Kaydı aktif taramadan kaldırır; dosyalar, branch ve terminal görüntüleri kalır.',
-                      )}
-                      onClick={toggleArchive}
-                    >
-                      {active.archivedAt !== null
-                        ? 'arşivden çıkar'
-                        : hasRunningProcesses(active)
-                          ? 'durdur ve arşivle'
-                          : 'arşivle'}
-                    </button>
-                    <button
-                      className="btn-quiet"
-                      {...describe(`Çalışma dizininin yolunu kopyalar: ${active.cwd}`)}
-                      onClick={copyPath}
-                    >
-                      {copiedPath ? 'kopyalandı' : 'yolu kopyala'}
-                    </button>
-                    {active.isolation === 'worktree' && (
-                      <button
-                        className="btn-quiet"
-                        {...describe(
-                          '.env, bağımlılıklar ve servis portları kopyalanmaz; secret aktarılmaz. Gerekirse bu klasörde kendiniz kurun.',
-                        )}
-                        onClick={() => setSetupHelp((open) => !open)}
-                      >
-                        kurulum
-                      </button>
-                    )}
-                    <button
-                      className="btn-quiet"
-                      {...describe('Terminali grid görünümünde açar.')}
-                      onClick={() => addToGrid(active.id)}
-                    >
-                      grid'e ekle
-                    </button>
-                    <button
-                      className="btn-quiet"
-                      {...describe('Neyin silineceğini önce gösterir; branch her durumda kalır.')}
-                      onClick={askDelete}
-                    >
-                      sil
-                    </button>
-                  </>
-                )}
-              </div>
+            <header className="topbar clean-topbar" style={projectStyle(active.projectId, preferences)} onContextMenu={event => showMenu(active.id, event)}>
+              <button className="topbar-back icon-button" aria-keyshortcuts="F6 Escape" title="Oturumlara dön" aria-label="Oturumlara dön" onClick={leaveToScan}><Icon name="back" /></button>
+              <AgentMark session={active} />
+              <div className="topbar-info"><div className="title">{active.name}</div><button className="workspace-path path-copy" title={copiedPath ? 'Yol kopyalandı' : `Workspace: ${active.cwd} · kopyala`} onClick={copyPath}>{activeProject?.name ?? 'Workspace'} · {active.cwd}</button></div>
+              <span className={`status-badge ${active.lifecycle}`} title={active.degraded ?? undefined}><span className={`dot ${active.lifecycle}`} />{active.archivedAt !== null ? 'Arşiv' : active.lifecycle === 'live' ? active.activity === 'idle' ? 'Sessiz' : 'Canlı' : 'Geçmiş'}</span>
+              {active.isolation === 'worktree' && <span className="badge">İzole</span>}
+              <BranchPicker key={active.id} session={active} healthy={stateHealthy} />
+              <div className="tabs"><button className={tab === 'terminal' ? 'on' : ''} onClick={() => setTab('terminal')}><Icon name="terminal" /> Terminal</button><button className={tab === 'diff' ? 'on' : ''} onClick={() => setTab('diff')}><Icon name="diff" /> Değişiklikler</button></div>
+              {active.archivedAt === null && active.lifecycle !== 'live' && sessionWorkActions(active).filter(action => action.primary).map(action => <button key={action.kind} className="primary" disabled={!stateHealthy || Boolean(active.degraded)} title={action.description} onClick={() => executeAction(active, action)}><Icon name="play" />{action.kind === 'continue' ? 'Devam et' : 'Yeniden aç'}</button>)}
+              <button className="icon-button" aria-label="Oturum işlemleri" title="Oturum işlemleri · sağ tık" onClick={event => showMenu(active.id, event)}><Icon name="more" /></button>
             </header>
+            {(active.degraded || activeProject?.degraded) && <div className="error">{active.degraded ?? activeProject?.degraded}</div>}
+            {state.terminals?.[active.id]?.outputPressure && <div className="review-note" role="status">Çıktı işleniyor…</div>}
+            {pendingDelete && <div className="delete-confirm-bar" role="alert"><span>{pendingDelete.isolation === 'shared' ? 'Yalnız oturum kaydı kaldırılır; klasör korunur.' : deleteQuestion(pendingDelete)}</span><button onClick={confirmDelete}>Sil</button><button onClick={() => setPendingDelete(null)}>Vazgeç</button></div>}
             {showTrust && (
               <div className="trust-note" role="note">
                 <span>{TRUST_NOTE}</span>
@@ -669,24 +545,6 @@ export function App() {
                 </button>
               </div>
             )}
-            {sessionWorkCli(active) && (
-              <div className="trust-note" role="note">
-                <span>
-                  Bu sürümde yönetilen konuşma devamı doğrulanmadı; CLI’ın kendi seçicisini veya elinizdeki açık
-                  UUID’yi kullanın.
-                </span>
-              </div>
-            )}
-            {setupHelp && active.isolation === 'worktree' && (
-              <div className="trust-note" role="note">
-                <span>
-                  .env, bağımlılıklar ve servis portları kopyalanmaz; secret aktarılmaz. Gerekirse bu klasörde
-                  kendiniz kurun.
-                </span>
-                <button onClick={() => setSetupHelp(false)}>gizle</button>
-              </div>
-            )}
-
             {pendingDelete && (
               <div className="pad muted delete-target">
                 {pendingDelete.isolation === 'shared' ? 'Korunacak klasör: ' : 'Silinecek klasör: '}
@@ -704,18 +562,7 @@ export function App() {
                 Terminal geçmişi kaydedilemedi: {state.terminals[active.id].checkpoint.lastError}
               </div>
             )}
-            {state.terminals?.[active.id]?.checkpoint.lastSuccessAt && (
-              <div className="muted" style={{ padding: '4px 12px', fontSize: 12 }}>
-                Son terminal kaydı:{' '}
-                {new Date(state.terminals[active.id].checkpoint.lastSuccessAt!).toLocaleTimeString()}
-              </div>
-            )}
-            <div className="body">
-              {actionHint && (
-                <div className="action-hint" role="status">
-                  {actionHint}
-                </div>
-              )}
+            <div className="body colored-terminal" style={projectStyle(active.projectId, preferences)}>
               {tab === 'terminal' && (
                 <div className="terminals">
                   {runs && runs.previous.length > 0 && (
@@ -726,7 +573,7 @@ export function App() {
                           aria-pressed={inspectRunId === null}
                           onClick={() => setInspectRunId(null)}
                         >
-                          Güncel Run
+                          Güncel terminal
                         </button>
                         {runs.previous.map((previous) => (
                           <button
@@ -735,7 +582,7 @@ export function App() {
                             aria-pressed={inspectRunId === previous.runId}
                             onClick={() => setInspectRunId(previous.runId)}
                           >
-                            Önceki Run · {new Date(previous.updatedAt).toLocaleTimeString()}
+                            Önceki görüntü · {new Date(previous.updatedAt).toLocaleTimeString()}
                           </button>
                         ))}
                       </div>
@@ -759,6 +606,8 @@ export function App() {
         )}
       </main>
 
+      {menu && menuSession && <ActionMenu position={menu.position} actions={menuActions} onClose={closeMenu} />}
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {addingProject && (
         <AddProjectDialog
           onCancel={() => setAddingProject(false)}

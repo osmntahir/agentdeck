@@ -1,6 +1,9 @@
+import { inProjectNavigation } from '../../shared/workspacePolicy'
+import { projectStyle, usePreferences, updatePreferences } from '../preferences'
+import { AgentMark } from './AgentMark'
+import { Icon } from './Icon'
 import { useState } from 'react'
 import type { ProjectView, SessionView, StateResponse } from '../../shared/types'
-import { commandLabel } from '../../shared/types'
 import type { OrphanScanResult, ProjectDeletePreview } from '../api'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
 
@@ -8,6 +11,10 @@ interface Props {
   state: StateResponse
   activeId: string | null
   onSelect: (id: string) => void
+  onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
+  onSettings: () => void
+  /** Bildirim merkezi; tercih kapalıyken null. */
+  notifications: React.ReactNode
   onHome: () => void
   healthy: boolean
   onNewSession: (project: ProjectView) => void
@@ -30,6 +37,9 @@ export function Sidebar({
   state,
   activeId,
   onSelect,
+  onSessionMenu,
+  onSettings,
+  notifications,
   onHome,
   healthy,
   onNewSession,
@@ -46,10 +56,12 @@ export function Sidebar({
   onGrid,
   onAddToGrid,
 }: Props) {
+  const preferences = usePreferences()
+  const [colorError, setColorError] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [rowFocus, setRowFocus] = useState<string | null>(null)
   const visibleIds = state.projects.flatMap((project) =>
-    state.sessions.filter((session) => session.projectId === project.id && session.archivedAt === null).map((s) => s.id),
+    state.sessions.filter((session) => session.projectId === project.id && inProjectNavigation(session)).map((s) => s.id),
   )
   const tabbableId =
     rowFocus && visibleIds.includes(rowFocus)
@@ -82,8 +94,12 @@ export function Sidebar({
         {state.projects.map((project) => {
           const owned = state.sessions.filter((s) => s.projectId === project.id)
           return (
-            <div key={project.id} className="project">
+            <div key={project.id} className="project colored-project" style={projectStyle(project.id, preferences)}>
               <div className="project-head">
+                <label className="project-color" title={`${project.name} proje rengi`}><input type="color" aria-label={`${project.name} proje rengi`} value={preferences.colors[project.id] ?? '#9aaad4'} onChange={e => {
+                  try { updatePreferences({ colors: { ...preferences.colors, [project.id]: e.target.value } }); setColorError(null) }
+                  catch { setColorError('Proje rengi kaydedilemedi.') }
+                }} /></label>
                 <div className="project-name" title={project.degraded ?? project.path}>
                   {project.name}
                   {project.degraded && (
@@ -147,7 +163,7 @@ export function Sidebar({
               )}
 
               {/* Arşivlenen oturum gezinmede görünmez; proje silme onayında yine sayılır. */}
-              {owned.filter((s) => s.archivedAt === null).map((session) => (
+              {owned.filter(inProjectNavigation).map((session) => (
                 <SessionRow
                   key={session.id}
                   session={session}
@@ -157,6 +173,7 @@ export function Sidebar({
                   onFocusRow={() => setRowFocus(session.id)}
                   onSelect={() => onSelect(session.id)}
                   onAddToGrid={() => onAddToGrid(session.id)}
+                  onMenu={event => onSessionMenu(session.id, event)}
                 />
               ))}
             </div>
@@ -164,11 +181,16 @@ export function Sidebar({
         })}
       </div>
 
+      {colorError && <p className="error">{colorError}</p>}
       <OrphanList scan={orphans} onRefresh={onRefreshOrphans} />
 
       <div className="sidebar-connection">
         <span className={`dot ${healthy ? 'live' : 'orphaned'}`} />
         {healthy ? 'Yerel bağlantı hazır' : 'Bağlantı bekleniyor'}
+      </div>
+      <div className="sidebar-tools">
+        <button className="settings-button" onClick={onSettings}>⚙ Ayarlar</button>
+        {notifications}
       </div>
       <div className="add-project">
         <button className="sidebar-add-project" onClick={onAddProject}>
@@ -247,6 +269,7 @@ function SessionRow({
   onFocusRow,
   onSelect,
   onAddToGrid,
+  onMenu,
 }: {
   session: SessionView
   active: boolean
@@ -255,9 +278,10 @@ function SessionRow({
   onFocusRow: () => void
   onSelect: () => void
   onAddToGrid: () => void
+  onMenu: (event: React.MouseEvent<HTMLElement>) => void
 }) {
   return (
-    <div className="session-row-wrap">
+    <div className="session-row-wrap" onContextMenu={onMenu}>
       <button
         className={`session-row${active ? ' active' : ''}`}
         tabIndex={tabbable ? 0 : -1}
@@ -276,15 +300,17 @@ function SessionRow({
         id={`session-row-${session.id}`}
       >
         <span className={`dot ${session.lifecycle}`} />
+        <AgentMark session={session} />
         <span className="session-name">{session.name}</span>
-        <span className="session-agent">{commandLabel(session.command)}</span>
+
         {session.degraded && (
           <span className="badge warn" title={session.degraded}>
             !
           </span>
         )}
-        {session.isolation === 'worktree' && <span className="badge">izole</span>}
+
       </button>
+      <button className="row-menu" title="Oturum işlemleri" aria-label={`${session.name} işlemleri`} onClick={onMenu}><Icon name="more" /></button>
       <button
         className="row-grid-add"
         tabIndex={-1}

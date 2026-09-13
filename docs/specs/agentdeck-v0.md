@@ -36,7 +36,7 @@ V0 dışında: IDE/editör/LSP/debugger, görev dağıtıcı, ajan bus, merkezi 
 
 ### İlk proje ve ilk Run
 
-Proje yokken ana eylem Proje ekle. Hata girilen yolu korur. HEAD yoksa worktree preset'i açıklamayla kapalıdır; shared yalnız bilinçli seçim. Oturum adı isteğe bağlı, 1–80 Unicode karakter, kontrol karakteri yok; boş ad CLI etiketi + kısa id. Kimlik rastgele 128 bit; branch agentdeck/<slug32>-<tam-id>; path yönetilen kök/projectId/sessionId. Kullanıcı adı path veya kimlik değildir.
+Proje yokken ana eylem Proje ekle. Hata girilen yolu korur. HEAD yoksa worktree preset'i açıklamayla kapalıdır. Varsayılan shared (proje klasörü, mevcut branch); worktree yalnız izole çalışma seçilince ([ADR 0014](../adr/0014-workspace-ux-current-branch-and-recovery.md)). Oturum adı isteğe bağlı, 1–80 Unicode karakter, kontrol karakteri yok; boş ad CLI etiketi + kısa id. Kimlik rastgele 128 bit; branch agentdeck/<slug32>-<tam-id>; path yönetilen kök/projectId/sessionId. Kullanıcı adı path veya kimlik değildir.
 
 Worktree create başlangıcında çözümlenmiş HEAD OID'sinden yaratılır ve baseCommit'e yazılır. Kirli ana kopya taşınmaz. `.env`, bağımlılıklar, ignored dosyalar ve servis portları hazırlanmış varsayılmaz; secret otomatik kopyalanmaz, init/install komutu gizlice koşulmaz. Oturum başlığında cwd kopyalama ve kurulum yardımına erişim bulunur.
 

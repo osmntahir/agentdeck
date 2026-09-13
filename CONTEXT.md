@@ -49,7 +49,11 @@ Session kaldırılsa da Git'te kalan `agentdeck/` önekli Session branch'i. Proj
 _Avoid_: HEAD, hareketli ana branch
 
 **Isolation**:
-Session'ın proje çalışma kopyasıyla ilişkisi: worktree kendi kopyası (klasör projesinde her Alt depo için ayrı kopya taşıyan kapsayıcı dizin); shared ortak proje köküdür.
+Session'ın proje çalışma kopyasıyla ilişkisi: worktree kendi kopyası (klasör projesinde her Alt depo için ayrı kopya taşıyan kapsayıcı dizin); shared ortak proje köküdür ve yeni oturumun varsayılanıdır.
+
+**Güncel branch**:
+Çalışma dizininde Git'ten o an okunan branch veya ayrık HEAD. Ajan veya kullanıcı değiştirebilir; Session branch açılış kaydının yerine geçmez.
+_Avoid_: Session.branch ile eşanlamlı kullanım
 
 **Lifecycle**:
 Yönetilen PTY'nin durumu: live, exited veya orphaned. Activity ve çalışma kopyası sağlığı ayrı kavramlardır.
