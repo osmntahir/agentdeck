@@ -120,6 +120,15 @@ function buildMenu() {
           { role: 'selectAll', label: 'Tümünü seç' },
         ],
       },
+      {
+        label: 'Terminal',
+        submenu: [
+          {
+            label: 'Gerçek F6 gönder',
+            click: () => win?.webContents.send('agentdeck:pty-f6'),
+          },
+        ],
+      },
     ]),
   )
 }

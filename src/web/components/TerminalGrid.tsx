@@ -112,8 +112,9 @@ function GroupActions({ activePanel }: IDockviewHeaderActionsProps) {
   return (
     <div className="grid-group-actions">
       <span className={`dot ${session.lifecycle}`} />
-      <span className="grid-group-meta" title={session.cwd}>
+      <span className="grid-group-meta" title={session.degraded ?? session.cwd}>
         {project?.name ?? 'proje kaydı yok'} · {commandLabel(session.command)} · {stateLabel(session)}
+        {session.degraded ? ' · dizin kullanılamıyor' : ''}
       </span>
       <button title="Tek görünümde aç: diff ve oturum eylemleri" onClick={() => grid.onOpen(session.id)}>
         Aç ↗

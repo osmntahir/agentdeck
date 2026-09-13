@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Project, SessionView, StateResponse } from '../../shared/types'
+import type { ProjectView, SessionView, StateResponse } from '../../shared/types'
 import { commandLabel } from '../../shared/types'
 import type { OrphanScanResult, ProjectDeletePreview } from '../api'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
@@ -10,7 +10,7 @@ interface Props {
   onSelect: (id: string) => void
   onHome: () => void
   healthy: boolean
-  onNewSession: (project: Project) => void
+  onNewSession: (project: ProjectView) => void
   onAddProject: () => void
   onDeleteProject: (id: string) => void
   /** Oturumu olan projenin silme önizlemesi; onay bu projede gösterilir. */
@@ -47,6 +47,16 @@ export function Sidebar({
   onAddToGrid,
 }: Props) {
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [rowFocus, setRowFocus] = useState<string | null>(null)
+  const visibleIds = state.projects.flatMap((project) =>
+    state.sessions.filter((session) => session.projectId === project.id && session.archivedAt === null).map((s) => s.id),
+  )
+  const tabbableId =
+    rowFocus && visibleIds.includes(rowFocus)
+      ? rowFocus
+      : activeId && visibleIds.includes(activeId)
+        ? activeId
+        : (visibleIds[0] ?? null)
 
   return (
     <aside className="sidebar">
@@ -74,8 +84,13 @@ export function Sidebar({
           return (
             <div key={project.id} className="project">
               <div className="project-head">
-                <div className="project-name" title={project.path}>
+                <div className="project-name" title={project.degraded ?? project.path}>
                   {project.name}
+                  {project.degraded && (
+                    <span className="badge warn" title={project.degraded}>
+                      !
+                    </span>
+                  )}
                 </div>
                 <div className="project-actions">
                   {confirmId === project.id ? (
@@ -137,6 +152,9 @@ export function Sidebar({
                   key={session.id}
                   session={session}
                   active={session.id === activeId}
+                  tabbable={session.id === tabbableId}
+                  ids={visibleIds}
+                  onFocusRow={() => setRowFocus(session.id)}
                   onSelect={() => onSelect(session.id)}
                   onAddToGrid={() => onAddToGrid(session.id)}
                 />
@@ -214,7 +232,7 @@ function OrphanList({ scan, onRefresh }: { scan: OrphanScanResult | null; onRefr
  * sonucu çıkarılmaz. Dikkat bilgisi yalnız açık hata ve orphaned ile ayrılır.
  */
 export function stateLabel(session: SessionView): string {
-  if (session.lifecycle === 'live') return session.activity === 'idle' ? 'Sessiz · 30 sn' : 'Çalışıyor'
+  if (session.lifecycle === 'live') return session.activity === 'idle' ? 'Sessiz' : 'Çalışıyor'
   if (session.lifecycle === 'orphaned') return 'Bağlantı yok'
   if (session.exitCode !== null) return `Çıktı · kod ${session.exitCode}`
   if (session.exitSignal !== null) return `Çıktı · sinyal ${session.exitSignal}`
@@ -224,11 +242,17 @@ export function stateLabel(session: SessionView): string {
 function SessionRow({
   session,
   active,
+  tabbable,
+  ids,
+  onFocusRow,
   onSelect,
   onAddToGrid,
 }: {
   session: SessionView
   active: boolean
+  tabbable: boolean
+  ids: string[]
+  onFocusRow: () => void
   onSelect: () => void
   onAddToGrid: () => void
 }) {
@@ -236,18 +260,34 @@ function SessionRow({
     <div className="session-row-wrap">
       <button
         className={`session-row${active ? ' active' : ''}`}
+        tabIndex={tabbable ? 0 : -1}
         onClick={onSelect}
+        onFocus={onFocusRow}
         title={`${stateLabel(session)} · terminal grid'e sürüklenebilir`}
         draggable
         onDragStart={(e) => e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id)}
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+          e.preventDefault()
+          const index = ids.indexOf(session.id)
+          const next = ids[e.key === 'ArrowDown' ? Math.min(ids.length - 1, index + 1) : Math.max(0, index - 1)]
+          if (next) document.getElementById(`session-row-${next}`)?.focus()
+        }}
+        id={`session-row-${session.id}`}
       >
         <span className={`dot ${session.lifecycle}`} />
         <span className="session-name">{session.name}</span>
         <span className="session-agent">{commandLabel(session.command)}</span>
+        {session.degraded && (
+          <span className="badge warn" title={session.degraded}>
+            !
+          </span>
+        )}
         {session.isolation === 'worktree' && <span className="badge">izole</span>}
       </button>
       <button
         className="row-grid-add"
+        tabIndex={-1}
         title="Terminal grid'e ekle"
         aria-label={`${session.name} oturumunu terminal grid'e ekle`}
         onClick={onAddToGrid}

@@ -56,14 +56,14 @@ async function withDaemon(
     repo: string
     projectId: string
   }) => Promise<void>,
-  options: { seedState?: unknown; withProject?: boolean } = {},
+  options: { seedState?: unknown; withProject?: boolean; environmentFile?: string } = {},
 ): Promise<void> {
   const dataDir = tempDir()
   const repo = initRepo()
   if (options.seedState !== undefined) {
     fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify(options.seedState, null, 2))
   }
-  const daemon = await startDaemon({ dataDir, port: 0 })
+  const daemon = await startDaemon({ dataDir, port: 0, environmentFile: options.environmentFile })
   const api = client(daemon)
   let projectId = ''
   try {
@@ -675,6 +675,95 @@ test('boş komut null olarak kabuk açar ve ad otomatik verilir', { timeout: 300
     assert.equal(created.status, 200, JSON.stringify(created.body))
     assert.equal(created.body.command, null)
     assert.match(created.body.name, /^Kabuk [0-9a-f]{6}$/)
+  })
+})
+
+test('environment.json her Run öncesi okunur; bozuk dosyada Run başlamaz ve canlı iş durdurulmaz', { timeout: 40000 }, async () => {
+  const envDir = tempDir()
+  const environmentFile = path.join(envDir, 'environment.json')
+  const writeEnv = (values: unknown, mode: number) => {
+    fs.writeFileSync(environmentFile, JSON.stringify(values))
+    fs.chmodSync(environmentFile, mode)
+  }
+  try {
+    await withDaemon(
+      async ({ api, dataDir, projectId }) => {
+        writeEnv({ DECK_ENV_PROBE: 'ilk' }, 0o644)
+        const rejected = await api.post<{ code: string; message: string }>('/api/sessions', createBody(projectId))
+        assert.equal(rejected.status, 409, JSON.stringify(rejected.body))
+        assert.equal(rejected.body.code, 'environment_invalid')
+        assert.match(rejected.body.message, /environment\.json/)
+        assert.ok(!rejected.body.message.includes('ilk'), 'değer mesajda görünmez')
+        assert.equal((await api.get<StateResponse>('/api/state')).body.sessions.length, 0, 'kayıt açılmaz')
+        const worktrees = path.join(dataDir, 'worktrees')
+        assert.ok(!fs.existsSync(worktrees) || fs.readdirSync(worktrees).every((p) => fs.readdirSync(path.join(worktrees, p)).length === 0), 'worktree açılmaz')
+
+        writeEnv({ DECK_ENV_PROBE: 'ilk' }, 0o600)
+        const created = await api.post<SessionView>(
+          '/api/sessions',
+          createBody(projectId, { command: 'printf "%s" "$DECK_ENV_PROBE" > env-value.txt; sleep 300' }),
+        )
+        assert.equal(created.status, 200, JSON.stringify(created.body))
+        const marker = path.join(created.body.cwd, 'env-value.txt')
+        await waitFor(async () => fs.existsSync(marker) && fs.readFileSync(marker, 'utf8') === 'ilk')
+
+        writeEnv({ DECK_ENV_PROBE: 'ikinci', TERM: 'dumb' }, 0o600)
+        const restartRejected = await api.post<{ code: string }>(`/api/sessions/${created.body.id}/restart`, {
+          requestId: 'env-restart-1',
+          expectedRunId: created.body.runId,
+        })
+        assert.equal(restartRejected.status, 409, JSON.stringify(restartRejected.body))
+        assert.equal(restartRejected.body.code, 'environment_invalid')
+        const afterReject = (await api.get<StateResponse>('/api/state')).body.sessions[0]
+        assert.equal(afterReject.lifecycle, 'live', 'bozuk dosya canlı işi durdurmaz')
+        assert.equal(afterReject.runId, created.body.runId)
+
+        // Değişiklik sonraki Run'a uygulanır.
+        writeEnv({ DECK_ENV_PROBE: 'ikinci' }, 0o600)
+        const restarted = await api.post<SessionView>(`/api/sessions/${created.body.id}/restart`, {
+          requestId: 'env-restart-2',
+          expectedRunId: created.body.runId,
+        })
+        assert.equal(restarted.status, 200, JSON.stringify(restarted.body))
+        await waitFor(async () => fs.existsSync(marker) && fs.readFileSync(marker, 'utf8') === 'ikinci')
+      },
+      { environmentFile },
+    )
+  } finally {
+    removeDir(envDir)
+  }
+})
+
+test('çalışma dizini veya proje kökü kaybolunca lifecycle değişmeden degraded görünür', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, projectId, repo }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    assert.equal(created.status, 200, JSON.stringify(created.body))
+
+    const healthy = await api.get<StateResponse>('/api/state')
+    assert.equal(healthy.body.sessions[0].degraded, null)
+    assert.equal(healthy.body.projects[0].degraded, null)
+
+    fs.rmSync(created.body.cwd, { recursive: true, force: true })
+    let session: SessionView | undefined
+    await waitFor(async () => {
+      session = (await api.get<StateResponse>('/api/state')).body.sessions[0]
+      return session.degraded !== null
+    })
+    assert.match(session!.degraded!, /Çalışma dizini/)
+    assert.equal(session!.lifecycle, 'live', 'degraded lifecycle değeri değildir')
+
+    const moved = `${repo}-tasindi`
+    fs.renameSync(repo, moved)
+    try {
+      let project: StateResponse['projects'][number] | undefined
+      await waitFor(async () => {
+        project = (await api.get<StateResponse>('/api/state')).body.projects[0]
+        return project.degraded !== null
+      })
+      assert.match(project!.degraded!, /Proje klasörü/)
+    } finally {
+      fs.renameSync(moved, repo)
+    }
   })
 })
 

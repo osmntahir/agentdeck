@@ -9,7 +9,12 @@ const PORT = Number(process.env.AGENTDECK_PORT || process.env.PORT || 4711)
 const DATA_DIR = process.env.AGENTDECK_DATA_DIR || path.join(os.homedir(), '.agentdeck')
 
 async function main(): Promise<void> {
-  const daemon = await startDaemon({ dataDir: DATA_DIR, port: PORT, serveWeb: true })
+  const daemon = await startDaemon({
+    dataDir: DATA_DIR,
+    port: PORT,
+    serveWeb: true,
+    environmentFile: path.join(os.homedir(), '.config', 'agentdeck', 'environment.json'),
+  })
   console.log(`agentdeck hazır:  ${daemon.url}/?token=${daemon.token}`)
   console.log(`vite ile geliştirme: http://127.0.0.1:4710/?token=${daemon.token}`)
 

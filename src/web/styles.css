@@ -8,6 +8,7 @@
   --accent: #7aa2f7;
   --green: #6ccf8e;
   --red: #f07178;
+  --warn: #d6a75c;
 }
 
 * {
@@ -116,6 +117,9 @@ select:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .project-actions {
   display: flex;
@@ -1355,6 +1359,163 @@ button.primary {
   background: var(--panel);
   color: #c2d0ff;
   font-size: 22px;
+}
+
+/* --- tarama / odak / üst bant (spec §5) --- */
+.scan {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.scan[hidden] {
+  display: none;
+}
+.badge.warn {
+  color: var(--warn);
+  border-color: #5a4a2a;
+  text-transform: none;
+}
+.degraded-line,
+.card-degraded {
+  color: var(--warn);
+  font-size: 11px;
+  margin: 0;
+}
+.degraded-line {
+  padding-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 48rem;
+}
+.card-meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 0 16px 10px;
+  min-width: 0;
+}
+.card-project,
+.card-branch {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.card-project {
+  font-size: 11px;
+  color: var(--muted);
+  flex: none;
+  max-width: 40%;
+}
+.card-branch {
+  padding: 0;
+  flex: 1;
+  width: auto;
+}
+.card-degraded {
+  margin: 0 16px 8px;
+  padding: 6px 8px;
+  border: 1px solid #5a4a2a;
+  border-radius: 6px;
+  background: rgba(214, 167, 92, 0.08);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-card.candidate {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.session-card.is-degraded {
+  border-color: #5a4a2a;
+}
+.card-age {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.topbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'back info tabs'
+    'band band band'
+    'actions actions actions';
+  gap: 8px 14px;
+  align-items: center;
+  min-height: 0;
+  padding: 10px 14px 12px;
+}
+.topbar-back {
+  grid-area: back;
+}
+.topbar-info {
+  grid-area: info;
+  min-width: 0;
+}
+.topbar .tabs {
+  grid-area: tabs;
+  margin-left: 0;
+}
+.topbar-band {
+  grid-area: band;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+.band-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.band-chip.muted {
+  color: var(--muted);
+}
+.band-chip.warn {
+  color: var(--warn);
+  border-color: #5a4a2a;
+}
+.topbar-actions {
+  grid-area: actions;
+  justify-content: flex-start;
+}
+.btn-quiet {
+  color: var(--muted);
+  background: transparent;
+}
+.trust-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(122, 162, 247, 0.08);
+  font-size: 12px;
+}
+.trust-note span {
+  flex: 1;
+}
+@media (max-width: 700px) {
+  .topbar {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      'back info'
+      'tabs tabs'
+      'band band'
+      'actions actions';
+  }
 }
 /* Gruplar kart gibi ayrışır; öndeki grup ince bir vurgu alır. */
 .terminal-grid .dv-groupview {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { Project, StateResponse } from '../../shared/types'
-import { commandLabel } from '../../shared/types'
+import type { ProjectView, SessionView, StateResponse } from '../../shared/types'
+import { commandLabel, formatAge, sessionAgeMs } from '../../shared/types'
 import { stateLabel } from './Sidebar'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
 import { ProtectedBranches } from './ProtectedBranches'
@@ -8,16 +8,47 @@ import { ProtectedBranches } from './ProtectedBranches'
 interface Props {
   state: StateResponse
   healthy: boolean
+  /** Sunucu zamanı + istemci monotonic ilerlemesi (spec §5). */
+  now: number
+  /** Tarama görünür değilken önizleme istenmez; mount kaydırma için kalır. */
+  previewsEnabled: boolean
+  /** Silme sonrası komşu karta dön; PTY açılmaz. */
+  focusId: string | null
+  onFocusHandled: () => void
   onSelect: (id: string) => void
-  onNewSession: (project: Project) => void
+  onNewSession: (project: ProjectView) => void
   onAddProject: () => void
   onPreviewIds: (ids: string[]) => void
   onAddToGrid: (id: string) => void
 }
 
-export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject, onPreviewIds, onAddToGrid }: Props) {
+function neighbor(ids: string[], current: string | null, delta: number): string | null {
+  if (ids.length === 0) return null
+  const index = current ? ids.indexOf(current) : -1
+  if (index < 0) return delta >= 0 ? ids[0]! : ids[ids.length - 1]!
+  return ids[(index + delta + ids.length) % ids.length]!
+}
+
+function sessionAge(session: SessionView, now: number): string {
+  return formatAge(sessionAgeMs(session, now))
+}
+
+export function Workspace({
+  state,
+  healthy,
+  now,
+  previewsEnabled,
+  focusId,
+  onFocusHandled,
+  onSelect,
+  onNewSession,
+  onAddProject,
+  onPreviewIds,
+  onAddToGrid,
+}: Props) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
+  const [candidate, setCandidate] = useState<string | null>(null)
   // Branch okuması yalnız istenince yapılır; poll edilmez.
   const [branchesFor, setBranchesFor] = useState<string | null>(null)
   const live = state.sessions.filter((s) => s.lifecycle === 'live').length
@@ -32,6 +63,23 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
         .toLocaleLowerCase('tr')
         .includes(query.toLocaleLowerCase('tr')),
   )
+  const sessionIds = state.projects.flatMap((project) =>
+    sessions.filter((session) => session.projectId === project.id).map((session) => session.id),
+  )
+
+  useEffect(() => {
+    if (candidate && !sessionIds.includes(candidate)) setCandidate(sessionIds[0] ?? null)
+  }, [sessionIds.join(','), candidate])
+
+  useEffect(() => {
+    if (!focusId) return
+    const id = sessionIds.includes(focusId) ? focusId : (sessionIds[0] ?? null)
+    if (id) {
+      setCandidate(id)
+      document.getElementById(`session-card-${id}`)?.focus()
+    }
+    onFocusHandled()
+  }, [focusId, onFocusHandled])
 
   // The daemon bounds preview work to 24 cards; searching brings matching cards into that window.
   const previewKey = sessions
@@ -39,9 +87,20 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
     .map((session) => session.id)
     .join(',')
   useEffect(() => {
+    if (!previewsEnabled) {
+      onPreviewIds([])
+      return
+    }
     onPreviewIds(previewKey ? previewKey.split(',') : [])
     return () => onPreviewIds([])
-  }, [previewKey, onPreviewIds])
+  }, [previewKey, onPreviewIds, previewsEnabled])
+
+  const moveCandidate = (delta: number) => {
+    const next = neighbor(sessionIds, candidate, delta)
+    if (!next) return
+    setCandidate(next)
+    document.getElementById(`session-card-${next}`)?.focus()
+  }
 
   return (
     <>
@@ -140,6 +199,11 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                         {project.kind === 'folder' && <span>Yerel klasör</span>}
                       </h3>
                       <p title={project.path}>{project.path}</p>
+                      {project.degraded && (
+                        <p className="degraded-line" title={project.degraded}>
+                          {project.degraded}
+                        </p>
+                      )}
                     </div>
                     <button
                       aria-expanded={branchesFor === project.id}
@@ -150,21 +214,54 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                     <button onClick={() => onNewSession(project)}>+ Yeni oturum</button>
                   </header>
                   {branchesFor === project.id && <ProtectedBranches project={project} sessions={state.sessions} />}
-                  <div className="session-grid">
+                  <div className="session-grid" role="list">
                     {owned.map((session) => {
                       const preview = state.previews?.[session.id]
+                      const selected = candidate === session.id
                       return (
                         // Kart içinde ayrı "Grid'e ekle" düğmesi olduğu için kart kendisi düğme değildir.
                         <div
-                          className="session-card"
+                          className={`session-card${selected ? ' candidate' : ''}${session.degraded ? ' is-degraded' : ''}`}
                           key={session.id}
-                          role="button"
-                          tabIndex={0}
+                          id={`session-card-${session.id}`}
+                          role="listitem"
+                          tabIndex={selected || (candidate === null && session.id === sessionIds[0]) ? 0 : -1}
                           draggable
+                          aria-current={selected ? 'true' : undefined}
+                          onFocus={() => setCandidate(session.id)}
                           onDragStart={(e) => e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id)}
                           onClick={() => onSelect(session.id)}
                           onKeyDown={(e) => {
-                            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+                            if (e.target !== e.currentTarget) return
+                            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                              e.preventDefault()
+                              moveCandidate(1)
+                              return
+                            }
+                            if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                              e.preventDefault()
+                              moveCandidate(-1)
+                              return
+                            }
+                            if (e.key === 'Home') {
+                              e.preventDefault()
+                              const first = sessionIds[0]
+                              if (first) {
+                                setCandidate(first)
+                                document.getElementById(`session-card-${first}`)?.focus()
+                              }
+                              return
+                            }
+                            if (e.key === 'End') {
+                              e.preventDefault()
+                              const last = sessionIds[sessionIds.length - 1]
+                              if (last) {
+                                setCandidate(last)
+                                document.getElementById(`session-card-${last}`)?.focus()
+                              }
+                              return
+                            }
+                            if (e.key !== 'Enter' && e.key !== ' ') return
                             e.preventDefault()
                             onSelect(session.id)
                           }}
@@ -180,7 +277,16 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                             </span>
                           </div>
                           <h3>{session.name}</h3>
-                          <div className="card-branch">{session.branch ?? 'Ortak çalışma kopyası'}</div>
+                          <div className="card-meta">
+                            <span className="card-project">{project.name}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="card-branch">{session.branch ?? 'Ortak çalışma kopyası'}</span>
+                          </div>
+                          {session.degraded && (
+                            <div className="card-degraded" title={session.degraded}>
+                              {session.degraded}
+                            </div>
+                          )}
                           <pre className="card-preview">
                             {preview?.state === 'ready'
                               ? preview.preview?.text || 'Terminal henüz çıktı üretmedi.'
@@ -194,10 +300,13 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                             <span>
                               {session.archivedAt !== null && 'Arşivde · '}
                               {session.isolation === 'worktree' ? 'İzole worktree' : 'Ortak klasör'}
+                              {' · '}
+                              <span className="card-age">{sessionAge(session, now)}</span>
                             </span>
                             <span className="card-actions">
                               <button
                                 className="card-grid-add"
+                                tabIndex={-1}
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   onAddToGrid(session.id)

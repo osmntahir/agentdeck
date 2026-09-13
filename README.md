@@ -1,6 +1,6 @@
 # agentdeck
 
-> Bu README mevcut runtime’ı anlatır. §8/1, §8/3 terminal dilimi ve §8/4 çalışma sonucu dilimi uygulandı; sınırlar [ADR 0007](docs/adr/0007-slice-1-implementation-boundaries.md), [ADR 0008](docs/adr/0008-terminal-slice-implementation.md) ve [ADR 0011](docs/adr/0011-work-result-slice-implementation.md) içinde. Gerçek CLI/tarayıcı ürün kabulü ve yönetilen konuşma devamı henüz tamamlanmadı.
+> Bu README mevcut runtime’ı anlatır. §8/1, §8/3 terminal dilimi, §8/4 çalışma sonucu dilimi ve §8/5 tarama/odak/poll entegrasyonu uygulandı; sınırlar [ADR 0007](docs/adr/0007-slice-1-implementation-boundaries.md), [ADR 0008](docs/adr/0008-terminal-slice-implementation.md), [ADR 0011](docs/adr/0011-work-result-slice-implementation.md) ve [ADR 0012](docs/adr/0012-scan-focus-poll-implementation.md) içinde. Gerçek CLI/tarayıcı ürün kabulü ve yönetilen konuşma devamı henüz tamamlanmadı.
 
 Paralel AI ajan oturumlarını izole git worktree'lerde yöneten yerel çalışma tezgâhı.
 
@@ -25,7 +25,8 @@ tarayıcıyı kapatmak ajanı öldürmez.
   proje kalır. Kayıtsız çalışma kopyaları yalnız listelenir, temizlenmez.
 - **Yerel klasör projeleri** — Git deposu olmayan klasörler de eklenebilir; Git başlatılmaz, dosyalar taşınmaz. Ortak oturum doğrudan klasörde çalışır. Klasörün altındaki Git depoları (en çok 4 seviye, 30 depo) ayrı ayrı ele alınır: izole oturum her depo için aynı branch adıyla ayrı worktree açar, depo dışındaki dosyaları kopyalamaz.
 - **Klasör seçici** — masaüstünde “Proje ekle → Klasör seç…” sistem penceresini açar. Tarayıcıda tam klasör yolu yazılır.
-- **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması ve yaşam döngüsü filtreleri. Görünen sonuçların ilk 24 oturumu için önizleme alınır; karttan tek terminale geçilir.
+- **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması, yaşam döngüsü, yaş ve çalışma dizini hatası. Görünen sonuçların ilk 24 oturumu için önizleme alınır; karttan tek terminale geçilir. Oklarla aday değişir, Enter açar; poll sırayı ve odağı değiştirmez.
+- **Klavye** — F6 terminalden uygulama çubuğuna çıkar; masaüstü menüsü gerçek F6'yı PTY'ye gönderir. Escape PTY'de kalır, kromda taramaya döner.
 - **Terminal grid** — birden çok oturumun terminali yan yana açılır. Sekmeyi
   sürükleyip bir panelin kenarına bırakarak bölünür, aradaki çizgiyle
   boyutlandırılır. Oturumlar kenar çubuğundan veya karttan sürüklenerek ya da
@@ -123,7 +124,9 @@ siler.
 Run ortamı bir izin listesidir: daemon'ın kabuğundaki her değişken PTY'ye
 kopyalanmaz. `NODE_OPTIONS`, `BASH_ENV`/`ENV`, `BASH_FUNC_*` ve parent ajan
 işaretçileri taşınmaz; `TERM` ve `AGENTDECK_*` uygulama tarafından atanır.
-Kullanıcının kendi `environment.json` dosyası henüz okunmuyor (spec §3, §8/2).
+İsteğe bağlı `~/.config/agentdeck/environment.json` her Run öncesi okunur
+(yoksa boş; kullanıcı sahibi, `chmod 600`, 64 KiB, düz string değerler). Bozuk
+veya açık dosyada Run başlamaz; çalışan sürece enjekte edilmez.
 
 ## Dizin yapısı
 
@@ -134,6 +137,7 @@ scripts/
   install-desktop.mjs  .desktop kısayolu (node yolunu gömer)
 src/
   shared/types.ts      daemon ve arayüzün ortak tipleri
+  shared/statePoll.ts  görünür istemcinin GET state döngüsü
   server/
     index.ts           giriş noktası: env, kapanış sinyalleri
     daemon.ts          HTTP + WebSocket, REST uçları, kilitler, silme onayı
@@ -147,13 +151,13 @@ src/
     lock.ts            tek yazar kilidi (abstract socket)
     locks.ts           Session mutasyon kilidi, Git dizini serileştirme
     dedup.ts           requestId defteri (10 dk / 1024 kayıt)
-    env.ts             Run ortamı izin listesi
+    env.ts             Run ortamı izin listesi ve environment.json
     orphans.ts         salt okunur yetim çalışma kopyası keşfi
     repos.ts           klasör projesindeki alt Git depolarının sınırlı keşfi
     git.ts             worktree, HEAD OID, status, diff ve branch okuması
     fingerprint.ts     silme onayının içerik fingerprint'i ve bütçesi
   web/
-    App.tsx            düzen, oturum seçimi, sekmeler
+    App.tsx            düzen, poll, oturum seçimi, sekmeler
     components/        Sidebar, TerminalPane, DiffView, NewSessionDialog,
                        LaunchDialog, ProtectedBranches
 tests/                 node:test paketi (store, stop, kilit, dedup, API)

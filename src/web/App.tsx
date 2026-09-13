@@ -9,14 +9,35 @@ import { NewSessionDialog } from './components/NewSessionDialog'
 import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
 import { savedGridSessionIds } from './gridLayout'
+import { createStatePoller } from '../shared/statePoll'
 import {
   commandLabel,
+  formatAge,
   hasRunningProcesses,
   lastCommand,
+  sessionAgeMs,
   type Isolation,
   type Project,
   type StateResponse,
 } from '../shared/types'
+
+const TRUST_NOTE = 'Ajan klasör güveni veya giriş onayı isteyebilir; terminalden tamamlayın.'
+
+function boardSessionIds(state: StateResponse): string[] {
+  return state.projects.flatMap((project) =>
+    state.sessions.filter((session) => session.projectId === project.id && session.archivedAt === null).map((s) => s.id),
+  )
+}
+
+function nextVisibleSession(ids: string[], id: string): string | null {
+  const index = ids.indexOf(id)
+  if (index < 0) return ids[0] ?? null
+  return ids[index + 1] ?? ids[index - 1] ?? null
+}
+
+function trustKey(id: string): string {
+  return `agentdeck.trustNote.${id}`
+}
 
 /** Silinecek içeriği onaydan önce söyler; ignored dosyalar da silinir. */
 function deleteQuestion(preview: api.DeletePreview): string {
@@ -51,8 +72,15 @@ export function App() {
   const [orphans, setOrphans] = useState<api.OrphanScanResult | null>(null)
   const [stateHealthy, setStateHealthy] = useState(false)
   const previewIds = useRef<string[]>([])
+  const pollerRef = useRef<ReturnType<typeof createStatePoller<StateResponse>> | null>(null)
+  const receivedAt = useRef(performance.now())
+  const [, setTick] = useState(0)
+  const [scanFocusId, setScanFocusId] = useState<string | null>(null)
+  const [trustHidden, setTrustHidden] = useState(false)
   const setPreviewIds = useCallback((ids: string[]) => {
+    const previous = previewIds.current.join(',')
     previewIds.current = ids
+    if (ids.join(',') !== previous) void pollerRef.current?.refresh()
   }, [])
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
@@ -60,18 +88,7 @@ export function App() {
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = () =>
-    api
-      .getState(previewIds.current)
-      .then((next) => {
-        setState(next)
-        setStateHealthy(true)
-        setConnectionError(null)
-      })
-      .catch((e) => {
-        setStateHealthy(false)
-        setConnectionError(e.message)
-      })
+  const refresh = () => pollerRef.current?.refresh() ?? Promise.resolve()
 
   // Yetim keşfi salt okunurdur ve poll edilmez: açılışta ve istenince okunur.
   const refreshOrphans = () =>
@@ -81,22 +98,47 @@ export function App() {
       .catch(() => setOrphans(null))
 
   useEffect(() => {
-    refresh()
+    const poller = createStatePoller<StateResponse>({
+      fetchState: () => api.getState(previewIds.current),
+      schedule: (fn, ms) => window.setTimeout(fn, ms),
+      cancel: (handle) => window.clearTimeout(handle as number),
+      isHidden: () => document.visibilityState === 'hidden',
+      onState: (next) => {
+        receivedAt.current = performance.now()
+        setState(next)
+        setStateHealthy(true)
+        setConnectionError(null)
+      },
+      onFailure: (failure) => {
+        setStateHealthy(false)
+        setConnectionError(
+          failure.retryInMs !== null
+            ? `${failure.message} · ${Math.round(failure.retryInMs / 1000)} sn sonra yeniden denenecek`
+            : failure.message,
+        )
+      },
+    })
+    pollerRef.current = poller
+    poller.start()
     refreshOrphans()
-    let disposed = false
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async () => {
-      await refresh()
-      if (!disposed) timer = setTimeout(poll, 2000)
-    }
-    timer = setTimeout(poll, 2000)
+    const onVis = () => poller.visibilityChanged()
+    document.addEventListener('visibilitychange', onVis)
+    const tick = window.setInterval(() => setTick((n) => n + 1), 1000)
     return () => {
-      disposed = true
-      clearTimeout(timer)
+      poller.stop()
+      pollerRef.current = null
+      document.removeEventListener('visibilitychange', onVis)
+      window.clearInterval(tick)
     }
   }, [])
 
+  const now = state.serverNow ? state.serverNow + (performance.now() - receivedAt.current) : Date.now()
+
   const active = state.sessions.find((s) => s.id === activeId) ?? null
+  const activeProject = active ? (state.projects.find((p) => p.id === active.projectId) ?? null) : null
+  const showTrust = Boolean(
+    active && active.isolation === 'worktree' && active.lifecycle === 'live' && !trustHidden && sessionStorage.getItem(trustKey(active.id)) !== '1',
+  )
 
   // Önceki Run görüntüleri saklanmış kayıtlardan okunur; oturum veya Run değişince seçim güncele döner.
   const [runs, setRuns] = useState<api.RunsResult | null>(null)
@@ -125,7 +167,82 @@ export function App() {
   useEffect(() => {
     setActionHint(null)
     setCopiedPath(false)
+    setTrustHidden(false)
   }, [active?.id, active?.archivedAt, active?.lifecycle])
+
+  const leaveToScan = () => {
+    setActiveId(null)
+    setPendingDelete(null)
+    setLaunchOpen(false)
+  }
+
+  useEffect(() => {
+    const inField = (target: EventTarget | null) =>
+      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+    const inTerminal = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest('.xterm'))
+    const chromeStops = () =>
+      [
+        document.querySelector<HTMLElement>('.sidebar .home-nav'),
+        document.querySelector<HTMLElement>('.topbar-back'),
+        document.querySelector<HTMLElement>('.term-host textarea, .term-host canvas, .xterm-helper-textarea'),
+      ].filter((el): el is HTMLElement => el !== null)
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'F6') {
+        event.preventDefault()
+        if (inTerminal(event.target)) {
+          ;(document.querySelector<HTMLElement>('.topbar-back') ?? document.querySelector<HTMLElement>('.home-nav'))?.focus()
+          return
+        }
+        const stops = chromeStops()
+        if (stops.length === 0) return
+        const current = stops.findIndex((el) => el === event.target || el.contains(event.target as Node))
+        const next = event.shiftKey
+          ? stops[(current <= 0 ? stops.length : current) - 1]
+          : stops[(current + 1) % stops.length]
+        next?.focus()
+        return
+      }
+      if (event.key !== 'Escape') return
+      if (inTerminal(event.target) || inField(event.target)) return
+      if (document.querySelector('dialog[open]')) return
+      if (launchOpen) {
+        if (!launching) setLaunchOpen(false)
+        event.preventDefault()
+        return
+      }
+      if (pendingDelete) {
+        setPendingDelete(null)
+        event.preventDefault()
+        return
+      }
+      if (projectDelete) {
+        setProjectDelete(null)
+        event.preventDefault()
+        return
+      }
+      if (addingProject) {
+        setAddingProject(false)
+        event.preventDefault()
+        return
+      }
+      if (activeId) {
+        leaveToScan()
+        event.preventDefault()
+      }
+    }
+    // F6 tarayıcı adres çubuğuna gitmesin diye yakalama aşamasında tutulur.
+    const onF6 = (event: KeyboardEvent) => {
+      if (event.key !== 'F6') return
+      onKey(event)
+    }
+    window.addEventListener('keydown', onF6, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onF6, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [activeId, addingProject, launchOpen, launching, pendingDelete, projectDelete])
 
   const run = (promise: Promise<unknown>) => {
     setError(null)
@@ -149,6 +266,7 @@ export function App() {
   }
 
   const openSession = (id: string) => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     setActiveId(id)
     setTab('terminal')
   }
@@ -223,7 +341,9 @@ export function App() {
     api
       .deleteSession(sessionId, token)
       .then(() => {
+        const neighbor = nextVisibleSession(boardSessionIds(state), sessionId)
         setActiveId(null)
+        setScanFocusId(neighbor)
         refreshOrphans()
         return refresh()
       })
@@ -278,15 +398,13 @@ export function App() {
         state={state}
         healthy={stateHealthy}
         onHome={() => {
-          setActiveId(null)
-          setPendingDelete(null)
+          leaveToScan()
           setView('sessions')
         }}
         view={view}
         gridCount={gridIds.length}
         onGrid={() => {
-          setActiveId(null)
-          setPendingDelete(null)
+          leaveToScan()
           setView('grid')
         }}
         onAddToGrid={addToGrid}
@@ -312,21 +430,59 @@ export function App() {
             {connectionError}
           </div>
         )}
-        {active ? (
+        {error && (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        )}
+        {state.serviceError && (
+          <div className="error" role="alert">
+            {state.serviceError}
+          </div>
+        )}
+        <div className="scan" hidden={Boolean(active) || view !== 'sessions'} inert={Boolean(active) || view !== 'sessions'}>
+          <Workspace
+            onPreviewIds={setPreviewIds}
+            state={state}
+            healthy={stateHealthy}
+            now={now}
+            previewsEnabled={!active && view === 'sessions'}
+            focusId={scanFocusId}
+            onFocusHandled={() => setScanFocusId(null)}
+            onSelect={openSession}
+            onNewSession={setDialogProject}
+            onAddProject={() => setAddingProject(true)}
+            onAddToGrid={addToGrid}
+          />
+        </div>
+        {view === 'grid' && !active && (
+          <TerminalGrid
+            state={state}
+            healthy={stateHealthy}
+            pendingAdd={pendingGridAdd}
+            onPendingHandled={() => setPendingGridAdd(null)}
+            onOpen={openSession}
+            onPanelsChange={setGridIds}
+          />
+        )}
+        {active && (
           <>
             <header className="topbar">
               <button
+                className="topbar-back"
+                aria-keyshortcuts="F6 Escape"
                 title={view === 'grid' ? 'Terminal grid’e dön' : 'Tüm oturumlara dön'}
-                onClick={() => {
-                  setActiveId(null)
-                  setPendingDelete(null)
-                }}
+                onClick={leaveToScan}
               >
                 {view === 'grid' ? '← Grid' : '← Oturumlar'}
               </button>
               <div className="topbar-info">
                 <div className="title">{active.name}</div>
                 <div className="subtitle" title={active.cwd}>
+                  {activeProject?.name ?? 'proje kaydı yok'}
+                  {' · '}
+                  {commandLabel(active.command)}
+                  {' · '}
                   {active.branch ?? 'ortak çalışma kopyası'}
                   {active.archivedAt !== null && ' · arşivde'}
                 </div>
@@ -334,11 +490,40 @@ export function App() {
 
               <div className="tabs">
                 <button className={tab === 'terminal' ? 'on' : ''} onClick={() => setTab('terminal')}>
-                  terminal
+                  Terminal
                 </button>
                 <button className={tab === 'diff' ? 'on' : ''} onClick={() => setTab('diff')}>
-                  diff
+                  Değişiklikler
                 </button>
+              </div>
+
+              <div className="topbar-band">
+                <span className="band-chip">
+                  <span className={`dot ${active.lifecycle}`} />
+                  {active.lifecycle === 'live'
+                    ? active.activity === 'idle'
+                      ? 'Sessiz'
+                      : 'Çalışıyor'
+                    : active.lifecycle === 'orphaned'
+                      ? 'Bağlantı yok'
+                      : active.exitCode !== null
+                        ? `Çıktı · kod ${active.exitCode}`
+                        : active.exitSignal !== null
+                          ? `Çıktı · sinyal ${active.exitSignal}`
+                          : 'Çıktı'}
+                </span>
+                <span className="band-chip muted">{formatAge(sessionAgeMs(active, now))}</span>
+                <span className="band-chip muted">{active.isolation === 'worktree' ? 'İzole' : 'Ortak'}</span>
+                {active.degraded && (
+                  <span className="band-chip warn" title={active.degraded}>
+                    {active.degraded}
+                  </span>
+                )}
+                {activeProject?.degraded && (
+                  <span className="band-chip warn" title={activeProject.degraded}>
+                    {activeProject.degraded}
+                  </span>
+                )}
               </div>
 
               <div className="topbar-actions">
@@ -404,13 +589,22 @@ export function App() {
                           ? 'durdur ve arşivle'
                           : 'arşivle'}
                     </button>
-                    <button {...describe(`Çalışma dizininin yolunu kopyalar: ${active.cwd}`)} onClick={copyPath}>
+                    <button
+                      className="btn-quiet"
+                      {...describe(`Çalışma dizininin yolunu kopyalar: ${active.cwd}`)}
+                      onClick={copyPath}
+                    >
                       {copiedPath ? 'kopyalandı' : 'yolu kopyala'}
                     </button>
-                    <button {...describe('Terminali grid görünümünde açar.')} onClick={() => addToGrid(active.id)}>
+                    <button
+                      className="btn-quiet"
+                      {...describe('Terminali grid görünümünde açar.')}
+                      onClick={() => addToGrid(active.id)}
+                    >
                       grid'e ekle
                     </button>
                     <button
+                      className="btn-quiet"
                       {...describe('Neyin silineceğini önce gösterir; branch her durumda kalır.')}
                       onClick={askDelete}
                     >
@@ -420,6 +614,19 @@ export function App() {
                 )}
               </div>
             </header>
+            {showTrust && (
+              <div className="trust-note" role="note">
+                <span>{TRUST_NOTE}</span>
+                <button
+                  onClick={() => {
+                    sessionStorage.setItem(trustKey(active.id), '1')
+                    setTrustHidden(true)
+                  }}
+                >
+                  gizle
+                </button>
+              </div>
+            )}
 
             {pendingDelete && (
               <div className="pad muted delete-target">
@@ -427,8 +634,6 @@ export function App() {
                 <code>{pendingDelete.cwd}</code>
               </div>
             )}
-            {error && <div className="error">{error}</div>}
-            {state.serviceError && <div className="error">{state.serviceError}</div>}
 
             {state.terminals?.[active.id]?.checkpoint.lastError && (
               <div className="error">
@@ -486,39 +691,6 @@ export function App() {
               )}
               {tab === 'diff' && <DiffView key={active.id} sessionId={active.id} isolation={active.isolation} />}
             </div>
-          </>
-        ) : (
-          <>
-            {error && (
-              <div className="error" role="alert">
-                {error}
-              </div>
-            )}
-            {state.serviceError && (
-              <div className="error" role="alert">
-                {state.serviceError}
-              </div>
-            )}
-            {view === 'grid' ? (
-              <TerminalGrid
-                state={state}
-                healthy={stateHealthy}
-                pendingAdd={pendingGridAdd}
-                onPendingHandled={() => setPendingGridAdd(null)}
-                onOpen={openSession}
-                onPanelsChange={setGridIds}
-              />
-            ) : (
-              <Workspace
-                onPreviewIds={setPreviewIds}
-                state={state}
-                healthy={stateHealthy}
-                onSelect={openSession}
-                onNewSession={setDialogProject}
-                onAddProject={() => setAddingProject(true)}
-                onAddToGrid={addToGrid}
-              />
-            )}
           </>
         )}
       </main>

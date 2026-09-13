@@ -16,6 +16,7 @@ import * as git from './git'
 import { isCheckpointId, openCheckpointStore } from './checkpoints'
 import { createTerminalHost, type TerminalEvent, type PreviewResult } from './terminalHost'
 import { chunkText, type SnapshotScope } from './terminalState'
+import { readUserEnvironment } from './env'
 import {
   commandLabel,
   lastCommand,
@@ -23,6 +24,7 @@ import {
   type RepoDiff,
   type Isolation,
   type Project,
+  type ProjectView,
   type Session,
   type SessionView,
   type SessionWorktree,
@@ -39,6 +41,9 @@ const CONFIRMATION_TTL_MS = 60_000
 
 /** Korunan branch görünümünde okunacak en çok ref (spec §6). */
 const MAX_BRANCH_REFS = 1000
+
+/** Proje/cwd erişilebilirliği bu süre önbelleklenir (spec §5). */
+const HEALTH_CACHE_MS = 2000
 
 /** Aynı anda önizleme istenebilecek kart sayısı (spec §4). */
 const MAX_PREVIEW_IDS = 24
@@ -60,6 +65,8 @@ export interface DaemonOptions {
   host?: string
   /** Derlenmiş web çıktısını servis et (üretim başlatıcısı için). */
   serveWeb?: boolean
+  /** Her Run öncesi okunan kullanıcı ortam dosyası; verilmezse kullanıcı değeri eklenmez. */
+  environmentFile?: string
 }
 
 export interface Daemon {
@@ -272,18 +279,57 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     next()
   })
 
+  /**
+   * Proje kökü ve benzersiz cwd başına 2 sn önbellekli erişilebilirlik (spec §5).
+   * Yalnız görünüm içindir; mutation'lar kendi taze kontrolünü yapar.
+   */
+  const directoryHealth = new Map<string, { at: number; problem: string | null }>()
+  function directoryProblem(target: string): string | null {
+    const now = Date.now()
+    const cached = directoryHealth.get(target)
+    if (cached && now - cached.at < HEALTH_CACHE_MS) return cached.problem
+    let problem: string | null = null
+    try {
+      if (!fs.statSync(target).isDirectory()) problem = 'dizin değil'
+    } catch (err) {
+      problem = (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'yok' : 'okunamıyor'
+    }
+    directoryHealth.set(target, { at: now, problem })
+    return problem
+  }
+
   function sessionView(session: Session): SessionView {
     const live = sessions.activity(session.id)
+    const cwdProblem = directoryProblem(session.cwd)
     return {
       ...session,
       activity: live?.activity ?? null,
       lastActivityAt: live?.lastActivityAt ?? null,
       remainingProcessGroup: sessions.hasLingeringGroup(session.id),
+      degraded: cwdProblem === null ? null : `Çalışma dizini ${cwdProblem}: ${session.cwd}`,
     }
+  }
+
+  function projectView(project: Project): ProjectView {
+    const problem = directoryProblem(project.path)
+    return { ...project, degraded: problem === null ? null : `Proje klasörü ${problem}: ${project.path}` }
   }
 
   function findSession(id: string): Session | undefined {
     return store.get().sessions.find((s) => s.id === id)
+  }
+
+  /**
+   * Run öncesi kullanıcı ortamı taze okunur. Parse/izin hatasında Run başlamaz;
+   * çağıran bunu durdurma veya worktree açma gibi yan etkilerden önce yapar.
+   */
+  function userEnvironment(): Record<string, string> {
+    if (options.environmentFile === undefined) return {}
+    const read = readUserEnvironment(options.environmentFile)
+    if (!read.ok) {
+      throw new HttpError(409, 'environment_invalid', `Ortam dosyası kullanılamıyor, Run başlatılmadı: ${read.message}`)
+    }
+    return read.values
   }
 
   /** Yeni Run için sıralı ekran modelini açar; PTY doğmadan önce hazırdır. */
@@ -511,7 +557,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       daemonId,
       revision: store.revision(),
       serverNow: Date.now(),
-      projects: state.projects,
+      projects: state.projects.map(projectView),
       // Kalıcı lifecycle canlılık tahminiyle ezilmez; kayıt tek doğrudur.
       sessions: state.sessions.map(sessionView),
       previews,
@@ -622,6 +668,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         const sid = crypto.randomBytes(16).toString('hex')
         const name = readName(payload.name, program, sid)
         if (typeof name === 'object') throw new HttpError(400, 'validation', name.error)
+        const userEnv = userEnvironment()
 
         let cwd = project.path
         let branch: string | null = null
@@ -658,6 +705,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
             runId,
             command: program,
             cwd,
+            userEnv,
             onData: (chunk) => host.feed(runId, chunk),
             onExit: (exit) => recordExit(sid, exit),
           })
@@ -843,6 +891,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
               currentRunId: current.runId,
             })
           }
+          // Bozuk ortam dosyası canlı işi durdurmadan reddedilir.
+          const userEnv = userEnvironment()
 
           const stopped = await stopVerified(current.id)
           if (!stopped.verified) {
@@ -866,6 +916,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
               runId,
               command,
               cwd: current.cwd,
+              userEnv,
               onData: (chunk) => host.feed(runId, chunk),
               onExit: (exit) => recordExit(current.id, exit),
             })

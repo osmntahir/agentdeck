@@ -71,6 +71,13 @@ export interface SessionView extends Session {
   lastActivityAt: number | null
   /** Kalan süreç grubu: Run'ın lideri çıktı ama grubunda hâlâ süreç var. */
   remainingProcessGroup: boolean
+  /** Çalışma dizini kullanılamıyorsa nedeni; lifecycle'dan ayrı, türetilmiş overlay (ADR 0005). */
+  degraded: string | null
+}
+
+/** Proje kökü kullanılamıyorsa nedeni; kayıt ve oturumlar olduğu gibi kalır. */
+export interface ProjectView extends Project {
+  degraded: string | null
 }
 
 /** Canlı Run veya kalan süreç grubu: arşiv ve yeni Run önce doğrulanmış durdurma ister. */
@@ -94,7 +101,7 @@ export interface StateResponse {
   daemonId: string
   revision: number
   serverNow: number
-  projects: Project[]
+  projects: ProjectView[]
   sessions: SessionView[]
   serviceError: string | null
   terminals?: Record<string, {
@@ -160,6 +167,28 @@ export const PRESETS: Preset[] = [
   { label: 'Gemini CLI', command: 'gemini' },
   { label: 'Kabuk', command: null },
 ]
+
+/** Kartta gösterilen yaş: kısa, aşağı yuvarlanmış süre. 10 sn altı "az önce"dir. */
+export function formatAge(ms: number): string {
+  const seconds = Math.floor(Math.max(0, ms) / 1000)
+  if (seconds < 10) return 'az önce'
+  if (seconds < 60) return `${seconds} sn`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} dk`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} sa`
+  return `${Math.floor(hours / 24)} gün`
+}
+
+/** Canlı oturumda son hareket, diğerlerinde çıkış (yoksa oluşum) anına göre yaş. */
+export function sessionAgeMs(
+  session: Pick<SessionView, 'lifecycle' | 'lastActivityAt' | 'createdAt' | 'endedAt'>,
+  now: number,
+): number {
+  const origin =
+    session.lifecycle === 'live' ? (session.lastActivityAt ?? session.createdAt) : (session.endedAt ?? session.createdAt)
+  return Math.max(0, now - origin)
+}
 
 /** Bir Session'ın canlı olmadığı bir durumda gösterilecek program etiketi. */
 export function commandLabel(command: string | null): string {

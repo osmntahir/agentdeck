@@ -41,7 +41,9 @@ Ek olarak ölçülenler (ikinci tur):
 - [ ] Onay sonrası konuşma gerçekten oluşuyor mu, ve AgentDeck'in ürettiği kimlikle geri açılabiliyor mu? **Her CLI+sürüm için ayrı sonuç gerekir.** Bu geçmeden o CLI için yönetilen kimlik açılmaz.
 - [ ] Gemini'de auth gerektiren her yol; bu makinede hesap `IneligibleTierError` verdiği için ölçülemedi.
 - [ ] Bayraklı komutların **gerçek CLI'a** uçtan uca iletimi: `gemini --session-file`, `--list-sessions`, `claude --from-pr`, quote içi `resume`, `--` sonrası prompt, env/pipeline/wrapper. (Sınıflandırma tarafı yukarıda kapandı; kalan CLI'ın kendi kabulü.)
-- [ ] `.bashrc` erken çıkışı, nvm PATH, `environment.json` yenilemesi, bozuk/izinsiz env dosyası, parent-agent işaretçilerinin temizlenmesi — bunlar daemon uygulanınca test edilebilir.
+- [ ] `.bashrc` erken çıkışı, nvm PATH, `environment.json` yenilemesi, bozuk/izinsiz env dosyası, parent-agent işaretçilerinin temizlenmesi.
+    - Ölçülen: `env.test.ts` (dosya yoksa boş, düz string eklenir, 0644/64 KiB/JSON/rezerv/`CLAUDECODE` reddi, mesaj değer sızdırmaz) ve `api.test.ts` "environment.json her Run öncesi okunur; bozuk dosyada Run başlamaz ve canlı iş durdurulmaz".
+    - Açık: login profilinin `.bashrc` erken çıkışı ve nvm PATH'i; bunlar insan kabulüdür.
 - [ ] Gerçek TUI preview'ının **üründe** okunabilirliği (ölçüm kanıtı var, ürün entegrasyonu yok).
 
 **Kapının V0 üzerindeki etkisi:** bu kutular işaretlenene kadar yönetilen kimlik hiçbir CLI için açılmaz. Ürün yine de çalışır — literal komut ve CLI'ın kendi seçicisi V0'ın devam yoludur. Betik sonucu `docs/research/g2-results-<tarih>.md` olarak yazar; kutular o dosyaya bakılarak işaretlenir.
@@ -82,7 +84,7 @@ Ortam: Node 22.19.0, Linux, gerçek node-pty ve gerçek `git`. Kanıt: depodaki 
 
 G1 kapandı (12 Eylül 2026). G2 destek kapsamı netleşmesi Wayfinder haritasının kalan açık frontier'ıdır. G3/G4 uygulama kabulüdür; plan haritasının işi ürün kodunu tamamlamak değildir. G1/G2 tamamlandıktan sonra harita kapatılabilir; G3/G4 geçmeden sürüm hazır denmez.
 
-Uygulama durumu (12 Eylül 2026): spec §8/1 dilimi ürün koduna girdi ve G3'ün 3 maddesi otomatik testle kapandı. Kalan 7 madde §8/2–§8/4 dilimlerine ve insan kabulüne bağlıdır. Testlerin geçmesi ürünün doğrulandığı anlamına gelmez: G4'ün tamamı ve gerçek kullanıcı akışı ölçülmedi.
+Uygulama durumu (13 Eylül 2026): spec §8/1, §8/3, §8/4 ve §8/5 ürün koduna girdi ([ADR 0012](../adr/0012-scan-focus-poll-implementation.md)). G4'ün klavye/poll maddeleri ürün tarafında bağlandı ama insan kabulü yapılmadı. Testlerin geçmesi ürünün doğrulandığı anlamına gelmez.
 
 ## Sıradaki iş ve açık kararlar
 

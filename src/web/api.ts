@@ -21,6 +21,8 @@ export class ApiCallError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    /** HTTP durum kodu; durum döngüsü 401/403'ü ağ ve sunucu hatasından ayırır. */
+    readonly status: number,
   ) {
     super(message)
     this.name = 'ApiCallError'
@@ -40,6 +42,7 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
     throw new ApiCallError(
       typeof body.code === 'string' ? body.code : 'unknown',
       typeof body.message === 'string' ? body.message : `İstek başarısız (${res.status})`,
+      res.status,
     )
   }
   return body as T

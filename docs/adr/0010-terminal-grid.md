@@ -14,4 +14,4 @@ Kullanıcı paralel ajanları aynı anda izleyip yönetmek istiyor; önizleme ka
 
 **Kontrol devri.** Kontrol mesajı `vacant` alanını taşır: lease'in sahibi yoksa `true`. İstemci kontrolü yalnız sahipsizken kendiliğinden alır. Sahibi olan lease'i almak yine açık "Kontrolü al" eylemidir; ADR 0008'in bu kuralı değişmedi. Neden: grid ile tek görünüm arasında geçerken aynı Run'a yeni bağlantı, eski bağlantının kapanışı sunucuya ulaşmadan gelebilir. O durumda yeni terminal izleyici olarak kalıyor ve sahip ayrıldıktan sonra kimse girdi gönderemiyordu. Birden çok izleyici aynı anda sahipsiz lease'i isterse son istek kazanır; diğerleri salt okunur kalır.
 
-Açık kalanlar: panellerin klavyeyle gezinmesi (spec §5'teki F6/roving Tab), gerçek tarayıcıda 4–8 canlı CLI ile yük kabulü.
+Açık kalanlar: grid panellerinin kendi içindeki tam klavye döşemesi; tarama kartı/krom F6 ve roving [ADR 0012](0012-scan-focus-poll-implementation.md) ile kapanır. Gerçek tarayıcıda 4–8 canlı CLI ile yük kabulü.
