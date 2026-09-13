@@ -43,6 +43,8 @@ export interface CheckpointStore {
   /** Yazar ama budamaz: kayda girmemiş bir Run önceki Run'ların kaydını silemez. */
   write(input: CheckpointInput): Promise<void>
   read(sessionId: string, runId: string): Promise<CheckpointRead>
+  /** Saklanmış Run kayıtları, en yeni önce; dosya içeriği okunmaz. */
+  list(sessionId: string): { runId: string; updatedAt: number }[]
   /** Kayda girmiş Run için saklama sınırını uygular; o Run'ın kaydı her durumda kalır. */
   prune(sessionId: string, keepRunId: string): void
   /** Tek Run kaydını kaldırır; oturum dizini boşalırsa o da kalkar. */
@@ -191,6 +193,28 @@ export function openCheckpointStore(dataDir: string): CheckpointStore {
       } finally {
         release()
       }
+    },
+
+    list(sessionId: string): { runId: string; updatedAt: number }[] {
+      const dir = sessionDir(sessionId)
+      let entries: string[]
+      try {
+        entries = fs.readdirSync(dir)
+      } catch {
+        return []
+      }
+      const runs: { runId: string; updatedAt: number }[] = []
+      for (const name of entries) {
+        // Yarım kalmış temp dosyaları ve tanınmayan adlar Run kaydı değildir.
+        const runId = name.slice(0, -'.json'.length)
+        if (!name.endsWith('.json') || !isCheckpointId(runId)) continue
+        try {
+          runs.push({ runId, updatedAt: Math.floor(fs.statSync(path.join(dir, name)).mtimeMs) })
+        } catch {
+          // Listeleme ile stat arasında budanmış kayıt atlanır.
+        }
+      }
+      return runs.sort((a, b) => b.updatedAt - a.updatedAt)
     },
 
     prune(sessionId: string, keepRunId: string): void {

@@ -74,6 +74,21 @@ export const restartSession = (id: string, expectedRunId: string | null) =>
     body: JSON.stringify({ requestId: newRequestId(), expectedRunId }),
   })
 
+/** Mevcut çalışma kopyasında komutu aynen çalıştırır; başlangıç Command'ı değişmez. */
+export const launchSession = (id: string, expectedRunId: string | null, command: string | null) =>
+  call<SessionView>(`/api/sessions/${id}/launch`, {
+    method: 'POST',
+    body: JSON.stringify({ requestId: newRequestId(), expectedRunId, mode: 'command', command }),
+  })
+
+export interface RunsResult {
+  currentRunId: string | null
+  previous: { runId: string; updatedAt: number }[]
+}
+
+/** Saklanmış önceki Run görüntüleri; en çok son iki Run tutulur. */
+export const getRuns = (id: string) => call<RunsResult>(`/api/sessions/${id}/runs`)
+
 /** Canlı iş yalnız stopIfLive ile, doğrulanmış durdurmayla kapanır. */
 export const archiveSession = (id: string, expectedRunId: string | null, stopIfLive: boolean) =>
   call<SessionView>(`/api/sessions/${id}/archive`, {

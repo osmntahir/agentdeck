@@ -6,9 +6,10 @@ import { Sidebar } from './components/Sidebar'
 import { TerminalPane } from './components/TerminalPane'
 import { DiffView } from './components/DiffView'
 import { NewSessionDialog } from './components/NewSessionDialog'
+import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
 import { savedGridSessionIds } from './gridLayout'
-import type { Isolation, Project, StateResponse } from '../shared/types'
+import { commandLabel, type Isolation, type Project, type StateResponse } from '../shared/types'
 
 const EMPTY: StateResponse = {
   protocolVersion: 2,
@@ -39,6 +40,8 @@ export function App() {
   }, [])
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [launchOpen, setLaunchOpen] = useState(false)
+  const [launching, setLaunching] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = () =>
@@ -78,6 +81,27 @@ export function App() {
   }, [])
 
   const active = state.sessions.find((s) => s.id === activeId) ?? null
+
+  // Önceki Run görüntüleri saklanmış kayıtlardan okunur; oturum veya Run değişince seçim güncele döner.
+  const [runs, setRuns] = useState<api.RunsResult | null>(null)
+  const [inspectRunId, setInspectRunId] = useState<string | null>(null)
+  useEffect(() => {
+    setInspectRunId(null)
+    setRuns(null)
+    if (!active) return
+    let cancelled = false
+    api
+      .getRuns(active.id)
+      .then((next) => {
+        if (!cancelled) setRuns(next)
+      })
+      .catch(() => {
+        if (!cancelled) setRuns(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [active?.id, active?.runId])
 
   const run = (promise: Promise<unknown>) => {
     setError(null)
@@ -121,6 +145,22 @@ export function App() {
         ? api.unarchiveSession(active.id)
         : api.archiveSession(active.id, active.runId, active.lifecycle === 'live'),
     )
+  }
+
+  // Mevcut çalışma kopyasında yeni Run; başarılıysa terminal yeni Run'a bağlanır.
+  const launchCommand = (command: string | null) => {
+    if (!active || launching) return
+    setLaunching(true)
+    setError(null)
+    api
+      .launchSession(active.id, active.runId, command)
+      .then(() => {
+        setLaunchOpen(false)
+        setTab('terminal')
+        return refresh()
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLaunching(false))
   }
 
   // Silme her zaman taze bir önizlemeyle başlar: kullanıcı neyin gideceğini görür.
@@ -244,8 +284,22 @@ export function App() {
                     {active.lifecycle === 'live' && (
                       <button onClick={() => run(api.stopSession(active.id, active.runId))}>durdur</button>
                     )}
-                    <button onClick={() => run(api.restartSession(active.id, active.runId))}>
+                    <button
+                      title={`Son komutu aynı çalışma kopyasında aynen yeniden çalıştırır: ${commandLabel(
+                        active.lastLaunch?.mode === 'command' ? active.lastLaunch.command : active.command,
+                      )}`}
+                      onClick={() => run(api.restartSession(active.id, active.runId))}
+                    >
                       {active.lifecycle === 'live' ? 'durdur ve yeniden çalıştır' : 'yeniden çalıştır'}
+                    </button>
+                    <button
+                      title="Bu çalışma kopyasında başka bir komut veya CLI seçicisi çalıştır"
+                      onClick={() => {
+                        setError(null)
+                        setLaunchOpen(true)
+                      }}
+                    >
+                      komut çalıştır…
                     </button>
                     <button onClick={toggleArchive}>
                       {active.archivedAt !== null
@@ -278,8 +332,35 @@ export function App() {
             <div className="body">
               {tab === 'terminal' && (
                 <div className="terminals">
+                  {runs && runs.previous.length > 0 && (
+                    <div className="run-bar">
+                      <div className="tabs" role="group" aria-label="Terminal görüntüsü">
+                        <button
+                          className={inspectRunId === null ? 'on' : ''}
+                          aria-pressed={inspectRunId === null}
+                          onClick={() => setInspectRunId(null)}
+                        >
+                          Güncel Run
+                        </button>
+                        {runs.previous.map((previous) => (
+                          <button
+                            key={previous.runId}
+                            className={inspectRunId === previous.runId ? 'on' : ''}
+                            aria-pressed={inspectRunId === previous.runId}
+                            onClick={() => setInspectRunId(previous.runId)}
+                          >
+                            Önceki Run · {new Date(previous.updatedAt).toLocaleTimeString()}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="muted">
+                        Önceki Run salt okunur açılır; yalnız son iki Run'ın görüntüsü tutulur.
+                      </span>
+                    </div>
+                  )}
                   <TerminalPane
-                    key={`${state.daemonId}:${active.id}:${active.runId}`}
+                    key={`${state.daemonId}:${active.id}:${inspectRunId ?? active.runId}`}
+                    runId={inspectRunId}
                     session={active}
                     daemonId={state.daemonId}
                     stateHealthy={stateHealthy}
@@ -332,6 +413,17 @@ export function App() {
             await api.addProject(path)
             await refresh()
           }}
+        />
+      )}
+      {launchOpen && active && (
+        <LaunchDialog
+          session={active}
+          busy={launching}
+          error={error}
+          onCancel={() => {
+            if (!launching) setLaunchOpen(false)
+          }}
+          onLaunch={launchCommand}
         />
       )}
       {dialogProject && (

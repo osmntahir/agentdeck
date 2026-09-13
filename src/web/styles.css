@@ -268,6 +268,21 @@ select:focus {
 }
 .terminals {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.terminals > .terminal-pane {
+  flex: 1;
+  min-height: 0;
+}
+.run-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
 }
 /* Kabın kaydırma çubuğu kullanılabilir genişliği daraltıp sığdırma hesabını
    taşırıyordu; terminal geçmişi xterm'in kendi kaydırma alanında gezilir. */
@@ -414,6 +429,15 @@ select:focus {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.command-fills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.command-fills button.on {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .terminal-pane {

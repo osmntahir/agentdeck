@@ -456,6 +456,74 @@ test('arşiv canlı işi açık istek olmadan durdurmaz; arşiv ve arşivden ç�
   })
 })
 
+test('bu çalışma kopyasında komut çalıştırma aynı cwd de yeni Run açar; başlangıç Command ı değişmez', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    assert.equal(created.status, 200, JSON.stringify(created.body))
+    const id = created.body.id
+    const cwd = created.body.cwd
+    const marker = path.join(cwd, 'launch-cwd.txt')
+    const command = 'pwd > launch-cwd.txt; sleep 300'
+
+    const launched = await api.post<SessionView>(`/api/sessions/${id}/launch`, {
+      requestId: 'launch-1',
+      expectedRunId: created.body.runId,
+      mode: 'command',
+      command,
+    })
+    assert.equal(launched.status, 200, JSON.stringify(launched.body))
+    assert.notEqual(launched.body.runId, created.body.runId, 'yeni Run')
+    assert.equal(launched.body.lifecycle, 'live')
+    assert.equal(launched.body.cwd, cwd)
+    assert.equal(launched.body.command, 'sleep 300', 'başlangıç Command ı değişmez')
+    assert.deepEqual(launched.body.lastLaunch, { mode: 'command', command })
+    await waitFor(async () => fs.existsSync(marker) && fs.readFileSync(marker, 'utf8').trim() !== '')
+    assert.equal(fs.realpathSync(fs.readFileSync(marker, 'utf8').trim()), fs.realpathSync(cwd), 'aynı çalışma kopyasında')
+
+    // Yeniden çalıştır son başarılı niyeti tekrarlar, başlangıç Command ını değil.
+    fs.rmSync(marker)
+    const restarted = await api.post<SessionView>(`/api/sessions/${id}/restart`, {
+      requestId: 'restart-1',
+      expectedRunId: launched.body.runId,
+    })
+    assert.equal(restarted.status, 200, JSON.stringify(restarted.body))
+    assert.deepEqual(restarted.body.lastLaunch, { mode: 'command', command })
+    await waitFor(async () => fs.existsSync(marker))
+
+    const managed = await api.post<{ code: string }>(`/api/sessions/${id}/launch`, {
+      requestId: 'launch-2',
+      mode: 'fresh',
+      cli: 'claude',
+    })
+    assert.equal(managed.status, 400)
+    assert.equal(managed.body.code, 'mode_unsupported', 'yönetilen kimlik G2 geçmeden kapalı')
+
+    const extra = await api.post<{ code: string }>(`/api/sessions/${id}/launch`, {
+      requestId: 'launch-3',
+      mode: 'command',
+      command: null,
+      conversationId: 'x',
+    })
+    assert.equal(extra.status, 400)
+    assert.equal(extra.body.code, 'validation', 'modun izinli olmayan alanı reddedilir')
+
+    const missing = await api.post<{ code: string }>(`/api/sessions/${id}/launch`, { requestId: 'launch-4', mode: 'command' })
+    assert.equal(missing.status, 400)
+
+    const stale = await api.post<{ code: string }>(`/api/sessions/${id}/launch`, {
+      requestId: 'launch-5',
+      expectedRunId: created.body.runId,
+      mode: 'command',
+      command: null,
+    })
+    assert.equal(stale.status, 409)
+    assert.equal(stale.body.code, 'stale_run')
+
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions[0].runId, restarted.body.runId, 'reddedilen istek Run değiştirmez')
+  })
+})
+
 test('aynı requestId ikinci bir Run doğurmaz, farklı payload çakışır', { timeout: 30000 }, async () => {
   await withDaemon(async ({ api, projectId }) => {
     const body = createBody(projectId, { name: 'tekil' })
@@ -1342,6 +1410,57 @@ test('canlı olmayan Run salt okunur incelenir; girdi kabul edilmez', { timeout:
     // Salt okunur bağlantı girdi kabul etmez (bağlantı zaten kapanır).
     history.send({ type: 'input', data: 'echo SIZINTI\n' })
     history.close()
+  })
+})
+
+test('önceki Run görüntüsü listelenir ve salt okunur açılır; en çok son iki Run tutulur', { timeout: 60000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    type Runs = { currentRunId: string | null; previous: { runId: string; updatedAt: number }[] }
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      createBody(projectId, { command: 'printf ILK_RUN; sleep 300' }),
+    )
+    const id = created.body.id
+    const first = created.body.runId as string
+
+    const none = await api.get<Runs>(`/api/sessions/${id}/runs`)
+    assert.equal(none.status, 200, JSON.stringify(none.body))
+    assert.equal(none.body.currentRunId, first)
+    assert.deepEqual(none.body.previous, [], 'ilk Run da önceki Run yok')
+
+    /** Run çıktısı ekran modeline inene kadar bekler; durdurma sonrası görüntü onu taşır. */
+    const settle = async (marker: string) => {
+      const ws = connectWs(daemon, `session=${id}&token=${daemon.token}`)
+      await ws.open()
+      await ws.waitFor(() => ws.screenInput().includes(marker))
+      ws.close()
+    }
+    const launch = (requestId: string, expectedRunId: string, command: string) =>
+      api.post<SessionView>(`/api/sessions/${id}/launch`, { requestId, expectedRunId, mode: 'command', command })
+
+    await settle('ILK_RUN')
+    const second = await launch('ikinci', first, 'printf IKINCI_RUN; sleep 300')
+    assert.equal(second.status, 200, JSON.stringify(second.body))
+
+    const afterSecond = await api.get<Runs>(`/api/sessions/${id}/runs`)
+    assert.deepEqual(afterSecond.body.previous.map((r) => r.runId), [first])
+
+    const inspect = connectWs(daemon, `session=${id}&run=${first}&token=${daemon.token}`)
+    await inspect.open()
+    const start = await inspect.waitFor((m) => m.type === 'replay-start')
+    assert.equal(start.mode, 'inspect', 'önceki Run salt okunur açılır')
+    await inspect.waitFor((m) => m.type === 'replay-end')
+    assert.ok(inspect.screenInput().includes('ILK_RUN'), 'önceki Run un kendi ekranı gelir')
+    inspect.close()
+
+    await settle('IKINCI_RUN')
+    const third = await launch('ucuncu', second.body.runId as string, 'printf UCUNCU_RUN; sleep 300')
+    assert.equal(third.status, 200, JSON.stringify(third.body))
+    // Yeni Run'ın görüntüsü yazıldığında saklama sınırı en eski Run'ı budar.
+    await waitFor(async () => {
+      const runs = await api.get<Runs>(`/api/sessions/${id}/runs`)
+      return runs.body.previous.map((r) => r.runId).join(',') === second.body.runId
+    })
   })
 })
 

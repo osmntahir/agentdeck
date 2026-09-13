@@ -85,6 +85,8 @@ export interface TerminalHost {
   /** Run kayda hiç girmedi: görüntüsü atılır, önceki Run'ların kayıtlarına dokunulmaz. */
   discard(sessionId: string, runId: string): Promise<void>
   removeSession(sessionId: string): void
+  /** Saklanmış Run görüntüleri, en yeni önce. */
+  listRuns(sessionId: string): { runId: string; updatedAt: number }[]
   failure(runId: string): TerminalFailure | null
   checkpointStatus(runId: string): CheckpointStatus
   shutdown(): Promise<void>
@@ -579,6 +581,10 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
 
     removeSession(sessionId: string): void {
       options.checkpoints.removeSession(sessionId)
+    },
+
+    listRuns(sessionId: string): { runId: string; updatedAt: number }[] {
+      return options.checkpoints.list(sessionId)
     },
 
     failure(runId: string): TerminalFailure | null {

@@ -14,9 +14,19 @@ interface Props {
   autoFocus?: boolean
   /** Grid paneli: durum şeridi terminalin üstünde yüzen kompakt çubuk olur. */
   compact?: boolean
+  /** Salt okunur incelenecek önceki Run; verilmezse oturumun güncel Run'ı açılır. */
+  runId?: string | null
 }
 
-export function TerminalPane({ session, daemonId, stateHealthy, autoFocus = true, compact = false }: Props) {
+export function TerminalPane({
+  session,
+  daemonId,
+  stateHealthy,
+  autoFocus = true,
+  compact = false,
+  runId: inspectRunId = null,
+}: Props) {
+  const runId = inspectRunId ?? session.runId
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const actions = useRef({ history: () => {}, control: () => {} })
@@ -26,7 +36,7 @@ export function TerminalPane({ session, daemonId, stateHealthy, autoFocus = true
   const [status, setStatus] = useState<StreamStatus | null>(null)
 
   useEffect(() => {
-    if (!session.runId) { setStatus(null); return }
+    if (!runId) { setStatus(null); return }
     const term = new Terminal({
       cols: 120, rows: 32, scrollback: 1000,
       fontSize: 13,
@@ -72,11 +82,11 @@ export function TerminalPane({ session, daemonId, stateHealthy, autoFocus = true
       requestedSize = ''
       let claimed = 0
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const query = new URLSearchParams({ session: session.id, run: session.runId!, token: TOKEN })
+      const query = new URLSearchParams({ session: session.id, run: runId, token: TOKEN })
       const ws = new WebSocket(`${proto}://${location.host}/ws?${query}`)
       socket = ws
       let protocolFailed = false
-      const consumer = new TerminalStream(term, { daemonId, sessionId: session.id, runId: session.runId! }, (next) => {
+      const consumer = new TerminalStream(term, { daemonId, sessionId: session.id, runId }, (next) => {
         if (disposed || socket !== ws) return
         setStatus(next)
         term.options.disableStdin = !healthy.current || !next.ready || !next.live || !next.owned
@@ -136,7 +146,7 @@ export function TerminalPane({ session, daemonId, stateHealthy, autoFocus = true
       termRef.current = null
       term.dispose()
     }
-  }, [session.id, session.runId, daemonId, retry])
+  }, [session.id, runId, daemonId, retry])
 
   useEffect(() => {
     if (termRef.current) termRef.current.options.disableStdin = !stateHealthy || !status?.ready || !status.live || !status.owned
@@ -159,7 +169,7 @@ export function TerminalPane({ session, daemonId, stateHealthy, autoFocus = true
           {compact ? '↻' : 'Yeniden bağlan'}
         </button>
       </div>
-      {!session.runId && <p>Bu oturumda henüz Run çalışmadı.</p>}
+      {!runId && <p>Bu oturumda henüz Run çalışmadı.</p>}
       <div ref={hostRef} className="term-host" />
     </div>
   )

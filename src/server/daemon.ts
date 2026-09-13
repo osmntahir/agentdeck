@@ -783,11 +783,19 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
   })
 
-  app.post('/api/sessions/:id/restart', async (req, res) => {
-    const requestId = readRequestId(req.body?.requestId)
-    if (typeof requestId !== 'string') return jsonError(res, 400, 'validation', requestId.error)
-
-    const existing = findSession(req.params.id)
+  /**
+   * Mevcut çalışma kopyasında yeni Run. Canlı iş önce doğrulanmış biçimde
+   * durdurulur; cwd yoksa yeni Run açılmaz. Başarılı Run lastLaunch'a yazılır,
+   * başlangıç Command'ı değişmez. Spawn veya commit başarısızsa önceki niyet korunur.
+   */
+  async function relaunch(
+    req: express.Request,
+    res: express.Response,
+    requestId: string,
+    payload: Record<string, unknown>,
+    commandFor: (current: Session) => string | null,
+  ): Promise<void> {
+    const existing = findSession(String(req.params.id))
     if (!existing) return jsonError(res, 404, 'not_found', 'Oturum yok')
 
     const held = sessionLocks.tryAcquire(existing.id)
@@ -795,7 +803,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     try {
       const session = await launchLedger.run(
         requestId,
-        { sessionId: existing.id, expectedRunId: req.body?.expectedRunId ?? null },
+        { sessionId: existing.id, expectedRunId: req.body?.expectedRunId ?? null, ...payload },
         async () => {
           const current = findSession(existing.id)
           if (!current) throw new HttpError(404, 'not_found', 'Oturum yok')
@@ -817,10 +825,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
             throw new HttpError(400, 'cwd_missing', `Çalışma dizini yok: ${current.cwd}`)
           }
 
-          // lastLaunch niyeti tekrarlanır. §8/1'de yalnız command niyeti
-          // üretilir; yönetilen kimlik (fresh/resume/picker) G2 geçmeden açılmaz.
-          const intent = current.lastLaunch
-          const command = intent && intent.mode === 'command' ? intent.command : current.command
+          const command = commandFor(current)
 
           const runId = crypto.randomBytes(16).toString('hex')
           openTerminal(current.id, runId)
@@ -865,6 +870,54 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     } finally {
       held.release()
     }
+  }
+
+  app.post('/api/sessions/:id/restart', async (req, res) => {
+    const requestId = readRequestId(req.body?.requestId)
+    if (typeof requestId !== 'string') return jsonError(res, 400, 'validation', requestId.error)
+    // lastLaunch niyeti tekrarlanır; yönetilen kimlik (fresh/resume/picker) G2
+    // geçmeden üretilmediği için yalnız command niyeti vardır.
+    await relaunch(req, res, requestId, {}, (current) =>
+      current.lastLaunch?.mode === 'command' ? current.lastLaunch.command : current.command,
+    )
+  })
+
+  const LAUNCH_FIELDS = new Set(['requestId', 'expectedRunId', 'mode', 'command'])
+
+  app.post('/api/sessions/:id/launch', async (req, res) => {
+    const requestId = readRequestId(req.body?.requestId)
+    if (typeof requestId !== 'string') return jsonError(res, 400, 'validation', requestId.error)
+    const body = (req.body ?? {}) as Record<string, unknown>
+    if (body.mode === 'fresh' || body.mode === 'resume' || body.mode === 'picker') {
+      return jsonError(
+        res,
+        400,
+        'mode_unsupported',
+        "Yönetilen konuşma eylemleri G2 kabul testi geçmeden kapalı; CLI'ın kendi seçicisini komut olarak çalıştırın (ör. claude --resume)",
+      )
+    }
+    if (body.mode !== 'command') return jsonError(res, 400, 'validation', 'mode command olmalı')
+    const extra = Object.keys(body).filter((key) => !LAUNCH_FIELDS.has(key))
+    if (extra.length > 0) return jsonError(res, 400, 'validation', `Bu modda izinli olmayan alan: ${extra.join(', ')}`)
+    if (!('command' in body)) return jsonError(res, 400, 'validation', 'command alanı gerekli (null = kabuk)')
+    const command = readCommand(body.command)
+    if (command !== null && typeof command === 'object') return jsonError(res, 400, 'validation', command.error)
+
+    await relaunch(req, res, requestId, { mode: 'command', command }, () => command)
+  })
+
+  /** Saklanmış görüntüsü olan önceki Run'lar; salt okunur inceleme WS'te runId ile açılır. */
+  app.get('/api/sessions/:id/runs', (req, res) => {
+    const session = findSession(req.params.id)
+    if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
+    // Launch sürerken kayda girmemiş Run'ın görüntüsü önceki Run gibi listelenmez.
+    const held = sessionLocks.tryAcquire(session.id)
+    if (!held) return jsonError(res, 409, 'operation_in_progress', 'Bu oturumda başka bir işlem sürüyor')
+    held.release()
+    res.json({
+      currentRunId: session.runId,
+      previous: host.listRuns(session.id).filter((run) => run.runId !== session.runId),
+    })
   })
 
   app.post('/api/sessions/:id/delete-preview', async (req, res) => {
