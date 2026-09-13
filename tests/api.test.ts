@@ -408,6 +408,54 @@ test('lider çıkıp çocuk kalsa da silme grubu doğrulanmış biçimde durduru
   })
 })
 
+test('arşiv canlı işi açık istek olmadan durdurmaz; arşiv ve arşivden çıkarma dosyalara dokunmaz', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, repo, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    assert.equal(created.status, 200, JSON.stringify(created.body))
+    const id = created.body.id
+    fs.writeFileSync(path.join(created.body.cwd, 'ajan-isi.txt'), 'korunmalı')
+
+    const refused = await api.post<{ code: string }>(`/api/sessions/${id}/archive`, {
+      expectedRunId: created.body.runId,
+    })
+    assert.equal(refused.status, 409)
+    assert.equal(refused.body.code, 'live_requires_stop')
+    let state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions[0].lifecycle, 'live', 'açık istek olmadan canlı iş durdurulmaz')
+    assert.equal(state.body.sessions[0].archivedAt, null)
+
+    const stale = await api.post<{ code: string }>(`/api/sessions/${id}/archive`, {
+      expectedRunId: 'eski-run',
+      stopIfLive: true,
+    })
+    assert.equal(stale.status, 409)
+    assert.equal(stale.body.code, 'stale_run')
+
+    const archived = await api.post<SessionView>(`/api/sessions/${id}/archive`, {
+      expectedRunId: created.body.runId,
+      stopIfLive: true,
+    })
+    assert.equal(archived.status, 200, JSON.stringify(archived.body))
+    assert.equal(archived.body.lifecycle, 'exited', 'durdur ve arşivle doğrulanmış durdurmadır')
+    assert.equal(typeof archived.body.archivedAt, 'number')
+    assert.equal(archived.body.cwd, created.body.cwd)
+    assert.equal(archived.body.branch, created.body.branch)
+    assert.equal(archived.body.baseCommit, created.body.baseCommit)
+    assert.equal(fs.readFileSync(path.join(created.body.cwd, 'ajan-isi.txt'), 'utf8'), 'korunmalı')
+    const branch = created.body.branch as string
+    assert.match(execFileSync('git', ['branch', '--list', branch], { cwd: repo, encoding: 'utf8' }), /agentdeck\//)
+
+    const restored = await api.post<SessionView>(`/api/sessions/${id}/unarchive`)
+    assert.equal(restored.status, 200, JSON.stringify(restored.body))
+    assert.equal(restored.body.archivedAt, null)
+    assert.equal(restored.body.lifecycle, 'exited', 'arşivden çıkarma Run başlatmaz')
+    assert.equal(fs.readFileSync(path.join(created.body.cwd, 'ajan-isi.txt'), 'utf8'), 'korunmalı')
+
+    state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions[0].archivedAt, null)
+  })
+})
+
 test('aynı requestId ikinci bir Run doğurmaz, farklı payload çakışır', { timeout: 30000 }, async () => {
   await withDaemon(async ({ api, projectId }) => {
     const body = createBody(projectId, { name: 'tekil' })

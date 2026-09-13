@@ -713,6 +713,72 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
   })
 
+  /**
+   * Arşiv çalışma kaydını aktif taramadan kaldırır; worktree, branch ve terminal
+   * görüntülerine dokunmaz. Canlı iş yalnız açık stopIfLive isteğiyle ve
+   * doğrulanmış durdurmayla kapanır.
+   */
+  app.post('/api/sessions/:id/archive', async (req, res) => {
+    const session = findSession(req.params.id)
+    if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
+    const stopIfLive = req.body?.stopIfLive ?? false
+    if (typeof stopIfLive !== 'boolean') return jsonError(res, 400, 'validation', 'stopIfLive true/false olmalı')
+
+    const held = sessionLocks.tryAcquire(session.id)
+    if (!held) return jsonError(res, 409, 'operation_in_progress', 'Bu oturumda başka bir işlem sürüyor')
+    try {
+      if (req.body?.expectedRunId !== undefined && req.body.expectedRunId !== session.runId) {
+        return jsonError(res, 409, 'stale_run', 'Beklenen Run artık geçerli değil; görünüm tazelendi', {
+          currentRunId: session.runId,
+        })
+      }
+      const running =
+        session.lifecycle === 'live' || sessions.isLive(session.id) || sessions.hasLingeringGroup(session.id)
+      if (running) {
+        if (!stopIfLive) {
+          return jsonError(res, 409, 'live_requires_stop', 'Canlı oturum arşivlenmeden önce durdurulmalı; "Durdur ve arşivle" seçin')
+        }
+        const stopped = await stopVerified(session.id)
+        if (!stopped.verified) {
+          return jsonError(res, 409, 'stop_unverified', 'Süreç grubunun durduğu doğrulanamadı; oturum arşivlenmedi', {
+            reason: stopped.reason,
+          })
+        }
+      }
+      try {
+        await store.commit((draft) => {
+          const target = draft.sessions.find((s) => s.id === session.id)
+          if (target && target.archivedAt === null) target.archivedAt = Date.now()
+        })
+      } catch (err) {
+        return jsonError(res, 503, 'persistence', `Arşiv kaydedilemedi: ${(err as Error).message}`)
+      }
+      res.json(sessionView(findSession(session.id) as Session))
+    } finally {
+      held.release()
+    }
+  })
+
+  /** Arşivden çıkarma yalnız kaydı aktif taramaya döndürür; Run başlatmaz, dosyalara dokunmaz. */
+  app.post('/api/sessions/:id/unarchive', async (req, res) => {
+    const session = findSession(req.params.id)
+    if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
+
+    const held = sessionLocks.tryAcquire(session.id)
+    if (!held) return jsonError(res, 409, 'operation_in_progress', 'Bu oturumda başka bir işlem sürüyor')
+    try {
+      await store.commit((draft) => {
+        const target = draft.sessions.find((s) => s.id === session.id)
+        if (target) target.archivedAt = null
+      })
+      res.json(sessionView(findSession(session.id) as Session))
+    } catch (err) {
+      jsonError(res, 503, 'persistence', `Arşivden çıkarma kaydedilemedi: ${(err as Error).message}`)
+    } finally {
+      held.release()
+    }
+  })
+
   app.post('/api/sessions/:id/restart', async (req, res) => {
     const requestId = readRequestId(req.body?.requestId)
     if (typeof requestId !== 'string') return jsonError(res, 400, 'validation', requestId.error)

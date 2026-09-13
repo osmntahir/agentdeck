@@ -113,6 +113,16 @@ export function App() {
     setView('grid')
   }
 
+  // Arşiv dosyalara dokunmaz; canlı iş yalnız açıkça görünen "durdur ve arşivle" ile kapanır.
+  const toggleArchive = () => {
+    if (!active) return
+    run(
+      active.archivedAt !== null
+        ? api.unarchiveSession(active.id)
+        : api.archiveSession(active.id, active.runId, active.lifecycle === 'live'),
+    )
+  }
+
   // Silme her zaman taze bir önizlemeyle başlar: kullanıcı neyin gideceğini görür.
   const askDelete = () => {
     if (!active) return
@@ -201,6 +211,7 @@ export function App() {
                 <div className="title">{active.name}</div>
                 <div className="subtitle" title={active.cwd}>
                   {active.branch ?? 'ortak çalışma kopyası'}
+                  {active.archivedAt !== null && ' · arşivde'}
                 </div>
               </div>
 
@@ -235,6 +246,13 @@ export function App() {
                     )}
                     <button onClick={() => run(api.restartSession(active.id, active.runId))}>
                       {active.lifecycle === 'live' ? 'durdur ve yeniden çalıştır' : 'yeniden çalıştır'}
+                    </button>
+                    <button onClick={toggleArchive}>
+                      {active.archivedAt !== null
+                        ? 'arşivden çıkar'
+                        : active.lifecycle === 'live'
+                          ? 'durdur ve arşivle'
+                          : 'arşivle'}
                     </button>
                     <button onClick={() => addToGrid(active.id)}>grid'e ekle</button>
                     <button onClick={askDelete}>sil</button>

@@ -46,7 +46,8 @@ export function Sidebar({
       </div>
       <nav className="main-nav">
         <button className={`home-nav${activeId === null && view === 'sessions' ? ' selected' : ''}`} onClick={onHome}>
-          <span>▦</span> Tüm oturumlar <span className="nav-count">{state.sessions.length}</span>
+          <span>▦</span> Tüm oturumlar{' '}
+          <span className="nav-count">{state.sessions.filter((s) => s.archivedAt === null).length}</span>
         </button>
         <button className={`home-nav${activeId === null && view === 'grid' ? ' selected' : ''}`} onClick={onGrid}>
           <span>⊞</span> Terminal grid <span className="nav-count">{gridCount}</span>
@@ -101,7 +102,8 @@ export function Sidebar({
                 </div>
               </div>
 
-              {owned.map((session) => (
+              {/* Arşivlenen oturum gezinmede görünmez; kayıt proje silmeyi yine engeller. */}
+              {owned.filter((s) => s.archivedAt === null).map((session) => (
                 <SessionRow
                   key={session.id}
                   session={session}

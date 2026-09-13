@@ -74,6 +74,16 @@ export const restartSession = (id: string, expectedRunId: string | null) =>
     body: JSON.stringify({ requestId: newRequestId(), expectedRunId }),
   })
 
+/** Canlı iş yalnız stopIfLive ile, doğrulanmış durdurmayla kapanır. */
+export const archiveSession = (id: string, expectedRunId: string | null, stopIfLive: boolean) =>
+  call<SessionView>(`/api/sessions/${id}/archive`, {
+    method: 'POST',
+    body: JSON.stringify({ expectedRunId, stopIfLive }),
+  })
+
+export const unarchiveSession = (id: string) =>
+  call<SessionView>(`/api/sessions/${id}/unarchive`, { method: 'POST' })
+
 export interface DeletePreview {
   confirmationToken: string
   expiresInMs: number

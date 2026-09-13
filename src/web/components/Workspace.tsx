@@ -18,9 +18,13 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const live = state.sessions.filter((s) => s.lifecycle === 'live').length
+  const archivedCount = state.sessions.filter((s) => s.archivedAt !== null).length
+  // Arşivlenen oturum aktif taramada görünmez; yalnız Arşiv filtresiyle bulunur.
   const sessions = state.sessions.filter(
     (s) =>
-      (filter === 'all' || s.lifecycle === filter) &&
+      (filter === 'archived'
+        ? s.archivedAt !== null
+        : s.archivedAt === null && (filter === 'all' || s.lifecycle === filter)) &&
       `${s.name} ${commandLabel(s.command)} ${state.projects.find((p) => p.id === s.projectId)?.name ?? ''}`
         .toLocaleLowerCase('tr')
         .includes(query.toLocaleLowerCase('tr')),
@@ -65,6 +69,7 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
               ['live', 'Canlı'],
               ['exited', 'Sonlanan'],
               ['orphaned', 'Bağlantısız'],
+              ['archived', 'Arşiv'],
             ].map(([value, label]) => (
               <button
                 aria-pressed={filter === value}
@@ -73,7 +78,8 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                 onClick={() => setFilter(value)}
               >
                 {label}
-                {value === 'all' && <span>{state.sessions.length}</span>}
+                {value === 'all' && <span>{state.sessions.length - archivedCount}</span>}
+                {value === 'archived' && archivedCount > 0 && <span>{archivedCount}</span>}
               </button>
             ))}
           </div>
@@ -176,6 +182,7 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                           </pre>
                           <footer>
                             <span>
+                              {session.archivedAt !== null && 'Arşivde · '}
                               {session.isolation === 'worktree' ? 'İzole worktree' : 'Ortak klasör'}
                             </span>
                             <span className="card-actions">
