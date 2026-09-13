@@ -20,6 +20,7 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Dosya koruma** — silme yalnız taze bir onayla yapılır, branch hiçbir
   koşulda silinmez, `git worktree remove` başarısızsa zorla silme yoluna
   düşülmez. Kayıtsız çalışma kopyaları yalnız listelenir, temizlenmez.
+- **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması ve yaşam döngüsü filtreleri. Görünen sonuçların ilk 24 oturumu için önizleme alınır; karttan tek terminale geçilir.
 - **Oturumlar arası geçiş** — yalnız odaktaki terminal açılır; ekran daemon'daki
   headless modelden kurulur. Scrollback açık “Terminal geçmişini yükle” eylemiyle gelir.
 - **Kalıcı terminal görüntüsü** — son iki Run checkpoint'i tutulur; canlı olmayan
@@ -138,7 +139,7 @@ docs/                  spec, ADR'ler, doğrulama kapıları, ölçüm script'ler
 Bilinçli olarak MVP dışında bırakılanlar:
 
 - Ajanlar arası iletişim / paylaşılan context (MCP katmanı)
-- Grid görünümü, dosya ağacı, kod editörü
+- Aynı anda birden fazla etkileşimli terminal, dosya ağacı, kod editörü
 - Görev adının ajana ilk prompt olarak geçmesi
 - Otomatik PR açma, kanban
 - Yeni masaüstü kabuğuna geçiş (mevcut Electron başlatıcı vardır)
@@ -153,7 +154,7 @@ Bilinçli olarak MVP dışında bırakılanlar:
   sahipliği bir multiplexer'a (tmux) taşınmalıdır.
 - **Terminal ürün kabulü açık.** Ekran/scrollback replay ve checkpoint uygulanmıştır;
   gerçek tarayıcı render, mouse/paste/IME ve yoğun çıktı kabulü yapılmadı.
-  Grid önizlemesi için API hazırdır; prototip grid henüz bağlanmadı.
+  Oturum panosu önizleme API’sine bağlıdır. Proje ekleme, kabuk başlatma, terminal girdisi, diff, arama ve durdurma akışı gerçek Chromium üzerinde doğrulandı; ajan CLI’larının ürün kabulü ayrı kalır.
 - **Geçmiş sınırlıdır.** En fazla son iki yazılmış Run görüntüsü tutulur; tam
   konuşma arşivi değildir. Önceki Run seçicisi henüz arayüzde yoktur.
 - **Konuşmayı sürdürme yolu yok.** Yeniden çalıştırma başlangıç komutunu

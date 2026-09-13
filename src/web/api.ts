@@ -41,7 +41,10 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
 const newRequestId = (): string =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
 
-export const getState = () => call<StateResponse>('/api/state', { signal: AbortSignal.timeout(5000) })
+export const getState = (previewIds: string[] = []) =>
+  call<StateResponse>(`/api/state?previewIds=${encodeURIComponent(previewIds.join(','))}`, {
+    signal: AbortSignal.timeout(5000),
+  })
 
 export const addProject = (path: string) =>
   call<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ path }) })

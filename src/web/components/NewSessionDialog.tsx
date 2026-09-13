@@ -1,14 +1,20 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Isolation, Project } from '../../shared/types'
 import { PRESETS } from '../../shared/types'
 
 interface Props {
+  busy: boolean
+  error: string | null
   project: Project
   onCancel: () => void
   onCreate: (input: { name: string; command: string | null; isolation: Isolation }) => void
 }
 
-export function NewSessionDialog({ project, onCancel, onCreate }: Props) {
+export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: Props) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    dialog.current?.showModal()
+  }, [])
   const [name, setName] = useState('')
   // Preset yalnız başlangıç Command'ını doldurur; kalıcı ajan kimliği değildir.
   const [presetIndex, setPresetIndex] = useState(0)
@@ -16,13 +22,22 @@ export function NewSessionDialog({ project, onCancel, onCreate }: Props) {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (busy) return
     onCreate({ name: name.trim(), command: PRESETS[presetIndex].command, isolation })
   }
 
   return (
-    <div className="overlay" onClick={onCancel}>
+    <dialog
+      ref={dialog}
+      className="session-modal"
+      aria-labelledby="new-session-title"
+      onCancel={(e) => {
+        e.preventDefault()
+        onCancel()
+      }}
+    >
       <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <h2>Yeni oturum</h2>
+        <h2 id="new-session-title">Yeni oturum</h2>
         <div className="dialog-sub">{project.name}</div>
 
         <label>
@@ -31,7 +46,7 @@ export function NewSessionDialog({ project, onCancel, onCreate }: Props) {
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="isteğe bağlı — örn. auth refactor"
+            placeholder="İsteğe bağlı, örn. kimlik doğrulama"
           />
         </label>
 
@@ -48,7 +63,11 @@ export function NewSessionDialog({ project, onCancel, onCreate }: Props) {
 
         <div className="radio-group">
           <label className="radio">
-            <input type="radio" checked={isolation === 'worktree'} onChange={() => setIsolation('worktree')} />
+            <input
+              type="radio"
+              checked={isolation === 'worktree'}
+              onChange={() => setIsolation('worktree')}
+            />
             <span>
               <strong>İzole</strong> — kendi worktree'si ve branch'i
             </span>
@@ -64,19 +83,24 @@ export function NewSessionDialog({ project, onCancel, onCreate }: Props) {
         {/* Yeni klasörde CLI'lar güven veya giriş onayı isteyebilir; bunu
             uygulama vermez, kullanıcı terminalden tamamlar. */}
         <p className="dialog-note muted">
-          Ajan, klasör güveni veya giriş onayı isteyebilir; terminalden tamamlayın. İzole kopyada `.env`, bağımlılıklar
-          ve servis portları hazır değildir.
+          Ajan, klasör güveni veya giriş onayı isteyebilir; terminalden tamamlayın. İzole kopyada `.env`,
+          bağımlılıklar ve servis portları hazır değildir.
         </p>
 
+        {error && (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        )}
         <div className="dialog-actions">
-          <button type="button" onClick={onCancel}>
+          <button type="button" disabled={busy} onClick={onCancel}>
             vazgeç
           </button>
-          <button type="submit" className="primary">
-            başlat
+          <button type="submit" className="primary" disabled={busy}>
+            {busy ? 'Başlatılıyor…' : 'Oturumu başlat'}
           </button>
         </div>
       </form>
-    </div>
+    </dialog>
   )
 }
