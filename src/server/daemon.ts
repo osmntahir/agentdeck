@@ -79,6 +79,13 @@ interface Confirmation {
   expiresAt: number
 }
 
+/** Proje onayı önizlemedeki Session kümesini ve her birinin onayını birlikte bağlar. */
+interface ProjectConfirmation {
+  projectId: string
+  sessions: Map<string, Confirmation>
+  expiresAt: number
+}
+
 class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -233,6 +240,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const createLedger = createRequestLedger<Session>()
   const launchLedger = createRequestLedger<Session>()
   const confirmations = new Map<string, Confirmation>()
+  const projectConfirmations = new Map<string, ProjectConfirmation>()
   const projectsBeingDeleted = new Set<string>()
   /** Bir Run'ın çıkış kaydının diske yazılması; stop bunu bekler. */
   const pendingExitCommits = new Map<string, Promise<void>>()
@@ -971,6 +979,136 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     })
   })
 
+  type RemovalOutcome =
+    | { ok: true }
+    | { ok: false; status: number; code: string; message: string; details?: unknown }
+
+  /**
+   * Onaylanmış tek oturumu kaldırır. Onay Run'a, dizin kimliğine ve içerik
+   * fingerprint'ine bağlıdır; içerik doğrulanmış durdurmadan sonra yeniden
+   * okunur. Worktree kaldırılamazsa rmSync fallback yoktur: kaldırılanlar
+   * kayıttan düşer, kalan worktree'ler, dosyaları ve kayıt korunur.
+   */
+  async function removeConfirmedSession(session: Session, confirmation: Confirmation): Promise<RemovalOutcome> {
+    if (confirmation.runId !== session.runId) {
+      // Onaydan sonra yeni bir Run başladı: onay o Run'ı kapsamıyor.
+      return {
+        ok: false,
+        status: 409,
+        code: 'confirmation_stale',
+        message: 'Onaydan sonra yeni bir Run başladı; yeniden önizleme alın',
+        details: { currentRunId: session.runId },
+      }
+    }
+
+    const held = sessionLocks.tryAcquire(session.id)
+    if (!held) {
+      return { ok: false, status: 409, code: 'operation_in_progress', message: 'Bu oturumda başka bir işlem sürüyor' }
+    }
+    try {
+      const stopped = await stopVerified(session.id)
+      if (!stopped.verified) {
+        return {
+          ok: false,
+          status: 409,
+          code: 'stop_unverified',
+          message: 'Süreç grubu durdurulamadı; silme başlatılmadı',
+          details: { reason: stopped.reason },
+        }
+      }
+
+      // Ortak klasörde dosyalar silinmez; yalnız dizin kimliği doğrulanır.
+      // Worktree kaldırılacaksa içerik fingerprint'i de tekrar okunur.
+      const dirIdentity = dirIdentityOf(session.cwd)
+      const fingerprint = await deletionFingerprint(session, createBudget())
+      if (dirIdentity === null || !fingerprint.ok) {
+        return {
+          ok: false,
+          status: 409,
+          code: 'confirmation_stale',
+          message: 'Çalışma kopyası artık okunamıyor veya bütçeyi aşıyor; silme yapılmadı',
+          details: { cwd: session.cwd },
+        }
+      }
+      if (dirIdentity !== confirmation.dirIdentity || fingerprint.digest !== confirmation.contentDigest) {
+        return {
+          ok: false,
+          status: 409,
+          code: 'confirmation_stale',
+          message: 'Klasör içeriği onaydan sonra değişti; silme yapılmadı',
+          details: { cwd: session.cwd },
+        }
+      }
+
+      const project = store.get().projects.find((p) => p.id === session.projectId)
+      if (session.isolation === 'worktree') {
+        if (!project) {
+          return { ok: false, status: 409, code: 'project_missing', message: 'Projenin kaydı yok; worktree güvenle kaldırılamaz' }
+        }
+        const rels = worktreePaths(session)
+        const removed: string[] = []
+        for (const rel of rels) {
+          const repo = path.join(project.path, rel)
+          const worktree = path.join(session.cwd, rel)
+          try {
+            // Önceki kısmi silmede veya yerel Git ile kalkmış worktree için iş yoktur.
+            if (!isMissing(worktree)) await inRepoQueue(repo, () => git.removeWorktree(repo, worktree))
+            removed.push(rel)
+          } catch (err) {
+            let recordUpdated = true
+            if (removed.length > 0) {
+              await store
+                .commit((draft) => {
+                  const target = draft.sessions.find((s) => s.id === session.id)
+                  if (target) target.worktrees = target.worktrees.filter((w) => !removed.includes(w.path))
+                })
+                .catch(() => {
+                  // Kaldırılan yollar kayıtta kalsa da yeniden denemede "yok" olarak atlanır.
+                  recordUpdated = false
+                })
+            }
+            return {
+              ok: false,
+              status: 500,
+              code: 'worktree_remove_failed',
+              message:
+                removed.length === 0
+                  ? `Worktree kaldırılamadı; hiçbir dosya silinmedi: ${(err as Error).message}`
+                  : `${rel} worktree'si kaldırılamadı; ${removed.join(', ')} kaldırıldı, kalanlar korundu${recordUpdated ? '' : ' (kayıt güncellenemedi)'}: ${(err as Error).message}`,
+              details: {
+                cwd: session.cwd,
+                removed,
+                degraded: !recordUpdated,
+                recovery: 'Klasörü yerel araçla inceleyip git worktree remove ile tekrar deneyin',
+              },
+            }
+          }
+        }
+        pruneEmptyDirs(session.cwd, rels)
+      }
+
+      try {
+        await store.commit((draft) => {
+          draft.sessions = draft.sessions.filter((s) => s.id !== session.id)
+        })
+      } catch (err) {
+        // Worktree kaldırıldı ama kayıt yazılamadı: kayıt korunur, kısmi sonuç görünür.
+        return {
+          ok: false,
+          status: 503,
+          code: 'persistence',
+          message: `${session.isolation === 'shared' ? 'Dosyalar korundu fakat oturum kaydı kaldırılamadı' : 'Dosyalar kaldırıldı ama kayıt güncellenemedi'}: ${(err as Error).message}`,
+          details: { cwd: session.cwd, degraded: true },
+        }
+      }
+      // Session silindi: ona ait terminal checkpoint'leri de kalkar.
+      host.removeSession(session.id)
+      return { ok: true }
+    } finally {
+      held.release()
+    }
+  }
+
   app.delete('/api/sessions/:id', async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>
     // V0'da branch silme yoktur; eski istemciden gelirse sessizce yok sayılmaz.
@@ -992,109 +1130,83 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       confirmations.delete(confirmationToken)
       return jsonError(res, 409, 'confirmation_stale', 'Onay süresi doldu; yeniden önizleme alın')
     }
-    if (confirmation.runId !== session.runId) {
-      // Onaydan sonra yeni bir Run başladı: onay o Run'ı kapsamıyor.
-      confirmations.delete(confirmationToken)
-      return jsonError(res, 409, 'confirmation_stale', 'Onaydan sonra yeni bir Run başladı; yeniden önizleme alın', {
-        currentRunId: session.runId,
-      })
-    }
+    const outcome = await removeConfirmedSession(session, confirmation)
+    // Eskimiş onay yeniden kullanılamaz; durdurma veya worktree hatasında aynı onayla yeniden denenebilir.
+    if (outcome.ok || outcome.code === 'confirmation_stale') confirmations.delete(confirmationToken)
+    if (!outcome.ok) return jsonError(res, outcome.status, outcome.code, outcome.message, outcome.details)
+    res.json({ ok: true, branchKept: session.branch })
+  })
 
-    const held = sessionLocks.tryAcquire(session.id)
-    if (!held) return jsonError(res, 409, 'operation_in_progress', 'Bu oturumda başka bir işlem sürüyor')
-    try {
-      const stopped = await stopVerified(session.id)
-      if (!stopped.verified) {
-        return jsonError(res, 409, 'stop_unverified', 'Süreç grubu durdurulamadı; silme başlatılmadı', {
-          reason: stopped.reason,
-        })
-      }
+  /**
+   * Proje silme önizlemesi bütün oturumları tek onaya bağlar. Bütçe oturumlar
+   * arasında paylaşılır: sınır oturum sayısıyla gizlice aşılmaz, aşımda
+   * oturumları tek tek temizlemek önerilir.
+   */
+  app.post('/api/projects/:id/delete-preview', async (req, res) => {
+    const project = store.get().projects.find((p) => p.id === req.params.id)
+    if (!project) return jsonError(res, 404, 'not_found', 'Proje yok')
 
-      // Ortak klasörde dosyalar silinmez; yalnız dizin kimliği doğrulanır.
-      // Worktree kaldırılacaksa içerik fingerprint'i de tekrar okunur.
+    const owned = store.get().sessions.filter((s) => s.projectId === project.id)
+    const budget = createBudget()
+    const reads: { session: Session; dirIdentity: string; fingerprint: Extract<ContentFingerprint, { ok: true }> }[] = []
+    for (const session of owned) {
       const dirIdentity = dirIdentityOf(session.cwd)
-      const fingerprint = await deletionFingerprint(session, createBudget())
-      if (dirIdentity === null || !fingerprint.ok) {
-        return jsonError(res, 409, 'confirmation_stale', 'Çalışma kopyası artık okunamıyor veya bütçeyi aşıyor; silme yapılmadı', {
-          cwd: session.cwd,
-        })
-      }
-      if (dirIdentity !== confirmation.dirIdentity || fingerprint.digest !== confirmation.contentDigest) {
-        confirmations.delete(confirmationToken)
-        return jsonError(res, 409, 'confirmation_stale', 'Klasör içeriği onaydan sonra değişti; silme yapılmadı', {
-          cwd: session.cwd,
-        })
-      }
-
-      const project = store.get().projects.find((p) => p.id === session.projectId)
-      if (session.isolation === 'worktree') {
-        if (!project) {
-          return jsonError(res, 409, 'project_missing', 'Projenin kaydı yok; worktree güvenle kaldırılamaz')
-        }
-        const rels = worktreePaths(session)
-        const removed: string[] = []
-        for (const rel of rels) {
-          const repo = path.join(project.path, rel)
-          const worktree = path.join(session.cwd, rel)
-          try {
-            // Önceki kısmi silmede veya yerel Git ile kalkmış worktree için iş yoktur.
-            if (!isMissing(worktree)) await inRepoQueue(repo, () => git.removeWorktree(repo, worktree))
-            removed.push(rel)
-          } catch (err) {
-            // Sözleşme: rmSync fallback yok. Kaldırılanlar kayıttan düşer; kalan
-            // worktree'ler, dosyaları ve kayıt korunur.
-            let recordUpdated = true
-            if (removed.length > 0) {
-              await store
-                .commit((draft) => {
-                  const target = draft.sessions.find((s) => s.id === session.id)
-                  if (target) target.worktrees = target.worktrees.filter((w) => !removed.includes(w.path))
-                })
-                .catch(() => {
-                  // Kaldırılan yollar kayıtta kalsa da yeniden denemede "yok" olarak atlanır.
-                  recordUpdated = false
-                })
-            }
-            return jsonError(
-              res,
-              500,
-              'worktree_remove_failed',
-              removed.length === 0
-                ? `Worktree kaldırılamadı; hiçbir dosya silinmedi: ${(err as Error).message}`
-                : `${rel} worktree'si kaldırılamadı; ${removed.join(', ')} kaldırıldı, kalanlar korundu${recordUpdated ? '' : ' (kayıt güncellenemedi)'}: ${(err as Error).message}`,
-              {
-                cwd: session.cwd,
-                removed,
-                degraded: !recordUpdated,
-                recovery: 'Klasörü yerel araçla inceleyip git worktree remove ile tekrar deneyin',
-              },
-            )
-          }
-        }
-        pruneEmptyDirs(session.cwd, rels)
-      }
-
-      confirmations.delete(confirmationToken)
-      try {
-        await store.commit((draft) => {
-          draft.sessions = draft.sessions.filter((s) => s.id !== session.id)
-        })
-      } catch (err) {
-        // Worktree kaldırıldı ama kayıt yazılamadı: kayıt korunur, kısmi sonuç görünür.
+      if (dirIdentity === null) {
         return jsonError(
           res,
-          503,
-          'persistence',
-          `${session.isolation === 'shared' ? 'Dosyalar korundu fakat oturum kaydı kaldırılamadı' : 'Dosyalar kaldırıldı ama kayıt güncellenemedi'}: ${(err as Error).message}`,
-          { cwd: session.cwd, degraded: true },
+          409,
+          'cwd_missing',
+          `"${session.name}" oturumunun çalışma dizini okunamıyor; oturumu tek tek inceleyip silin: ${session.cwd}`,
+          { sessionId: session.id, cwd: session.cwd },
         )
       }
-      // Session silindi: ona ait terminal checkpoint'leri de kalkar.
-      host.removeSession(session.id)
-      res.json({ ok: true, branchKept: session.branch })
-    } finally {
-      held.release()
+      const fingerprint = await deletionFingerprint(session, budget)
+      if (!fingerprint.ok) {
+        return jsonError(
+          res,
+          409,
+          fingerprint.reason === 'budget' ? 'preview_budget_exceeded' : 'status_unreadable',
+          `Projenin çalışma kopyaları birlikte büyük veya okunamıyor (${fingerprint.message}); oturumları tek tek temizleyip silin, ardından tekrar deneyin`,
+          { sessionId: session.id, cwd: session.cwd, reason: fingerprint.message },
+        )
+      }
+      reads.push({ session, dirIdentity, fingerprint })
     }
+
+    const expiresAt = Date.now() + CONFIRMATION_TTL_MS
+    const confirmationToken = crypto.randomBytes(24).toString('hex')
+    projectConfirmations.set(confirmationToken, {
+      projectId: project.id,
+      expiresAt,
+      sessions: new Map(
+        reads.map(({ session, dirIdentity, fingerprint }) => [
+          session.id,
+          {
+            sessionId: session.id,
+            runId: session.runId,
+            cwd: session.cwd,
+            dirIdentity,
+            contentDigest: fingerprint.digest,
+            expiresAt,
+          },
+        ]),
+      ),
+    })
+    res.json({
+      confirmationToken,
+      expiresInMs: CONFIRMATION_TTL_MS,
+      projectId: project.id,
+      sessions: reads.map(({ session, fingerprint }) => ({
+        id: session.id,
+        name: session.name,
+        cwd: session.cwd,
+        branch: session.branch,
+        isolation: session.isolation,
+        changedEntries: fingerprint.changedEntries,
+        ignoredEntries: fingerprint.ignoredEntries,
+      })),
+      keepsBranches: true,
+    })
   })
 
   app.delete('/api/projects/:id', async (req, res) => {
@@ -1102,20 +1214,68 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (!project) return jsonError(res, 404, 'not_found', 'Proje yok')
 
     const owned = store.get().sessions.filter((s) => s.projectId === project.id)
+    let confirmation: ProjectConfirmation | undefined
     if (owned.length > 0) {
-      // Kademeli silme ve onay fingerprint'i §8/4'ün işi; gizli cascade yok.
-      return jsonError(res, 409, 'project_has_sessions', 'Projede oturum kayıtları var; önce onları silin', {
-        sessionIds: owned.map((s) => s.id),
-      })
+      const token = (req.body ?? {}).confirmationToken
+      if (typeof token !== 'string') {
+        // Gizli cascade yok: oturumu olan proje yalnız proje onayıyla silinir.
+        return jsonError(res, 409, 'project_has_sessions', 'Projede oturum kayıtları var; önce silme önizlemesi alın', {
+          sessionIds: owned.map((s) => s.id),
+        })
+      }
+      confirmation = projectConfirmations.get(token)
+      if (!confirmation || confirmation.projectId !== project.id) {
+        return jsonError(res, 409, 'confirmation_unknown', 'Onay bulunamadı; yeniden önizleme alın')
+      }
+      // Proje onayı tek kullanımlıktır; her deneme taze bir önizlemeyle başlar.
+      projectConfirmations.delete(token)
+      if (confirmation.expiresAt < Date.now()) {
+        return jsonError(res, 409, 'confirmation_stale', 'Onay süresi doldu; yeniden önizleme alın')
+      }
+      const covered = [...confirmation.sessions.keys()].sort().join(',')
+      if (covered !== owned.map((s) => s.id).sort().join(',')) {
+        return jsonError(res, 409, 'confirmation_stale', 'Onaydan sonra projenin oturumları değişti; yeniden önizleme alın')
+      }
     }
 
     projectsBeingDeleted.add(project.id)
     try {
-      await store.commit((draft) => {
-        draft.projects = draft.projects.filter((p) => p.id !== project.id)
-      })
-    } catch (err) {
-      return jsonError(res, 503, 'persistence', `Proje kaydı silinemedi: ${(err as Error).message}`)
+      const removed: string[] = []
+      for (const session of owned) {
+        const current = findSession(session.id)
+        if (current && confirmation) {
+          const outcome = await removeConfirmedSession(current, confirmation.sessions.get(session.id) as Confirmation)
+          if (!outcome.ok) {
+            // İlk hatada durulur; kalan varsa Project kalır ve kısmi sonuç listelenir.
+            const remainingSessionIds = owned.map((s) => s.id).filter((id) => !removed.includes(id))
+            return jsonError(
+              res,
+              outcome.status,
+              removed.length === 0 ? outcome.code : 'project_delete_partial',
+              removed.length === 0
+                ? outcome.message
+                : `${removed.length} oturum silindi; "${current.name}" silinemedi: ${outcome.message}. Proje ve kalan oturumlar korunur.`,
+              {
+                cause: outcome.code,
+                sessionId: current.id,
+                removedSessionIds: removed,
+                remainingSessionIds,
+                details: outcome.details,
+              },
+            )
+          }
+        }
+        removed.push(session.id)
+      }
+      try {
+        await store.commit((draft) => {
+          draft.projects = draft.projects.filter((p) => p.id !== project.id)
+        })
+      } catch (err) {
+        return jsonError(res, 503, 'persistence', `Proje kaydı silinemedi: ${(err as Error).message}`, {
+          removedSessionIds: removed,
+        })
+      }
     } finally {
       projectsBeingDeleted.delete(project.id)
     }

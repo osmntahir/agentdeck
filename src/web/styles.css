@@ -842,6 +842,15 @@ button.primary {
 .project-section > header > button + button {
   margin-left: 0;
 }
+.project-delete-confirm {
+  display: grid;
+  gap: 6px;
+  margin: 4px 8px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
 .branch-panel {
   display: grid;
   gap: 6px;

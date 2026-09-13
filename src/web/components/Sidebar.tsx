@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Project, SessionView, StateResponse } from '../../shared/types'
 import { commandLabel } from '../../shared/types'
-import type { OrphanScanResult } from '../api'
+import type { OrphanScanResult, ProjectDeletePreview } from '../api'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
 
 interface Props {
@@ -13,6 +13,11 @@ interface Props {
   onNewSession: (project: Project) => void
   onAddProject: () => void
   onDeleteProject: (id: string) => void
+  /** Oturumu olan projenin silme önizlemesi; onay bu projede gösterilir. */
+  projectDelete: ProjectDeletePreview | null
+  onPreviewProjectDelete: (id: string) => void
+  onConfirmProjectDelete: () => void
+  onCancelProjectDelete: () => void
   orphans: OrphanScanResult | null
   onRefreshOrphans: () => void
   view: 'sessions' | 'grid'
@@ -30,6 +35,10 @@ export function Sidebar({
   onNewSession,
   onAddProject,
   onDeleteProject,
+  projectDelete,
+  onPreviewProjectDelete,
+  onConfirmProjectDelete,
+  onCancelProjectDelete,
   orphans,
   onRefreshOrphans,
   view,
@@ -72,12 +81,8 @@ export function Sidebar({
                   {confirmId === project.id ? (
                     <>
                       <button
-                        // Proje kaydı kaldırılır; oturum dosyaları buradan silinmez.
-                        title={
-                          owned.length > 0
-                            ? `${owned.length} oturum kaydı var; proje kaldırılmadan önce onlar silinmeli`
-                            : 'Proje kaydını kaldır (dosyalara dokunulmaz)'
-                        }
+                        // Oturumu olmayan projede yalnız kayıt kaldırılır; dosyalara dokunulmaz.
+                        title="Proje kaydını kaldır (dosyalara dokunulmaz)"
                         onClick={() => {
                           setConfirmId(null)
                           onDeleteProject(project.id)
@@ -94,7 +99,11 @@ export function Sidebar({
                       <button title="Yeni oturum" onClick={() => onNewSession(project)}>
                         +
                       </button>
-                      <button title="Projeyi kaldır" onClick={() => setConfirmId(project.id)}>
+                      <button
+                        title="Projeyi kaldır"
+                        // Oturumu olan projede önce neyin silineceği gösterilir.
+                        onClick={() => (owned.length > 0 ? onPreviewProjectDelete(project.id) : setConfirmId(project.id))}
+                      >
                         ×
                       </button>
                     </>
@@ -102,7 +111,17 @@ export function Sidebar({
                 </div>
               </div>
 
-              {/* Arşivlenen oturum gezinmede görünmez; kayıt proje silmeyi yine engeller. */}
+              {projectDelete?.projectId === project.id && (
+                <div className="project-delete-confirm" role="alert">
+                  <span>{projectDeleteSummary(projectDelete)}</span>
+                  <div className="project-actions">
+                    <button onClick={onConfirmProjectDelete}>sil (branch'ler kalır)</button>
+                    <button onClick={onCancelProjectDelete}>vazgeç</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Arşivlenen oturum gezinmede görünmez; proje silme onayında yine sayılır. */}
               {owned.filter((s) => s.archivedAt === null).map((session) => (
                 <SessionRow
                   key={session.id}
@@ -129,6 +148,18 @@ export function Sidebar({
         </button>
       </div>
     </aside>
+  )
+}
+
+/** Proje silmenin neyi götürüp neyi koruyacağını onaydan önce söyler. */
+function projectDeleteSummary(preview: ProjectDeletePreview): string {
+  const isolated = preview.sessions.filter((s) => s.isolation === 'worktree')
+  const changed = isolated.reduce((sum, s) => sum + s.changedEntries, 0)
+  const ignored = isolated.reduce((sum, s) => sum + s.ignoredEntries, 0)
+  return (
+    `${preview.sessions.length} oturum kaydı kaldırılır, ${isolated.length} izole çalışma kopyası silinir` +
+    (changed + ignored > 0 ? ` (${changed} değişiklik ve ${ignored} ignored giriş dahil)` : '') +
+    ". Ortak klasör dosyaları ve branch'ler korunur."
   )
 }
 

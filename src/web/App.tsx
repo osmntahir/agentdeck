@@ -40,6 +40,7 @@ export function App() {
   const [addingProject, setAddingProject] = useState(false)
   const [dialogProject, setDialogProject] = useState<Project | null>(null)
   const [pendingDelete, setPendingDelete] = useState<api.DeletePreview | null>(null)
+  const [projectDelete, setProjectDelete] = useState<api.ProjectDeletePreview | null>(null)
   const [orphans, setOrphans] = useState<api.OrphanScanResult | null>(null)
   const [stateHealthy, setStateHealthy] = useState(false)
   const previewIds = useRef<string[]>([])
@@ -207,6 +208,38 @@ export function App() {
       })
   }
 
+  // Oturumu olan proje taze bir önizlemeyle silinir: bütün oturumlar tek onaya bağlanır.
+  const askProjectDelete = (projectId: string) => {
+    setError(null)
+    api
+      .previewProjectDelete(projectId)
+      .then(setProjectDelete)
+      .catch((e) => {
+        setProjectDelete(null)
+        setError(e.message)
+      })
+  }
+
+  const confirmProjectDelete = () => {
+    if (!projectDelete) return
+    const { projectId, confirmationToken } = projectDelete
+    setProjectDelete(null)
+    setError(null)
+    api
+      .deleteProject(projectId, confirmationToken)
+      .then(() => {
+        refreshOrphans()
+        return refresh()
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e))
+        // Onay eskidiyse hiçbir şey silinmemiştir; yeni bir önizleme sunulur.
+        if (e instanceof api.ApiCallError && e.code === 'confirmation_stale') askProjectDelete(projectId)
+        refreshOrphans()
+        return refresh()
+      })
+  }
+
   return (
     <div className="app">
       <Sidebar
@@ -233,6 +266,10 @@ export function App() {
         onNewSession={setDialogProject}
         onAddProject={() => setAddingProject(true)}
         onDeleteProject={(id) => run(api.deleteProject(id))}
+        projectDelete={projectDelete}
+        onPreviewProjectDelete={askProjectDelete}
+        onConfirmProjectDelete={confirmProjectDelete}
+        onCancelProjectDelete={() => setProjectDelete(null)}
         orphans={orphans}
         onRefreshOrphans={refreshOrphans}
       />

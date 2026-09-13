@@ -1141,6 +1141,105 @@ test('korunan branch ler proje görünümünde tip OID siyle bulunur; kayıt yok
   })
 })
 
+type ProjectDeletePreview = {
+  confirmationToken?: string
+  projectId: string
+  sessions: { id: string; cwd: string; isolation: string; changedEntries: number; ignoredEntries: number }[]
+}
+
+test('proje silme tüm oturumları tek onaya bağlar; onaydan sonra içerik veya oturum kümesi değişirse hiçbir şey silinmez', { timeout: 60000 }, async () => {
+  await withDaemon(async ({ api, repo, projectId }) => {
+    const isolated = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const shared = await api.post<SessionView>('/api/sessions', createBody(projectId, { isolation: 'shared' }))
+    const work = path.join(isolated.body.cwd, 'is.txt')
+    fs.writeFileSync(work, 'ajan işi\n')
+
+    const preview = await api.post<ProjectDeletePreview>(`/api/projects/${projectId}/delete-preview`)
+    assert.equal(preview.status, 200, JSON.stringify(preview.body))
+    assert.deepEqual(preview.body.sessions.map((s) => s.id).sort(), [isolated.body.id, shared.body.id].sort())
+    assert.equal(preview.body.sessions.find((s) => s.id === isolated.body.id)?.changedEntries, 1)
+
+    fs.writeFileSync(work, 'onaydan sonra\n')
+    const stale = await api.del<{ code: string }>(`/api/projects/${projectId}`, {
+      confirmationToken: preview.body.confirmationToken,
+    })
+    assert.equal(stale.status, 409, JSON.stringify(stale.body))
+    assert.equal(stale.body.code, 'confirmation_stale')
+    assert.equal(fs.readFileSync(work, 'utf8'), 'onaydan sonra\n')
+    let state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.projects.length, 1)
+    assert.equal(state.body.sessions.length, 2, 'eski onayla hiçbir oturum silinmez')
+
+    const fresh = await api.post<ProjectDeletePreview>(`/api/projects/${projectId}/delete-preview`)
+    const late = await api.post<SessionView>('/api/sessions', createBody(projectId, { isolation: 'shared' }))
+    assert.equal(late.status, 200)
+    const uncovered = await api.del<{ code: string }>(`/api/projects/${projectId}`, {
+      confirmationToken: fresh.body.confirmationToken,
+    })
+    assert.equal(uncovered.status, 409)
+    assert.equal(uncovered.body.code, 'confirmation_stale', 'onaydan sonra açılan oturum onayın kapsamında değil')
+    state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions.length, 3)
+
+    const final = await api.post<ProjectDeletePreview>(`/api/projects/${projectId}/delete-preview`)
+    const removed = await api.del(`/api/projects/${projectId}`, { confirmationToken: final.body.confirmationToken })
+    assert.equal(removed.status, 200, JSON.stringify(removed.body))
+    state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.projects.length, 0)
+    assert.equal(state.body.sessions.length, 0)
+    assert.equal(fs.existsSync(isolated.body.cwd), false)
+    assert.equal(fs.existsSync(path.join(repo, 'README.md')), true, 'ortak kopya dosyaları korunur')
+    const branch = isolated.body.branch as string
+    assert.match(execFileSync('git', ['branch', '--list', branch], { cwd: repo, encoding: 'utf8' }), /agentdeck\//)
+  })
+})
+
+test('proje silme bütçeyi oturum sayısıyla aşmaz; kısmi sonuçta proje ve kalan oturumlar listelenir', { timeout: 90000 }, async () => {
+  await withDaemon(async ({ api, repo, projectId }) => {
+    const shared = await api.post<SessionView>('/api/sessions', createBody(projectId, { isolation: 'shared' }))
+    const first = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const second = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    for (const session of [first.body, second.body]) {
+      fs.writeFileSync(path.join(session.cwd, '.gitignore'), 'node_modules/\n')
+      fs.mkdirSync(path.join(session.cwd, 'node_modules'))
+      for (let i = 0; i < 6000; i++) fs.writeFileSync(path.join(session.cwd, 'node_modules', `f${i}.js`), '')
+    }
+
+    const single = await api.post(`/api/sessions/${first.body.id}/delete-preview`)
+    assert.equal(single.status, 200, 'her oturum tek başına bütçeye sığar')
+    const whole = await api.post<{ code: string; message: string; confirmationToken?: string }>(
+      `/api/projects/${projectId}/delete-preview`,
+    )
+    assert.equal(whole.status, 409, JSON.stringify(whole.body))
+    assert.equal(whole.body.code, 'preview_budget_exceeded')
+    assert.equal(whole.body.confirmationToken, undefined)
+    assert.match(whole.body.message, /tek tek/)
+
+    for (const session of [first.body, second.body]) fs.rmSync(path.join(session.cwd, 'node_modules'), { recursive: true })
+    const preview = await api.post<ProjectDeletePreview>(`/api/projects/${projectId}/delete-preview`)
+    assert.equal(preview.status, 200, JSON.stringify(preview.body))
+
+    execFileSync('git', ['worktree', 'lock', second.body.cwd], { cwd: repo, stdio: 'pipe' })
+    try {
+      const partial = await api.del<{
+        code: string
+        details: { removedSessionIds: string[]; remainingSessionIds: string[] }
+      }>(`/api/projects/${projectId}`, { confirmationToken: preview.body.confirmationToken })
+      assert.equal(partial.status, 500, JSON.stringify(partial.body))
+      assert.equal(partial.body.code, 'project_delete_partial')
+      assert.deepEqual(partial.body.details.removedSessionIds, [shared.body.id, first.body.id])
+      assert.deepEqual(partial.body.details.remainingSessionIds, [second.body.id])
+
+      const state = await api.get<StateResponse>('/api/state')
+      assert.equal(state.body.projects.length, 1, 'kalan oturum varken proje kalır')
+      assert.deepEqual(state.body.sessions.map((s) => s.id), [second.body.id])
+      assert.equal(fs.existsSync(second.body.cwd), true)
+    } finally {
+      execFileSync('git', ['worktree', 'unlock', second.body.cwd], { cwd: repo, stdio: 'pipe' })
+    }
+  })
+})
+
 test('kayıtsız çalışma kopyaları salt okunur biçimde listelenir', { timeout: 30000 }, async () => {
   await withDaemon(async ({ api, dataDir, projectId }) => {
     const created = await api.post<SessionView>('/api/sessions', createBody(projectId))

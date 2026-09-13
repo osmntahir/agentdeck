@@ -49,7 +49,31 @@ export const getState = (previewIds: string[] = []) =>
 export const addProject = (path: string) =>
   call<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ path }) })
 
-export const deleteProject = (id: string) => call<{ ok: true }>(`/api/projects/${id}`, { method: 'DELETE' })
+/** Oturumu olan proje yalnız taze proje onayıyla silinir; branch'ler korunur. */
+export const deleteProject = (id: string, confirmationToken?: string) =>
+  call<{ ok: true }>(`/api/projects/${id}`, {
+    method: 'DELETE',
+    ...(confirmationToken ? { body: JSON.stringify({ confirmationToken }) } : {}),
+  })
+
+export interface ProjectDeletePreview {
+  confirmationToken: string
+  expiresInMs: number
+  projectId: string
+  sessions: {
+    id: string
+    name: string
+    cwd: string
+    branch: string | null
+    isolation: Isolation
+    changedEntries: number
+    ignoredEntries: number
+  }[]
+}
+
+/** Projenin bütün oturumlarını tek onaya bağlar; bütçe oturumlar arasında paylaşılır. */
+export const previewProjectDelete = (id: string) =>
+  call<ProjectDeletePreview>(`/api/projects/${id}/delete-preview`, { method: 'POST' })
 
 export const createSession = (input: {
   projectId: string
