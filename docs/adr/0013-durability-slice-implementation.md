@@ -2,9 +2,9 @@
 
 Durum: accepted — 2026-09-13. Kapsam: [spec §8/6](../specs/agentdeck-v0.md) ve [spec §7](../specs/agentdeck-v0.md) kalıcılık/kapanış hükümleri. [ADR 0001](0001-worktree-session-branch-lifetimes.md) rollback korumasını, [ADR 0008](0008-terminal-slice-implementation.md) checkpoint bağımsızlığını doğrular.
 
-**Kayıp cevap.** Create/launch/restart `requestId` defteri aynı daemon ömründe aynı payload'ı bir kez çalıştırır. İstemci aynı daemon ve payload için kimliği hatırlar; cevap kaybolursa ikinci Run açılmaz. Daemon kimliği değişince kimlik yenilenir: yeni defter boştur, eski id sessizce ikinci kayıt açardı. Otomatik yeniden deneme yoktur.
+**Kayıp cevap.** Create/launch/restart `requestId` defteri aynı daemon ömründe aynı payload'ı bir kez çalıştırır. İstemci aynı daemon ve payload için kimliği hatırlar; **10 dk** içinde cevap kaybolursa aynı kimlik tekrar kullanılır, ikinci Run açılmaz. Süre dolunca veya daemon kimliği değişince kimlik yenilenir: yeni defter boştur, eski id sessizce ikinci kayıt açardı. Otomatik yeniden deneme yoktur. Farklı oturumların ve farklı payload’ların bekleyen kimliği birbirini ezmez. İstemci en çok 1024 bekleyen kimlik tutar; süre dolan ve eski daemon’a ait kayıtlar temizlenir. Sınırda geçerli kimlik atılmaz, yeni işlem açıklamayla reddedilir; tamamlanan istek yer açar.
 
-**Rollback başarısızlığı.** PTY doğup state yazılamazsa yalnız kendi grubu durdurulur. Worktree beklenen OID'de ve temizse kaldırılır; kirliyse veya `git worktree remove` başarısızsa kaynak korunur ve yanıt `worktree: korundu` der. Kayıt yazılmaz.
+**Rollback.** PTY doğup state yazılamazsa yalnız kendi grubu durdurulur. Worktree beklenen OID'de ve temizse kaldırılır; kirliyse **veya** `git worktree remove` başarısızsa (kilit dahil) kaynak korunur ve yanıt `worktree: korundu` der. Kayıt yazılmaz. Launch yolunda kayıt yazılamazsa önceki `lastLaunch` ve exited görünümü kalır.
 
 **Disk dolu.** `ENOSPC` ve izin hatası aynı yoldur: yayımlanan state değişmez, `serviceError` görünür, canlı PTY öldürülmez, yeni kalıcı mutation 503 `persistence` döner. Durdurma süreci bitirir; çıkış diske inmezse lifecycle `live` kalır, kalan süreç grubu yoktur. Bellekte sahte exited yazılmaz.
 

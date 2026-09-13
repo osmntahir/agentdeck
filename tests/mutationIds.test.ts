@@ -54,6 +54,16 @@ test('complete yalnız kendi kimliğini düşürür', () => {
   assert.equal(ids.id('restart', 'd', { expectedRunId: 'r1' }), current)
 })
 
+test('farklı payload aynı slotta birbirinin kayıp cevabını ezmez', () => {
+  let n = 0
+  const ids = createMutationIds(() => `id-${++n}`)
+  const first = ids.id('launch', 'd', { id: 's1', command: 'claude' })
+  const second = ids.id('launch', 'd', { id: 's2', command: 'codex' })
+  assert.equal(first, 'id-1')
+  assert.equal(second, 'id-2')
+  assert.equal(ids.id('launch', 'd', { id: 's1', command: 'claude' }), 'id-1', 'kayıp cevap ikinci Run açmamalı')
+})
+
 test('on dakika sonra aynı daemon ve payload yeni kimlik alır', () => {
   let n = 0
   let now = 1_000
@@ -67,4 +77,25 @@ test('on dakika sonra aynı daemon ve payload yeni kimlik alır', () => {
   assert.equal(ids.id('create', 'd', payload), 'id-1', 'süre dolmadan kimlik korunur')
   now += 1
   assert.equal(ids.id('create', 'd', payload), 'id-2', 'sunucu defteri düşmüş kimlik ikinci Run açardı')
+})
+
+
+test('bekleyen kimlik bütçesi kayıp cevapları atmaz; tamamlanma ve TTL yer açar', () => {
+  let n = 0
+  let time = 0
+  const ids = createMutationIds(() => `id-${++n}`, () => time)
+  for (let i = 0; i < 1024; i++) ids.id('create', 'd', { i })
+  assert.throws(() => ids.id('create', 'd', { i: 1024 }), /Bekleyen işlem sınırı/)
+  assert.equal(ids.id('create', 'd', { i: 0 }), 'id-1')
+  ids.complete('create', 'id-2')
+  assert.equal(ids.id('create', 'd', { i: 1024 }), 'id-1025')
+  time = 600000
+  assert.equal(ids.id('create', 'd', { i: 1025 }), 'id-1026')
+})
+
+test('daemon değişimi eski bekleyen kimliklerin kapasitesini serbest bırakır', () => {
+  let n = 0
+  const ids = createMutationIds(() => `id-${++n}`)
+  for (let i = 0; i < 1024; i++) ids.id('create', 'old', { i })
+  assert.equal(ids.id('create', 'new', { i: 1024 }), 'id-1025')
 })

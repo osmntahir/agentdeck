@@ -116,7 +116,7 @@ export const createSession = (input: {
   name: string
   command: string | null
   isolation: Isolation
-}) => mutatingCall<SessionView>('create', '/api/sessions', input, input)
+}) => mutatingCall<SessionView>(`create:${input.projectId}`, '/api/sessions', input, input)
 
 export const stopSession = (id: string, expectedRunId: string | null) =>
   call<SessionView>(`/api/sessions/${id}/stop`, {
@@ -126,19 +126,24 @@ export const stopSession = (id: string, expectedRunId: string | null) =>
 
 export const restartSession = (id: string, expectedRunId: string | null) =>
   mutatingCall<SessionView>(
-    'restart',
+    `restart:${id}`,
     `/api/sessions/${id}/restart`,
     { id, expectedRunId },
     { expectedRunId },
   )
 
 /** Mevcut çalışma kopyasında komutu aynen çalıştırır; başlangıç Command'ı değişmez. */
-export const launchSession = (id: string, expectedRunId: string | null, command: string | null) =>
+export const launchSession = (
+  id: string,
+  expectedRunId: string | null,
+  command: string | null,
+  mode: 'command' | 'fresh' | 'picker' = 'command',
+) =>
   mutatingCall<SessionView>(
-    'launch',
+    `launch:${id}`,
     `/api/sessions/${id}/launch`,
-    { id, expectedRunId, command },
-    { expectedRunId, mode: 'command', command },
+    { id, expectedRunId, mode, command },
+    { expectedRunId, mode, command },
   )
 
 export interface RunsResult {

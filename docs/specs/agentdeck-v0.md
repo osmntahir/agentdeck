@@ -1,19 +1,19 @@
 # AgentDeck V0 — revize ürün ve uygulama sözleşmesi
 
-Revizyon: 2.2 — 12 Eylül 2026. **Durum: tasarım kararları kapandı ve terminal temsili ölçümle doğrulandı. Açık kalan tek şey insan onayı gerektiren CLI kabul testidir (G2); ürün kabulü (G3/G4) yapılmadı. Hatasız ürün iddiası yoktur.** [Wayfinder haritası](https://github.com/osmntahir/agentdeck/issues/1), [doğrulama kapıları](agentdeck-v0-validation-gates.md).
+Revizyon: 2.3 — 13 Eylül 2026. **Durum: tasarım kararları kapandı ve terminal temsili ölçümle doğrulandı. Yönetilen CLI kimliği G2 insan kabulüne bağlıdır; G3/G4 ürün kabulü tamamlanmadı. Hatasız ürün iddiası yoktur.** [Wayfinder haritası](https://github.com/osmntahir/agentdeck/issues/1), [doğrulama kapıları](agentdeck-v0-validation-gates.md).
 
 Bu belge güncel normatif sözleşmedir; ADR'ler gerekçeyi, araştırmalar tarihli kanıtı taşır. Eski GitHub resolution yorumları tarihçedir; çelişen önceki hükümler bu revizyonla yürürlükten kalkar. İki incelemedeki 15 bulgunun karşılığı [revizyon kaydında](../reviews/2026-09-12-decision-reconciliation.md); terminal kararlarının ölçüm kanıtı [doğrulama notunda](../research/terminal-state-validation.md).
 
 **Uygulama durumu:** §8/1, §8/3 terminal dilimi, §8/4 çalışma sonucu dilimi, §8/5 tarama/odak/poll
 entegrasyonu (environment.json dahil) ve §8/6 dayanıklılık ürün koduna girdi. Spec §3 eylem
-sunumu, HEAD'siz worktree kapanışı, kayıp cevap 10 dk TTL ve “çıktı işleniyor” 13 Eylül
-akşamında bağlandı. Sınırlar
+sunumu lastLaunch fresh/picker niyetini kaydeder; HEAD'siz worktree kapanışı, kayıp cevap
+10 dk TTL ve “çıktı işleniyor” bağlandı. Sınırlar
 [ADR 0007](../adr/0007-slice-1-implementation-boundaries.md),
 [ADR 0008](../adr/0008-terminal-slice-implementation.md),
 [ADR 0011](../adr/0011-work-result-slice-implementation.md),
 [ADR 0012](../adr/0012-scan-focus-poll-implementation.md) ve
 [ADR 0013](../adr/0013-durability-slice-implementation.md) içinde. Gerçek tarayıcı/CLI
-ürün kabulü ve §8/2 insan kabulü açık; sözleşmenin bütünü uygulanmış değildir.
+ürün kabulü ve §8/2 insan kabulü açık; yönetilen CLI kimliği/sürüm matrisi bu kabule kadar ertelidir.
 
 ## 1. Hedef ve kapsam
 
@@ -21,11 +21,11 @@ Linux öncelikli, yerel Node daemon + React/Vite + xterm.js + node-pty + ws + ex
 
 Pencere kapanınca daemon ve PTY sürer. Daemon ölümü sonrası süreç devamı garanti edilmez; otomatik respawn yapılmaz. Worktree dosya izolasyonudur; güvenlik sandbox'ı veya port/servis izolasyonu değildir. Xirp'in çoklu ajan/worktree yönünden esinlenilir; model değişiminde konuşma aktarımı ve Portal özellik paritesi vaat edilmez.
 
-V0 dışında: IDE/editör/LSP/debugger, görev dağıtıcı, ajan bus, merkezi context/Portal, tmux, systemd kurulumu, otomatik PR/merge, uygulamadan branch silme, otomatik orphan temizliği, Git dışı projeler, özel preset kataloğu. Bu sınırlar kullanıcıya gereken yerde kısa ve somut anlatılır.
+V0 dışında: IDE/editör/LSP/debugger, görev dağıtıcı, ajan bus, merkezi context/Portal, tmux, systemd kurulumu, otomatik PR/merge, uygulamadan branch silme, otomatik orphan temizliği, özel preset kataloğu. Git dışı klasör projeleri ve alt depo worktree’leri [ADR 0009](../adr/0009-folder-project-sub-repos.md) ile kapsama alındı. Bu sınırlar kullanıcıya gereken yerde kısa ve somut anlatılır.
 
 ## 2. Domain ve kalıcı kayıt
 
-- Project canonical gerçek Git çalışma kopyası köküdür. Symlink/alt dizin aynı köke çözülür; aynı kök 409 existingProjectId. Bare/Git dışı kök ve AgentDeck'in kendi worktree'sini Project olarak eklemek reddedilir. Ayrı bağlı worktree ayrı Project olabilir; Git mutasyonları common Git dir anahtarıyla serileştirilir.
+- Project canonical gerçek Git çalışma kopyası kökü veya Git dışı klasördür (ADR 0009). Symlink/alt dizin aynı köke çözülür; aynı kök 409 existingProjectId. Bare kök ve AgentDeck'in kendi worktree'sini Project olarak eklemek reddedilir. Ayrı bağlı worktree ayrı Project olabilir; Git mutasyonları common Git dir anahtarıyla serileştirilir.
 - Session kalıcı çalışma kaydı; Run tek PTY çalıştırması; Conversation id CLI konuşmasıdır. Kimliklerin hiçbiri diğerinin yerine geçmez.
 - Session: id, projectId, name, command, isolation, cwd, branch, baseCommit|null, lifecycle, exitCode|null, exitSignal|null, createdAt, endedAt|null, runId|null, archivedAt|null, lastLaunch|null. lastLaunch, son başarıyla yayımlanmış Run'ın açık launch niyetidir: command (aynen program), fresh (izin listesindeki CLI), resume (CLI + açık id) veya picker (CLI seçicisi). fresh/resume için son dayatılmış/hedef conversationId ayrı tutulur; picker'ın seçtiği id tahmin edilmez.
 - Lifecycle live|exited|orphaned; activity yalnız live için active|idle. Kabul edilmiş kullanıcı input'u ve PTY output'u lastActivity'yi ilerletir; terminalin otomatik cevapları kullanıcı faaliyeti değildir. Idle 30 sn sessizliktir. UI canlı etiketlerinde “Çalışıyor”/“Sessiz · 30 sn” kullanır; başarı veya kullanıcı bekleme sonucu çıkarmaz.
@@ -55,7 +55,7 @@ V0 LaunchPolicy izin listesi yalnız **argümansız literal claude, gemini, code
 ### Kullanıcı eylemleri
 
 1. **Durdur:** süreç grubunu doğrulanmış biçimde durdurur; kayıt, dosyalar, branch ve terminal geçmişi kalır. Timeout başarı değildir.
-2. **Yeniden çalıştır:** lastLaunch niyetini tekrarlar. Genel command aynen çalışır; fresh yeni konuşma niyetidir ve destekli Claude/Gemini için yeni UUID üretir; resume aynı açık id'yi hedefler; picker tekrar seçici açar. Bu eylem otomatik olarak fresh'ten resume'a dönüşmez. Legacy lastLaunch yoksa Command aynen çalışır. UI eylem alt açıklamasında bu farkı gösterir.
+2. **Yeniden çalıştır:** lastLaunch niyetini tekrarlar. Genel command aynen çalışır; fresh yeni konuşma niyetidir ve destekli Claude/Gemini için yeni UUID üretir; resume aynı açık id'yi hedefler; picker tekrar seçici açar. Bu eylem otomatik olarak fresh'ten resume'a dönüşmez. Legacy lastLaunch yoksa Command aynen çalışır; desteklenmeyen eski launch varsa başlangıç Command’ına düşmeden açıklamalı hata verir. V0 fresh tekrarında UUID üretilmez ve eski konuşma adayı yeni Run’a taşınmaz. UI eylem alt açıklamasında bu farkı gösterir.
 3. **Konuşmayı sürdür:** V0'da varsayılan yol **CLI'ın kendi etkileşimli seçicisidir** — `claude --resume`, `gemini --resume`, `codex resume`. Üçü de ölçüldü ve çalışıyor; Codex'in seçicisi varsayılan olarak cwd'ye göre filtreliyor, bu worktree-per-session tasarımıyla örtüşüyor. Seçici yolu AgentDeck'in kimlik üretmesini, bayrak enjekte etmesini ve sürüm garantisi vermesini gerektirmez; hangi konuşmanın seçileceği kullanıcının kararıdır, uygulama uydurmaz.
 
     **Yönetilen kimlik (AgentDeck'in ürettiği UUID ile `fresh`/`resume`) V0'da kapalı doğar.** Bir CLI+sürüm çifti için ancak [G2](agentdeck-v0-validation-gates.md) insan trust/auth testi geçtikten sonra açılır; o zamana kadar o CLI için yalnız literal komut ve seçici sunulur. “Konuşma kimliğiyle sürdür” alanı kullanıcının elindeki açık UUID'yi her zaman kabul eder — bu kullanıcının verisidir, bizim ürettiğimiz değil. `--last`/`--continue` ile otomatik eşleştirme hiçbir koşulda yoktur: bunlar oturum bulunamadığında sessizce yeni konuşma açar.
@@ -84,7 +84,7 @@ node-pty encoding utf8; kanal **çözülmüş UTF-8 terminal metnidir**, keyfi b
 
 Canlı Run için daemon'da headless xterm, istemciyle aynı sürüm/terminal seçenekleri/Unicode genişlik davranışı ile başlangıçtan itibaren tüm çıktıyı sıralı işler. Bir terminal-state worker'ı HTTP/Git kontrol işlerinden ayrıdır; Run başına FIFO, oturumlar arasında sınırlı tur bütçesi kullanır. Paketler worker'a sınırsız postMessage edilmez. Snapshot/read/resize/exit aynı Run sırasına katılır; write callback tamamlanmadan temsil işlenmiş sayılmaz.
 
-İstemci odakta tek görünür xterm kullanır; diff/taramada xterm yok. Bu maliyet tasarrufu daemon ekran durumunu silmez. Odağa dönüşte sırf redraw umuduyla sahte resize yapılmaz. Viewer terminali daemon boyutuyla gösterir (gerekirse scroll); yalnız kontrol sahibi gerçek resize gönderebilir. Resize önce sıralı state emülatörüne, sonra PTY'ye uygulanır; yeni boyut/sequence istemciye gider.
+İstemci tek odakta bir xterm, terminal grid’de en çok 8 görünür panel için birer xterm kullanır; gizli sekmede ve diff/taramada xterm yok ([ADR 0010](../adr/0010-terminal-grid.md)). Bu maliyet tasarrufu daemon ekran durumunu silmez. Odağa dönüşte sırf redraw umuduyla sahte resize yapılmaz. Viewer terminali daemon boyutuyla gösterir (gerekirse scroll); yalnız kontrol sahibi gerçek resize gönderebilir. Resize önce sıralı state emülatörüne, sonra PTY'ye uygulanır; yeni boyut/sequence istemciye gider.
 
 Preview, headless aktif viewport'unun son boş olmayan en çok 8 satırından çıkar; hücre boşlukları ve kelimeler korunur. 2 KiB/preview, en çok 24 görünür kart; kesilme ve capturedAt bilgisi vardır. ANSI/OSC regex silme yolu yoktur. Metin düğümüyle çizilir; link/HTML/pano eylemi üretmez. Ekran modeli hazır değilse “Önizleme hazırlanıyor/erişilemiyor”; uydurma düz çıktı yok. Aynı model TUI ve normal kabuğu besler.
 
@@ -181,7 +181,7 @@ State schemaVersion:2. V0 eski agent/status kaydı veya schemaVersion:1 yalnız 
 1. Güvenilir tek Session: schema, tek sahiplik, lifecycle/Run, stop doğrulaması, dosya koruma, salt okunur orphan keşfi. **Uygulandı** (12 Eylül 2026); iki hüküm §8/4'e daraltıldı: silme onayının içerik fingerprint'i ve kademeli proje silme ([ADR 0007](../adr/0007-slice-1-implementation-boundaries.md)).
 2. Gerçek bir worktree'de insanın CLI trust/auth ekranını tamamladığı ilk kullanım; onay öncesi stop ve aynı dosyalarda fresh tekrar. Bu test shell/environment ve restart çıkmazını erken yakalar.
 3. Headless terminal/snapshot/preview/encoding ve kontrol yanıtları. **Uygulandı:** terminal-state worker’ı, güvenli kesim, sorgu ayıklama, iki katmanlı replay, checkpoint ve odak istemcisi. Gerçek tarayıcı/CLI kabulü açık ([ADR 0008](../adr/0008-terminal-slice-implementation.md)).
-4. Çalışma diff'i/baseCommit, aynı cwd'de açık launch, arşiv ve branch bulma; sınırlı/safe delete. **Uygulandı** (13 Eylül 2026); launch yalnız command modunu açar, yönetilen kimlik G2'ye bağlı kalır ([ADR 0011](../adr/0011-work-result-slice-implementation.md)).
+4. Çalışma diff'i/baseCommit, aynı cwd'de açık launch, arşiv ve branch bulma; sınırlı/safe delete. **Uygulandı** (13 Eylül 2026); launch `command`/`fresh`/`picker` niyetini kaydeder, yönetilen `resume` kimliği G2'ye bağlı kalır ([ADR 0011](../adr/0011-work-result-slice-implementation.md)).
 5. Grid/odak/klavye/poll entegrasyonu; 4–8 gerçek oturum, sonra 32 sentetik PTY/256 kayıt. **Ürün kodu uygulandı** (13 Eylül 2026); 4–8 gerçek oturum ve 32 sentetik kabulü açık ([ADR 0012](../adr/0012-scan-focus-poll-implementation.md)).
 6. Çöküş/disk-full/bozuk state/eski yedek/timeout/çoklu istemci/tekrar istek/Unicode/ANSI/çok büyük dosya ve dış Git yarış. **Ürün kodu uygulandı** (13 Eylül 2026); SIGKILL'e dirençli gerçek süreç ve tarayıcı yük kabulü açık ([ADR 0013](../adr/0013-durability-slice-implementation.md)).
 

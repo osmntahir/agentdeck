@@ -17,14 +17,15 @@ import { isCheckpointId, openCheckpointStore } from './checkpoints'
 import { createTerminalHost, type TerminalEvent, type PreviewResult } from './terminalHost'
 import { chunkText, type SnapshotScope } from './terminalState'
 import { readUserEnvironment } from './env'
+import { lastLaunchFor, repeatLaunchCommand } from '../shared/launchPolicy'
 import {
   commandLabel,
-  lastCommand,
   type DiffScope,
-  type RepoDiff,
   type Isolation,
+  type LastLaunch,
   type Project,
   type ProjectView,
+  type RepoDiff,
   type Session,
   type SessionView,
   type SessionWorktree,
@@ -880,7 +881,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     res: express.Response,
     requestId: string,
     payload: Record<string, unknown>,
-    commandFor: (current: Session) => string | null,
+    commandFor: (current: Session) => string | null | undefined,
+    intentFor: (current: Session, command: string | null) => LastLaunch,
   ): Promise<void> {
     const existing = findSession(String(req.params.id))
     if (!existing) return jsonError(res, 404, 'not_found', 'Oturum yok')
@@ -903,6 +905,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
               currentRunId: current.runId,
             })
           }
+          const command = commandFor(current)
+          if (command === undefined) {
+            throw new HttpError(400, 'launch_unavailable', 'Önceki başlatma niyeti desteklenmiyor; bu çalışma kopyasında komutu açıkça seçin')
+          }
           // Bozuk ortam dosyası canlı işi durdurmadan reddedilir.
           const userEnv = userEnvironment()
 
@@ -917,8 +923,6 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           if (dirIdentityOf(current.cwd) === null) {
             throw new HttpError(400, 'cwd_missing', `Çalışma dizini yok: ${current.cwd}`)
           }
-
-          const command = commandFor(current)
 
           const runId = crypto.randomBytes(16).toString('hex')
           openTerminal(current.id, runId)
@@ -946,7 +950,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
               target.exitCode = null
               target.exitSignal = null
               target.endedAt = null
-              target.lastLaunch = { mode: 'command', command }
+              target.lastLaunch = intentFor(current, command)
             })
           } catch (err) {
             await sessions.stop(current.id)
@@ -969,9 +973,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   app.post('/api/sessions/:id/restart', async (req, res) => {
     const requestId = readRequestId(req.body?.requestId)
     if (typeof requestId !== 'string') return jsonError(res, 400, 'validation', requestId.error)
-    // lastLaunch niyeti tekrarlanır; yönetilen kimlik (fresh/resume/picker) G2
-    // geçmeden üretilmediği için yalnız command niyeti vardır.
-    await relaunch(req, res, requestId, {}, lastCommand)
+    // lastLaunch niyeti tekrarlanır. UUID üretilmez: fresh literal CLI,
+    // picker seçici komutu. V0 resume kaydı yazmaz; varsa legacy kayıt tekrarlanır.
+    await relaunch(req, res, requestId, {}, repeatLaunchCommand, (current, command) => {
+      const last = current.lastLaunch
+      if (last?.mode === 'fresh') return { ...last, conversationId: null }
+      if (last && last.mode !== 'command') return last
+      return { mode: 'command', command }
+    })
   })
 
   const LAUNCH_FIELDS = new Set(['requestId', 'expectedRunId', 'mode', 'command'])
@@ -980,7 +989,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const requestId = readRequestId(req.body?.requestId)
     if (typeof requestId !== 'string') return jsonError(res, 400, 'validation', requestId.error)
     const body = (req.body ?? {}) as Record<string, unknown>
-    if (body.mode === 'fresh' || body.mode === 'resume' || body.mode === 'picker') {
+    if (body.mode === 'resume') {
       return jsonError(
         res,
         400,
@@ -988,14 +997,28 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         "Yönetilen konuşma eylemleri G2 kabul testi geçmeden kapalı; CLI'ın kendi seçicisini komut olarak çalıştırın (ör. claude --resume)",
       )
     }
-    if (body.mode !== 'command') return jsonError(res, 400, 'validation', 'mode command olmalı')
+    if (body.mode !== 'command' && body.mode !== 'fresh' && body.mode !== 'picker') {
+      return jsonError(res, 400, 'validation', 'mode command, fresh veya picker olmalı')
+    }
     const extra = Object.keys(body).filter((key) => !LAUNCH_FIELDS.has(key))
     if (extra.length > 0) return jsonError(res, 400, 'validation', `Bu modda izinli olmayan alan: ${extra.join(', ')}`)
     if (!('command' in body)) return jsonError(res, 400, 'validation', 'command alanı gerekli (null = kabuk)')
     const command = readCommand(body.command)
     if (command !== null && typeof command === 'object') return jsonError(res, 400, 'validation', command.error)
+    const program = command as string | null
+    const intent = lastLaunchFor(body.mode, program)
+    if (!intent) {
+      return jsonError(
+        res,
+        400,
+        'validation',
+        body.mode === 'fresh'
+          ? 'fresh yalnız argümansız literal claude, gemini veya codex kabul eder'
+          : "picker yalnız CLI'ın kendi seçicisidir (ör. claude --resume)",
+      )
+    }
 
-    await relaunch(req, res, requestId, { mode: 'command', command }, () => command)
+    await relaunch(req, res, requestId, { mode: body.mode, command: program }, () => program, () => intent)
   })
 
   /** Saklanmış görüntüsü olan önceki Run'lar; salt okunur inceleme WS'te runId ile açılır. */

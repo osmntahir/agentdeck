@@ -8,4 +8,6 @@ Kullanıcı Session silmesini açıkça onayladığında süreç grubu doğrulan
 
 Ignored dosyalar dahil silinecek çalışma kopyasının kapsamı, maliyet sınırları ve onay fingerprint'i [spec](../specs/agentdeck-v0.md#6-saklama-ve-güvenli-temizlik) içinde. Arşivlemek varsayılan işi bitirme yoludur; silme ikincil ve yıkıcıdır.
 
-Güncelleme (13 Eylül 2026): create rollback'inin kirli kopyayı koruması [ADR 0013](0013-durability-slice-implementation.md) ile ölçüldü.
+Güncelleme (13 Eylül 2026): create rollback'inin kirli kopyayı koruması [ADR 0013](0013-durability-slice-implementation.md) ile ölçüldü. `git worktree remove` kilit yüzünden başarısızsa kaynak yine korunur; `rmSync` fallback yoktur.
+
+Git projesinde commit yoksa izole worktree açıklamayla kapalıdır (`head_missing`); ortak kopya otomatik seçilmez. Klasör projesindeki commit'siz alt depo [ADR 0009](0009-folder-project-sub-repos.md) ile aynı kuralı kullanır.

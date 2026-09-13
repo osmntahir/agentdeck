@@ -144,6 +144,20 @@ test('yazılamayan checkpoint hata olarak bildirilir ve yarım dosya bırakmaz',
   }
 })
 
+test('yazımı yarıda kalan tmp Run sayılmaz; önceki json ready kalır', async () => {
+  const dir = tempDir()
+  try {
+    const store = openCheckpointStore(dir)
+    await store.write(input('s1', 'r1', 'sağlam'))
+    fs.writeFileSync(`${store.fileFor('s1', 'r2')}.${'a'.repeat(8)}.tmp`, '{ yarım')
+    assert.equal((await store.read('s1', 'r1')).state, 'ready')
+    assert.equal((await store.read('s1', 'r2')).state, 'missing')
+    assert.deepEqual(store.list('s1').map((run) => run.runId), ['r1'])
+  } finally {
+    removeDir(dir)
+  }
+})
+
 test('çöküşten kalan tmp dosyası Run kaydı veya bozuk geçmiş sayılmaz', async () => {
   const dir = tempDir()
   try {

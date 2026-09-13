@@ -1,5 +1,12 @@
-import { CLI_COMMANDS, explicitResumeOf, launchCli, type LaunchCli } from './launchPolicy'
-import { commandLabel, hasRunningProcesses, lastCommand, type Session, type SessionView } from './types'
+import {
+  CLI_COMMANDS,
+  explicitResumeOf,
+  launchCli,
+  pickerCli,
+  repeatLaunchCommand,
+  type LaunchCli,
+} from './launchPolicy'
+import { commandLabel, hasRunningProcesses, type Session, type SessionView } from './types'
 
 /**
  * Odak çubuğundaki çalışma eylemleri (spec §3). Yönetilen fresh/resume
@@ -13,15 +20,21 @@ export type SessionWorkAction =
   | { kind: 'restart'; primary: boolean; label: string; description: string }
   | { kind: 'launch'; primary: false; label: string; description: string }
 
-function recognizedCli(session: Pick<Session, 'command' | 'lastLaunch'>): LaunchCli | null {
-  return launchCli(session.command) ?? launchCli(lastCommand(session))
+/** Konuşma eylemlerinin CLI'sı son başarılı Run'dır; başlangıç Command'ı değil. */
+export function sessionWorkCli(session: Pick<Session, 'command' | 'lastLaunch'>): LaunchCli | null {
+  const last = session.lastLaunch
+  if (last?.mode === 'fresh' || last?.mode === 'picker' || last?.mode === 'resume') {
+    return launchCli(last.cli)
+  }
+  const command = repeatLaunchCommand(session) ?? null
+  return launchCli(command) ?? pickerCli(command) ?? explicitResumeOf(command)?.cli ?? null
 }
 
 function hasConversationCandidate(session: Pick<Session, 'command' | 'lastLaunch'>): boolean {
   const last = session.lastLaunch
   if (last?.mode === 'resume') return true
   if (last?.mode === 'fresh' && last.conversationId) return true
-  return explicitResumeOf(lastCommand(session)) !== null
+  return explicitResumeOf(repeatLaunchCommand(session) ?? null) !== null
 }
 
 function withStop(running: boolean, label: string, description: string): { label: string; description: string } {
@@ -37,7 +50,7 @@ function restartDescription(session: Pick<Session, 'command' | 'lastLaunch'>): s
   if (last?.mode === 'resume') return `aynı konuşmayı sürdürür (${last.cli} ${last.conversationId})`
   if (last?.mode === 'picker') return `CLI'ın kendi konuşma seçicisini tekrar açar`
   if (last?.mode === 'fresh') return 'aynı çalışma kopyasında yeni konuşma açar; önceki konuşma silinmez.'
-  return `komutu aynen yeniden çalıştırır: ${commandLabel(lastCommand(session))}`
+  return `komutu aynen yeniden çalıştırır: ${commandLabel(repeatLaunchCommand(session) ?? null)}`
 }
 
 export function sessionWorkActions(session: SessionView): SessionWorkAction[] {
@@ -52,15 +65,13 @@ export function sessionWorkActions(session: SessionView): SessionWorkAction[] {
     })
   }
 
-  const cli = recognizedCli(session)
-  const restartCommand = lastCommand(session)
+  const cli = sessionWorkCli(session)
+  const restartCommand = repeatLaunchCommand(session)
   const picker = cli ? CLI_COMMANDS[cli].picker : null
   const lastMode = session.lastLaunch?.mode ?? null
-  // lastCommand yalnız command niyetini tekrarlar; resume/fresh niyeti aynı komut değildir.
-  const commandIntent = lastMode === 'command' || lastMode === null
-  const showContinue = picker !== null && !(commandIntent && restartCommand === picker)
-  const showFresh = cli !== null && (lastMode === 'fresh' || !(commandIntent && restartCommand === cli))
-  const showRestart = lastMode !== 'fresh'
+  const showContinue = picker !== null && restartCommand !== picker
+  const showFresh = cli !== null && (lastMode === 'fresh' || restartCommand !== cli)
+  const showRestart = lastMode !== 'fresh' && restartCommand !== undefined
   const candidate = hasConversationCandidate(session)
   const continuePrimary = showContinue && candidate
   const restartPrimary = showRestart && !continuePrimary

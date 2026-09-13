@@ -17,5 +17,16 @@ olarak kaydedilir; yönetilen `resume` veya otomatik kimlik üretimi değildir.
 
 Odak çubuğu (13 Eylül): açık UUID lastLaunch konuşma adayıdır ve “konuşmayı
 sürdür” birincil olur; `lastLaunch.mode = fresh` ise “yeniden çalıştır”
-gizlenir. Canlı işte eylemler durdurmayı söyler. cwd yokken yeni Run düğmeleri
-kapanır.
+gizlenir çünkü restart aynı literal CLI'yı tekrarlar. Canlı işte eylemler
+durdurmayı söyler. cwd yokken yeni Run düğmeleri kapanır.
+
+Restart, kayıttaki lastLaunch niyetini tekrarlar ve UUID üretmez: fresh
+yine literal CLI, picker yine seçici, command yine aynı program. `mode =
+resume` V0'da üretilmez.
+
+Tamamlama doğrulaması (13 Eylül 2026): fresh/picker niyetleri kayda ve restart'a
+bağlandı. Desteklenmeyen eski CLI veya geçersiz resume kimliği başlangıç
+Command'ına düşmez: restart `launch_unavailable` ile, mevcut süreç durdurulmadan
+reddedilir. Arayüz bu restart'ı sunmaz; açık komut seçimi erişilebilir kalır.
+Fresh tekrarında önceki konuşma adayı yeni Run'a taşınmaz. Bu uygulama kapsamı
+kapandı; yönetilen UUID üretimi ve gerçek CLI trust/auth kabulü G2'de açıktır.

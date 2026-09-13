@@ -11,8 +11,7 @@ import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
 import { savedGridSessionIds } from './gridLayout'
 import { createStatePoller, pollPreviewIds } from '../shared/statePoll'
-import { launchCli } from '../shared/launchPolicy'
-import { sessionWorkActions } from '../shared/sessionActions'
+import { sessionWorkActions, sessionWorkCli } from '../shared/sessionActions'
 import {
   commandLabel,
   formatAge,
@@ -587,7 +586,14 @@ export function App() {
                                 return
                               }
                               if (action.kind === 'continue' || action.kind === 'fresh') {
-                                run(api.launchSession(active.id, active.runId, action.command))
+                                run(
+                                  api.launchSession(
+                                    active.id,
+                                    active.runId,
+                                    action.command,
+                                    action.kind === 'fresh' ? 'fresh' : 'picker',
+                                  ),
+                                )
                                 return
                               }
                               setError(null)
@@ -663,7 +669,7 @@ export function App() {
                 </button>
               </div>
             )}
-            {launchCli(active.command) && (
+            {sessionWorkCli(active) && (
               <div className="trust-note" role="note">
                 <span>
                   Bu sürümde yönetilen konuşma devamı doğrulanmadı; CLI’ın kendi seçicisini veya elinizdeki açık

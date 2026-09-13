@@ -55,7 +55,7 @@ const {startDaemon} = require(path.resolve(__dirname, '../../dist/server/daemon.
   assert.equal(await page.getByRole('button',{name:'Seçilen panelin yerleşimi'}).evaluate(el=>el===document.activeElement),true);
   await page.screenshot({path:path.join(output,'grid.png')});
   await page.locator('.session-row').first().click();
-  await page.getByRole('button',{name:'komut çalıştır…',exact:true}).click();
+  await page.getByRole('button',{name:'durdur ve komut çalıştır…',exact:true}).click();
   await page.getByLabel('Konuşma UUID’si').fill('latest');
   assert.equal(await page.getByRole('button',{name:'Komuta aktar'}).isDisabled(),true);
   await page.keyboard.press('Enter');

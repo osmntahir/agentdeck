@@ -103,3 +103,47 @@ test('kalan süreç grubu da durdurma ister', () => {
   const s = session({ lifecycle: 'exited', remainingProcessGroup: true })
   assert.equal(sessionWorkActions(s)[0]?.kind, 'stop')
 })
+
+test('son çalıştırılan CLI konuşma eylemlerini belirler', () => {
+  const s = session({ command: 'claude', lastLaunch: { mode: 'command', command: 'codex' } })
+  assert.deepEqual(kinds(s), ['restart*', 'continue', 'launch'])
+  const cont = sessionWorkActions(s).find((a) => a.kind === 'continue')
+  if (cont?.kind !== 'continue') throw new Error('continue yok')
+  assert.equal(cont.command, 'codex resume')
+})
+
+test('lastLaunch.mode picker ise konuşmayı sürdür yinelenmez', () => {
+  const s = session({ lastLaunch: { mode: 'picker', cli: 'claude' } })
+  assert.deepEqual(kinds(s), ['restart*', 'fresh', 'launch'])
+  const restart = sessionWorkActions(s).find((a) => a.kind === 'restart')
+  assert.match(restart?.description ?? '', /seçicisini tekrar açar/)
+})
+
+test('son Run CLI değilse konuşma eylemleri başlangıç Command ından üretilmez', () => {
+  const s = session({ command: 'claude', lastLaunch: { mode: 'command', command: 'pwd' } })
+  assert.deepEqual(kinds(s), ['restart*', 'launch'])
+})
+
+test('kabuk oturumunda picker lastLaunch konuşma eylemlerini açar', () => {
+  const s = session({ command: null, lastLaunch: { mode: 'picker', cli: 'claude' } })
+  assert.deepEqual(kinds(s), ['restart*', 'fresh', 'launch'])
+  const restart = sessionWorkActions(s).find((a) => a.kind === 'restart')
+  assert.match(restart?.description ?? '', /seçicisini tekrar açar/)
+})
+
+test('canlı fresh eylemi durdurmayı söyler', () => {
+  const s = session({
+    lifecycle: 'live',
+    activity: 'active',
+    lastLaunch: { mode: 'fresh', cli: 'claude', conversationId: null },
+  })
+  const actions = sessionWorkActions(s)
+  assert.equal(actions.find((a) => a.kind === 'fresh')?.label, 'durdur ve aynı dosyalarla yeni konuşma')
+  assert.equal(actions.find((a) => a.kind === 'continue')?.label, 'durdur ve konuşmayı sürdür')
+  assert.equal(actions.some((a) => a.kind === 'restart'), false)
+})
+
+
+test('desteklenmeyen eski niyette yanlış restart sunulmaz; açık komut yolu kalır', () => {
+  assert.deepEqual(kinds(session({ lastLaunch: { mode: 'picker', cli: 'unknown' } })), ['launch'])
+})

@@ -13,6 +13,17 @@ Komut diyaloğu seçici kısayollarını aynı tanımdan okur. Genel komut aynen
 iddia etmez. Yönetilen eylemlerin destek matrisi G2 kabulünden sonra açılacaktır.
 
 Odak çubuğu (13 Eylül): `sessionWorkActions` spec §3 sırasını üretir. Tanınan
-CLI'da “konuşmayı sürdür” seçici komutudur, “aynı dosyalarla yeni konuşma”
-literal komuttur. Aynı sonucu veren düğme yinelenmez. Sürüm sondası yoktur;
-tanınan CLI'da “yönetilen konuşma devamı doğrulanmadı” bilgisi görünür.
+CLI konuşma eylemlerini **son başarılı Run** belirler (başlangıç Command'ı
+değil). “Konuşmayı sürdür” seçici komutudur ve `lastLaunch.mode = picker`
+yazılır; “aynı dosyalarla yeni konuşma” literal komuttur ve `mode = fresh`
+(`conversationId: null`) yazılır. Aynı sonucu veren düğme yinelenmez.
+`mode = resume` (yönetilen kimlik) G2 geçmeden 400 `mode_unsupported` kalır;
+kullanıcının açık UUID'si komut diyaloğundan `mode = command` olarak gider.
+Sürüm sondası yoktur; tanınan CLI'da “yönetilen konuşma devamı doğrulanmadı”
+bilgisi görünür.
+
+V0 uygulama kapsamı doğrulandı (13 Eylül 2026): literal komut, açık UUID,
+fresh/picker kaydı ve son başarılı Run'a göre eylem sunumu tamamlandı.
+[268 test ve Chromium kanıtı](../specs/agentdeck-v0-validation-gates.md)
+uygulama kapanışını destekler. Sürüm sondası/destek matrisi ve yönetilen UUID
+üretimi G2'ye bağlı ayrı kapsam olarak açık kalır.

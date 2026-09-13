@@ -6,7 +6,7 @@ Durum: accepted — 2026-09-13. Kapsam: [spec §8/4](../specs/agentdeck-v0.md). 
 
 **Diff kapsamları.** `GET /api/sessions/:id/diff?scope=work|uncommitted`. İzole oturumun varsayılanı `work` (base commit'ten çalışma ağacına toplam fark), ortak oturumunki `uncommitted`'dır. Klasör oturumunda her alt depo kendi worktree kaydındaki commit'e göre okunur. Base bilinmiyorsa veya depoda erişilemiyorsa o depo `error` ile kapalıdır; HEAD ile ikame yapılmaz. Okuma 5 sn, 1 MiB patch, 50 takip edilmeyen dosya içeriği ve 10.000 status girişi / 1 MiB ile sınırlıdır; kesilme `patchTruncated`/`statusTruncated` ile işaretlenir. Git hatası artık boş diff'e çevrilmez. Okuma başı ve sonu arasında HEAD değişirse sonuç `stale` işaretlenir. Diff ve branch okuması aynı anda en çok iki Git işi çalıştırır.
 
-**Aynı çalışma kopyasında komut.** `POST /api/sessions/:id/launch` yalnız `mode:"command"` kabul eder; `fresh`/`resume`/`picker` 400 `mode_unsupported`, modun izinli olmayan alanı 400 döner. Yönetilen kimlik [G2](../specs/agentdeck-v0-validation-gates.md) geçmeden kapalıdır. Konuşma, CLI'ın kendi seçicisi (`claude --resume`, `codex resume`, `gemini --resume`) literal komut olarak çalıştırılarak sürdürülür; bu Run'ın niyeti `command` olarak kaydedilir ve sürüm sorgusu yapılmaz. Restart ile launch aynı yolu kullanır: doğrulanmış durdurma, cwd kontrolü, başarıda `lastLaunch`, başlangıç Command'ı değişmez. Sözleşmede olmayan `GET /api/sessions/:id/runs` önceki Run görüntülerini checkpoint dosya adlarından listeler; aynı oturumda mutation sürerken 409 döner, böylece kayda girmemiş Run önceki Run gibi görünmez. İnceleme mevcut WS `run=` yoluyla salt okunurdur.
+**Aynı çalışma kopyasında komut.** `POST /api/sessions/:id/launch` `mode:"command"|"fresh"|"picker"` kabul eder. `resume` 400 `mode_unsupported` (yönetilen kimlik [G2](../specs/agentdeck-v0-validation-gates.md) geçmeden kapalıdır). fresh yalnız argümansız literal CLI, picker yalnız CLI seçicisidir; ikisi de UUID üretmez, kayda `lastLaunch.mode` olarak yazılır. Restart kayıttaki niyeti tekrarlar. Başlangıç Command'ı değişmez. Modun izinli olmayan alanı 400 döner. Sözleşmede olmayan `GET /api/sessions/:id/runs` önceki Run görüntülerini checkpoint dosya adlarından listeler; aynı oturumda mutation sürerken 409 döner, böylece kayda girmemiş Run önceki Run gibi görünmez. İnceleme mevcut WS `run=` yoluyla salt okunurdur.
 
 **Korunan branch'ler.** `GET /api/projects/:id/branches` `refs/heads/agentdeck/` adlarını ve tip OID'lerini 5 sn / proje başına 1000 ref sınırıyla okur. Klasör projesinde her alt depo ayrı okunur. Branch'i gösteren kayıt yoksa `sessionId` null kalır; Git hatası boş listeyle karıştırılmaz.
 
@@ -22,9 +22,7 @@ Bilinen sınırlar:
 - Klasör oturumunda ajanın depo dışına yazdığı dosyalar silinmediği için fingerprint'e girmez; kapsayıcı yerinde kalır ve yetim keşfinde görünür.
 - Dış programların onay ile kaldırma arasındaki yazımına dosya sistemi transaction garantisi yoktur.
 - Büyük `node_modules` tek bir oturumda bile bütçeyi aşabilir; kullanıcı yerel araçla temizler. Bu denge pilotta sınanır.
-- Eşzamanlı archive/delete yarışı ve gerçek 128 MiB / iç içe depo fixture'ı
-  13 Eylül ek testleriyle ölçüldü: arşiv durdurması kilidi tutarken silme 409
-  döner ve dosya kalır; tam 128 MiB kabul edilir, bir bayt aşım reddedilir;
-  ignored iç içe Git deposunda dosya değişimi fingerprint'i değiştirir.
+
+Ölçülen (13 Eylül): arşiv durdurması kilidi tutarken silme 409 döner; silme durdurması sürerken arşiv aynı 409'u verir; tam 128 MiB kabul edilir, bir bayt aşım reddedilir; ignored iç içe Git deposunda dosya değişimi fingerprint'i değiştirir.
 
 Doğrulama: `npm test`, `npm run typecheck`, `npm run build`. Derlenmiş arayüz Electron'un Chromium'unda sürüldü: arşiv, arşiv filtresi, branch paneli, komut çalıştırma, önceki Run incelemesi, diff kapsamları ve kademeli proje silme 31 kontrolden geçti, konsol hatası yok. Bu bir duman testidir; G4 kullanıcı kabulü ve gerçek CLI akışı yapılmadı.

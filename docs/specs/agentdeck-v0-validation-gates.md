@@ -56,10 +56,12 @@ Ortam: Node 22.19.0, Linux, gerçek node-pty ve gerçek `git`. Kanıt: depodaki 
 - [ ] Sinyal gönderilmiş ama grup yaşıyor; lider çıkmış çocuk kalmış; stop timeout; eski expectedRunId; eşzamanlı create/restart/delete/archive. Hatalı durumda yeni Run veya silme başlamaz.
     - Ölçülen: `stop.test.ts` altı vaka (grup çoktan gitmiş; SIGHUP ile ölen; SIGHUP yetmeyip SIGKILL; lider çıkmış grup yaşıyor; grup hiç ölmüyor → `verified:false`; lider hiç çıkmıyor → timeout başarı değil). `sessions.test.ts`: "SIGHUP yetmeyen grup SIGKILL ile doğrulanarak durdurulur", "lider çıkıp çocuk kaldığında grup izlenir ve durdurma onu da temizler" (gerçek PTY, `kill(-pid,0)` ile doğrulandı), "canlı Run varken ikinci Run açılamaz". `api.test.ts`: "eski expectedRunId ile gelen stop yeni Run u etkilemez", "aynı oturumda süren mutation ikinciyi 409 ile reddeder", "lider çıkıp çocuk kalsa da silme grubu doğrulanmış biçimde durdurur".
     - Ölçülen (13 Eylül ek): `api.test.ts` "arşiv durdurması sürerken silme reddedilir ve çalışma kopyası korunur" (409 `operation_in_progress`, ajan dosyası kalır, arşiv tamamlanır).
+    - Ölçülen (13 Eylül ek): `api.test.ts` "silme durdurması sürerken arşiv 409 operation_in_progress".
     - Açık: SIGKILL'e dirençli gerçek bir süreç grubu çekirdekte kurulamadığı için timeout yolu yalnız sahte grupla ölçüldü; gerçek uninterruptible süreçle ölçülmedi.
 - [ ] Spawn başarılı/state commit başarısız ve rollback başarısız; disk-full/izin hatası; crash sırasında iki Run checkpoint'i. Kaynaklar korunur, kısmi sonuç/gerçek exit doğru görünür.
     - Ölçülen: `api.test.ts` izin hatasında worktree kaldırma, kirli worktree `korundu`, canlı PTY'nin disk hatasında yaşaması, durdurma kaydı yazılamazsa çıkışın uydurulmaması, SIGKILL sonrası iki checkpoint, SIGTERM çıkış kaydı. `store.test.ts` ENOSPC stub'ı. `checkpoints.test.ts` yarım tmp'nin Run sayılmaması.
-    - Açık: gerçek disk-full aygıtı; yazım ortasında çöküş; `git worktree remove` hatasının ayrı fixture'ı.
+    - Ölçülen (13 Eylül ek): `api.test.ts` "PTY doğup kayıt yazılamazsa kilitli worktree korunur"; "exited oturumda launch kayıt yazılamazsa önceki lastLaunch ve exited kalır"; `checkpoints.test.ts` "yazımı yarıda kalan tmp Run sayılmaz".
+    - Açık: gerçek disk-full aygıtı; yazım ortasında süreç öldürme.
 - [x] **İki daemon aynı data/farklı port veya symlink alias ile başlayamaz; SIGKILL sonrası kilit bırakılır; port/protokol uyuşmazlığında yabancı süreç öldürülmez.** `lock.test.ts`: "aynı veri dizini için ikinci yazar reddedilir", "symlink alias aynı kilide çözülür", "kilit bırakıldıktan sonra yeniden alınabilir", "farklı veri dizinleri birbirini engellemez". `api.test.ts`: "aynı veri dizini için ikinci daemon açılmaz", "SIGKILL edilen daemon kilidi bırakır" (kilidi ayrı süreçte tutup `SIGKILL` ile öldürerek), "porttaki yabancı servis öldürülmez" (yabancı HTTP servisi portu tutarken daemon açılmıyor, yabancı servis yaşamaya devam ediyor, kilit sızmıyor).
 - [x] **Commit edilmiş ve edilmemiş değişiklikler baseCommit görünümünde bulunur; staged/unstaged birbirini geri aldığında status kirli kalır. Shared attribution yok; base bilinmiyorsa uydurulmaz.** `api.test.ts`: ""Bu çalışma" base commit ten toplam farkı, "Commit edilmemiş" yalnız HEAD e göre farkı gösterir" (commit edilmiş iş toplam görünümde var, HEAD görünümünde yok; takip edilmeyen dosya ikisinde de), "staged ve unstaged birbirini geri alsa da status kirli kalır; ortak kopyada toplam görünüm uydurulmaz" (net patch boş, status `MM`; ortak oturumun varsayılanı commit edilmemiş görünüm, toplam görünüm `baseCommit:null` ve açıklamayla kapalı), "diff patch sınırında kesildiğini söyler; Git hatası temiz diff sayılmaz". Arayüz ortak kopyada değişikliğin oturuma atfedilmediğini söyler ([ADR 0011](../adr/0011-work-result-slice-implementation.md)).
 - [x] **Archive/unarchive dosyalara dokunmaz; 256 kayıt sınırı arşivleri gizlice silmez; Session silindikten sonra branch proje görünümünde bulunur.** `api.test.ts`: "arşiv canlı işi açık istek olmadan durdurmaz; arşiv ve arşivden çıkarma dosyalara dokunmaz" (cwd, branch, baseCommit ve ajan dosyası korunur; arşivdeki oturum yeniden başlatılamaz), "kayıt sınırı dolduğunda create durur ve hiçbir kayıt kesilmez", "korunan branch ler proje görünümünde tip OID siyle bulunur; kayıt yoksa görev bilgisi uydurulmaz" (silinen oturumun branch'i commit'lenmiş iş tipinde, `sessionId:null`).
@@ -67,7 +69,7 @@ Ortam: Node 22.19.0, Linux, gerçek node-pty ve gerçek `git`. Kanıt: depodaki 
 - [x] **Delete onayı sonrası içerik/Run/dizin değişimi 409; stop sonrası yeniden kontrol; worktree lock/izin hatasında rmSync fallback yok; shared dosyaları korunur.** `api.test.ts`: "onaysız silme reddedilir, onay sonrası içerik değişirse silme durur" (409 `confirmation_stale`, klasör duruyor), "onaydan sonra yeni Run başladıysa silme durur" (runId bağı), "onay başka bir dizine dönen yolda geçersizdir" (dizin kimliği bağı), "worktree kaldırılamazsa rmSync fallback yok; kayıt ve dosyalar korunur" (kilitli worktree ile 500 `worktree_remove_failed`, ajan dosyası ve kayıt yerinde), "ortak çalışma kopyasında silme dosyalara dokunmaz", "branch silme alanı reddedilir" (gövde ve query için 400 `unsupported_field`). Dosya durumu onaydan sonra **ve** doğrulanmış stop'tan sonra yeniden okunuyor.
 - [x] **Proje silme kısmi sonuçta kalan Project/Session'ları listeler; branch silme alanı reddedilir; external Git farkı stale gösterilir.** `api.test.ts`: "oturumu olan proje gizlice cascade silinmez" (onaysız 409 `project_has_sessions`), "proje silme tüm oturumları tek onaya bağlar; onaydan sonra içerik veya oturum kümesi değişirse hiçbir şey silinmez", "proje silme bütçeyi oturum sayısıyla aşmaz; kısmi sonuçta proje ve kalan oturumlar listelenir" (kilitli worktree ile 500 `project_delete_partial`, `removedSessionIds`/`remainingSessionIds`, proje kalır) ve "branch silme alanı reddedilir". `git.test.ts`: "diff okuma sırasında HEAD değişirse stale işaretlenir" (yavaş clean filter altında boş commit; sonraki sessiz okuma `stale:false`).
 - [ ] Yarım/okunamayan checkpoint ayrı hata verir; legacy history doğru snapshot diye gösterilmez. Terminal yüklemesi/serialize bütçesi aşılırsa açık hata.
-    - Otomatik kanıt: `checkpoints.test.ts` eksik/bozuk/sürüm ve kimlik uyuşmazlığını ve çöküş tmp'sini; `terminalHost.test.ts` worker kaybı ve son flush’ı; `terminalStream.test.ts` `history-missing` / `history-unreadable` ayrımını; `api.test.ts` salt okunur inspection, biçimsiz runId ve dosya temizliğini doğrular. Gerçek tarayıcı/yük kabulü hâlâ açıktır.
+    - Otomatik kanıt: `checkpoints.test.ts` eksik/bozuk/sürüm ve kimlik uyuşmazlığını, çöküş tmp'sini ve rename edilmemiş tmp'nin Run sayılmamasını; `terminalHost.test.ts` worker kaybı ve son flush’ı; `terminalStream.test.ts` `history-missing` / `history-unreadable` ayrımını; `api.test.ts` salt okunur inspection, biçimsiz runId, dosya temizliğini ve yoğun çıktıda `output-pressure` + health yanıtını doğrular. Gerçek tarayıcı/yük kabulü hâlâ açıktır.
 
 ## G4 — Bütünleşik kullanıcı akışı (ürün kabulü)
 
@@ -89,7 +91,7 @@ Uygulama durumu (13 Eylül 2026): spec §8/1, §8/3, §8/4, §8/5 ve §8/6 ürü
 
 ## Sıradaki iş ve açık kararlar
 
-Son durum (13 Eylül 2026): §8/1, §8/3, §8/4, §8/5 ve §8/6 ürün koduna girdi ([ADR 0013](../adr/0013-durability-slice-implementation.md)). Spec §3 eylem sunumu, HEAD'siz worktree kapanışı, istemci `requestId` 10 dk TTL ve çıktı baskısı ürün koduna girdi. G2 insan kabulü, G3 kalan 3 madde ve G4 açıktır.
+Son durum (13 Eylül 2026): §8/1, §8/3, §8/4, §8/5 ve §8/6 ürün koduna girdi ([ADR 0013](../adr/0013-durability-slice-implementation.md)). Spec §3 eylem sunumu lastLaunch fresh/picker niyetini kaydeder; HEAD'siz worktree kapanışı, istemci `requestId` 10 dk TTL, kilitli rollback ve çıktı baskısı ölçüldü. G2 insan kabulü, G3'teki gerçek disk-full / uninterruptible süreç ve G4 açıktır.
 
 Sıradaki işler:
 
@@ -114,7 +116,7 @@ koruması `gridLayoutGuard.ts` olarak paylaşılan sınıra alındı.
 
 Kanıt:
 
-- `npm test`: 236/236; `npm run typecheck` ve `npm run build` başarılı.
+- `npm test`: 261/261; `npm run typecheck` ve `npm run build` başarılı.
 - `PLAYWRIGHT_MODULE=/tmp/agentdeck-browser-qa/node_modules/playwright node docs/research/adr-runtime-probe.cjs --capacity`:
   derlenmiş gerçek daemon, izole Chromium, geçici proje, iki kabuk ile grid ve
   çekmece davranışları; UUID Enter'ın komut başlatmaması; panel kapatmanın canlı
@@ -137,3 +139,33 @@ SIGTERM çıkış kaydı, WS-only kopuş, kayıp cevap kimliği ve çöküşte i
 checkpoint ölçüldü. ADR 0004 ve 0008 kabul durumu uygulama ile hizalandı.
 
 Kanıt: `npm test`, `npm run typecheck`. G2/G4 insan kabulü açık.
+
+## Yarım kalan launch ve ADR tamamlama turu — 13 Eylül 2026
+
+Grok'tan kalan çalışma korunarak fresh/picker kaydı, son başarılı Run'a göre
+CLI eylemleri ve payload başına kayıp cevap kimliği tamamlandı ve doğrulandı.
+ADR 0002/0003'ün V0 literal/seçici uygulama işleri kapandı. ADR 0013'ün istemci
+kimlik defteri 1024 bekleyen kayıtla sınırlandı; geçerli kimlikler kapasite için
+atılmaz, tamamlanma/TTL/daemon değişimi yer açar. Desteklenmeyen eski launch
+başlangıç Command'ına sessizce dönmez; `launch_unavailable` mevcut süreç
+durdurulmadan üretilir, açık komut seçimi korunur. Fresh tekrarında eski
+konuşma adayı yeni Run'a taşınmaz.
+
+Kanıt:
+
+- `npm test`: **268/268**, atlanan test yok; `npm run typecheck` başarılı.
+- `npm run build` başarılı. Vite yapılandırma biçimi ve büyük bundle uyarıları
+  devam ediyor; build hatası yok.
+- `adr-runtime-probe.cjs --capacity`: Chromium grid/sekme/bölme/boyut,
+  klavye/F6, UUID Enter, dar ekran drawer odak ve yeniden yükleme senaryoları
+  geçti; tarayıcı hatası yok. Masaüstü ve dar ekran görüntüleri incelendi.
+- 32 canlı sentetik PTY, 33. Run reddi, 24 önizleme; state 9 ms, daemon RSS
+  174 MiB. Bu ölçüm toplam Chromium/alt süreç belleği veya uzun süreli yük değildir.
+- Fresh/picker API testi geçici HOME ve kabuk fixture'ı kullanır; gerçek Claude
+  auth/config'ine dayanmaz ve seçici argümanının restart'ta korunduğunu doğrular.
+
+**Kapanmayan kapsam:** G2 insan trust/auth, sürüm destek matrisi ve yönetilen
+UUID üretimi; G3 gerçek disk-full aygıtı/SIGKILL'e dirençli süreç; G4 gerçek
+4–8 ajan, IME/ekran okuyucu/%200 zoom ve uzun süreli yük kabulü. Bunlar yapılmış
+olarak işaretlenmedi. ADR'lerin karar durumu `accepted` kalır; uygulama işinin
+kapanması ürün kabulünün tamamlandığı anlamına gelmez.

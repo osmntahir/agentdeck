@@ -92,13 +92,13 @@ const createBody = (projectId: string, over: Record<string, unknown> = {}) => ({
  * Node'un global fetch'i aynı origin'e giden istekleri tek sokette sıraya
  * alır; gerçek eşzamanlılık için her istek kendi soketini açar.
  */
-function rawPost<T>(daemon: Daemon, route: string, body: unknown): Promise<Reply<T>> {
+function rawCall<T>(daemon: Daemon, method: string, route: string, body: unknown): Promise<Reply<T>> {
   const payload = JSON.stringify(body)
   return new Promise((resolve, reject) => {
     const req = http.request(
       `${daemon.url}${route}`,
       {
-        method: 'POST',
+        method,
         agent: false,
         headers: {
           'X-Agentdeck-Token': daemon.token,
@@ -124,6 +124,10 @@ function rawPost<T>(daemon: Daemon, route: string, body: unknown): Promise<Reply
     req.on('error', reject)
     req.end(payload)
   })
+}
+
+function rawPost<T>(daemon: Daemon, route: string, body: unknown): Promise<Reply<T>> {
+  return rawCall(daemon, 'POST', route, body)
 }
 
 async function waitFor(check: () => Promise<boolean>, budgetMs = 8000): Promise<void> {
@@ -556,8 +560,9 @@ test('bu çalışma kopyasında komut çalıştırma aynı cwd de yeni Run açar
 
     const managed = await api.post<{ code: string }>(`/api/sessions/${id}/launch`, {
       requestId: 'launch-2',
-      mode: 'fresh',
+      mode: 'resume',
       cli: 'claude',
+      conversationId: '12345678-1234-1234-1234-123456789abc',
     })
     assert.equal(managed.status, 400)
     assert.equal(managed.body.code, 'mode_unsupported', 'yönetilen kimlik G2 geçmeden kapalı')
@@ -2173,3 +2178,202 @@ test('çöküşte iki Run checkpoint i ayakta kalır ve orphaned oturumdan okunu
   }
 })
 
+test('fresh ve picker lastLaunch niyetini kaydeder; UUID üretmez', { timeout: 40000 }, async () => {
+  const home = tempDir()
+  const environmentFile = path.join(home, 'environment.json')
+  fs.writeFileSync(environmentFile, JSON.stringify({ HOME: home }), { mode: 0o600 })
+  fs.writeFileSync(path.join(home, '.bash_profile'), `claude() { printf '%s\\n' "$*" >> "$HOME/launches"; sleep 300; }\n`)
+  try {
+    await withDaemon(async ({ api, projectId }) => {
+      const created = await api.post<SessionView>(
+        '/api/sessions',
+        createBody(projectId, { command: 'claude' }),
+      )
+      assert.equal(created.status, 200, JSON.stringify(created.body))
+      const id = created.body.id
+      await waitFor(async () => fs.existsSync(path.join(home, 'launches')))
+
+      const fresh = await api.post<SessionView>(`/api/sessions/${id}/launch`, {
+        requestId: 'fresh-1',
+        expectedRunId: created.body.runId,
+        mode: 'fresh',
+        command: 'claude',
+      })
+      assert.equal(fresh.status, 200, JSON.stringify(fresh.body))
+      assert.deepEqual(fresh.body.lastLaunch, { mode: 'fresh', cli: 'claude', conversationId: null })
+      assert.equal(fresh.body.command, 'claude', 'başlangıç Command ı değişmez')
+
+      await waitFor(async () => fs.readFileSync(path.join(home, 'launches'), 'utf8').split('\n').length === 3)
+      const picker = await api.post<SessionView>(`/api/sessions/${id}/launch`, {
+        requestId: 'picker-1',
+        expectedRunId: fresh.body.runId,
+        mode: 'picker',
+        command: 'claude --resume',
+      })
+      assert.equal(picker.status, 200, JSON.stringify(picker.body))
+      assert.deepEqual(picker.body.lastLaunch, { mode: 'picker', cli: 'claude' })
+
+      await waitFor(async () => fs.readFileSync(path.join(home, 'launches'), 'utf8').includes('--resume'))
+      const restarted = await api.post<SessionView>(`/api/sessions/${id}/restart`, {
+        requestId: 'restart-picker',
+        expectedRunId: picker.body.runId,
+      })
+      assert.equal(restarted.status, 200, JSON.stringify(restarted.body))
+      assert.deepEqual(restarted.body.lastLaunch, { mode: 'picker', cli: 'claude' })
+
+      const badFresh = await api.post<{ code: string }>(`/api/sessions/${id}/launch`, {
+        requestId: 'fresh-bad',
+        expectedRunId: restarted.body.runId,
+        mode: 'fresh',
+        command: 'claude --resume',
+      })
+      assert.equal(badFresh.status, 400)
+      assert.equal(badFresh.body.code, 'validation')
+      await waitFor(async () => fs.existsSync(path.join(home, 'launches')) && fs.readFileSync(path.join(home, 'launches'), 'utf8').split('\n').filter(line => line === '--resume').length === 2)
+    }, { environmentFile })
+  } finally {
+    removeDir(home)
+  }
+})
+
+test('PTY doğup kayıt yazılamazsa kilitli worktree korunur', { timeout: 30000, skip: isRoot ? 'root izinleri kontrolü atlar' : false }, async () => {
+  await withDaemon(async ({ api, dataDir, repo, projectId }) => {
+    const hook = path.join(repo, '.git/hooks/post-checkout')
+    fs.writeFileSync(hook, '#!/bin/sh\ngit worktree lock "$(pwd)"\n')
+    fs.chmodSync(hook, 0o755)
+
+    fs.chmodSync(dataDir, 0o500)
+    let created: Reply<{ code: string; details: { worktree: string; cwd: string } }>
+    try {
+      created = await api.post('/api/sessions', createBody(projectId))
+    } finally {
+      fs.chmodSync(dataDir, 0o755)
+    }
+
+    assert.equal(created.status, 503)
+    assert.equal(created.body.code, 'persistence')
+    assert.equal(created.body.details.worktree, 'korundu')
+    assert.equal(fs.existsSync(created.body.details.cwd), true)
+
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions.length, 0, 'yazılamayan oturum kayda girmez')
+
+    try {
+      execFileSync('git', ['worktree', 'unlock', created.body.details.cwd], { cwd: repo, stdio: 'pipe' })
+    } catch {
+      // kilit yoksa temizlik yine dener
+    }
+  })
+})
+
+test('exited oturumda launch kayıt yazılamazsa önceki lastLaunch ve exited kalır', {
+  timeout: 30000,
+  skip: isRoot ? 'root izinleri kontrolü atlar' : false,
+}, async () => {
+  await withDaemon(async ({ api, dataDir, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId, { command: 'true' }))
+    assert.equal(created.status, 200)
+    await waitFor(async () => {
+      const state = await api.get<StateResponse>('/api/state')
+      return state.body.sessions[0]?.lifecycle === 'exited'
+    })
+    const before = await api.get<StateResponse>('/api/state')
+    const previous = before.body.sessions[0].lastLaunch
+
+    fs.chmodSync(dataDir, 0o500)
+    let launched: Reply<{ code: string }>
+    try {
+      launched = await api.post(`/api/sessions/${created.body.id}/launch`, {
+        requestId: 'launch-persist',
+        expectedRunId: created.body.runId,
+        mode: 'command',
+        command: 'sleep 300',
+      })
+    } finally {
+      fs.chmodSync(dataDir, 0o755)
+    }
+    assert.equal(launched.status, 503)
+    assert.equal(launched.body.code, 'persistence')
+
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions[0].lifecycle, 'exited')
+    assert.deepEqual(state.body.sessions[0].lastLaunch, previous)
+    assert.equal(state.body.sessions[0].runId, created.body.runId)
+  })
+})
+
+test('silme durdurması sürerken arşiv 409 operation_in_progress', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, daemon, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId, {
+      command: 'trap "" HUP; touch ready; sleep 300',
+    }))
+    assert.equal(created.status, 200)
+    const session = created.body
+    await waitFor(async () => fs.existsSync(path.join(session.cwd, 'ready')))
+    const preview = await api.post<{ confirmationToken: string }>(`/api/sessions/${session.id}/delete-preview`)
+    assert.equal(preview.status, 200)
+    const deletion = rawCall(daemon, 'DELETE', `/api/sessions/${session.id}`, {
+      confirmationToken: preview.body.confirmationToken,
+    })
+    await waitFor(async () => (await api.get(`/api/sessions/${session.id}/runs`)).status === 409)
+    const archive = await api.post<{ code: string }>(`/api/sessions/${session.id}/archive`, {
+      expectedRunId: session.runId,
+      stopIfLive: true,
+    })
+    assert.equal(archive.status, 409)
+    assert.equal(archive.body.code, 'operation_in_progress')
+    const removed = await deletion
+    assert.equal(removed.status, 200, JSON.stringify(removed.body))
+  })
+})
+
+test('yoğun PTY çıktısında çıktı baskısı görünür; health cevap verir', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      createBody(projectId, {
+        command: `node -e "process.stdout.write('x'.repeat(2500000)); setInterval(() => {}, 1000)"`,
+      }),
+    )
+    assert.equal(created.status, 200, JSON.stringify(created.body))
+    const ws = connectWs(daemon, `session=${created.body.id}&token=${daemon.token}`)
+    await ws.open()
+    await ws.waitFor((m) => m.type === 'output-pressure' && m.active === true, 15000)
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.terminals?.[created.body.id]?.outputPressure, true)
+    const health = await fetch(`${daemon.url}/api/health`)
+    assert.equal(health.status, 200)
+    ws.close()
+  })
+})
+
+
+test('eski desteklenmeyen launch reddedilir; başlangıç programı ve yeni Run çalışmaz', async () => {
+  const cwd = tempDir()
+  const lastLaunch = { mode: 'resume', cli: 'claude', conversationId: 'invalid' }
+  const saved = {
+    id: 'legacy', projectId: 'p1', name: 'eski iş', command: 'touch unexpected',
+    isolation: 'shared', cwd, branch: null, baseCommit: null, worktrees: [],
+    lifecycle: 'exited', exitCode: 0, exitSignal: null, createdAt: 1, endedAt: 2,
+    runId: null, archivedAt: null, lastLaunch,
+  }
+  try {
+    await withDaemon(async ({ api }) => {
+      const restarted = await api.post<{ code: string }>('/api/sessions/legacy/restart', {
+        requestId: 'unsupported-restart', expectedRunId: null,
+      })
+      assert.equal(restarted.status, 400)
+      assert.equal(restarted.body.code, 'launch_unavailable')
+      const state = (await api.get<StateResponse>('/api/state')).body
+      assert.equal(state.sessions[0].runId, null)
+      assert.equal(state.sessions[0].lifecycle, 'exited')
+      assert.deepEqual(state.sessions[0].lastLaunch, lastLaunch)
+      assert.equal(fs.existsSync(path.join(cwd, 'unexpected')), false)
+    }, {
+      withProject: false,
+      seedState: { schemaVersion: 2, projects: [{ id: 'p1', name: 'p', path: cwd, createdAt: 1 }], sessions: [saved] },
+    })
+  } finally {
+    removeDir(cwd)
+  }
+})

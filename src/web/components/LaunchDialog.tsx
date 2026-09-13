@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { SessionView } from '../../shared/types'
-import { hasRunningProcesses, lastCommand, PRESETS } from '../../shared/types'
+import { hasRunningProcesses, PRESETS } from '../../shared/types'
 
-import { CLI_COMMANDS, explicitResumeCommand, launchCli, type LaunchCli } from '../../shared/launchPolicy'
+import {
+  CLI_COMMANDS,
+  explicitResumeCommand,
+  repeatLaunchCommand,
+  type LaunchCli,
+} from '../../shared/launchPolicy'
+import { sessionWorkCli } from '../../shared/sessionActions'
 
 const RESUME_COMMANDS = Object.values(CLI_COMMANDS).map(({ label, picker }) => ({ label: `${label} seçicisi`, command: picker }))
 
@@ -19,11 +25,11 @@ export function LaunchDialog({ session, busy, error, onCancel, onLaunch }: Props
   useEffect(() => {
     dialog.current?.showModal()
   }, [])
-  const initial = lastCommand(session)
+  const initial = repeatLaunchCommand(session) ?? null
   // null etkileşimli kabuk demektir; boş komut çalıştırılamaz.
   const [shell, setShell] = useState(initial === null)
   const [command, setCommand] = useState(initial ?? '')
-  const [resumeCli, setResumeCli] = useState<LaunchCli>(launchCli(session.command) ?? 'claude')
+  const [resumeCli, setResumeCli] = useState<LaunchCli>(sessionWorkCli(session) ?? 'claude')
   const [conversationId, setConversationId] = useState('')
   const resumeCommand = explicitResumeCommand(resumeCli, conversationId)
   const running = hasRunningProcesses(session)

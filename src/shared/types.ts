@@ -16,8 +16,8 @@ export interface Project {
 
 /**
  * Son başarıyla yayımlanmış Run'ın açık launch niyeti. Session'ın başlangıç
- * Command'ını değiştirmez. fresh/resume/picker yönetilen kimlik gerektirir ve
- * G2 insan kabul testi geçmeden hiçbir CLI için üretilmez.
+ * Command'ını değiştirmez. V0 fresh/picker UUID üretmez; resume (AgentDeck
+ * kimliği) G2 geçmeden yazılmaz.
  */
 export type LastLaunch =
   | { mode: 'command'; command: string | null }
@@ -83,11 +83,6 @@ export interface ProjectView extends Project {
 /** Canlı Run veya kalan süreç grubu: arşiv ve yeni Run önce doğrulanmış durdurma ister. */
 export function hasRunningProcesses(session: SessionView): boolean {
   return session.lifecycle === 'live' || session.remainingProcessGroup
-}
-
-/** Yeniden çalıştırmanın tekrarlayacağı program: son başarılı command niyeti, yoksa başlangıç Command'ı. */
-export function lastCommand(session: Pick<Session, 'command' | 'lastLaunch'>): string | null {
-  return session.lastLaunch?.mode === 'command' ? session.lastLaunch.command : session.command
 }
 
 /** Saklanmış terminal görüntüsü olan Run; updatedAt kaydın son yazım anıdır. */
