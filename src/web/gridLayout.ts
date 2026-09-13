@@ -1,0 +1,44 @@
+import type { SerializedDockview } from 'dockview-react'
+
+/**
+ * Terminal grid yerleşimi yalnız bu istemcide tutulur; daemon kaydına girmez.
+ * Depolama okunamaz veya yazılamazsa grid bu açılışla sınırlı kalır.
+ */
+const KEY = 'agentdeck.terminalGrid.v1'
+
+/** Grid'de aynı anda açık tutulan terminal sayısının üst sınırı. */
+export const MAX_GRID_PANELS = 8
+
+/** Kenar çubuğundan veya karttan sürüklenen oturumun veri türü. */
+export const SESSION_DRAG_TYPE = 'application/x-agentdeck-session'
+
+export function loadGridLayout(): SerializedDockview | null {
+  try {
+    const raw = localStorage.getItem(KEY)
+    return raw ? (JSON.parse(raw) as SerializedDockview) : null
+  } catch {
+    return null
+  }
+}
+
+export function saveGridLayout(layout: SerializedDockview): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(layout))
+  } catch {
+    // Kaydedilemeyen yerleşim yalnız bu açılışta kalır.
+  }
+}
+
+export function clearGridLayout(): void {
+  try {
+    localStorage.removeItem(KEY)
+  } catch {
+    // Depolama erişilemezse silinecek kayıt da yoktur.
+  }
+}
+
+/** Kayıtlı yerleşimdeki oturumlar; grid açık değilken kenar çubuğu sayacı için okunur. */
+export function savedGridSessionIds(): string[] {
+  const panels = loadGridLayout()?.panels
+  return panels && typeof panels === 'object' ? Object.keys(panels) : []
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Project, StateResponse } from '../../shared/types'
 import { commandLabel } from '../../shared/types'
 import { stateLabel } from './Sidebar'
+import { SESSION_DRAG_TYPE } from '../gridLayout'
 
 interface Props {
   state: StateResponse
@@ -10,9 +11,10 @@ interface Props {
   onNewSession: (project: Project) => void
   onAddProject: () => void
   onPreviewIds: (ids: string[]) => void
+  onAddToGrid: (id: string) => void
 }
 
-export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject, onPreviewIds }: Props) {
+export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject, onPreviewIds, onAddToGrid }: Props) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const live = state.sessions.filter((s) => s.lifecycle === 'live').length
@@ -136,10 +138,20 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                     {owned.map((session) => {
                       const preview = state.previews?.[session.id]
                       return (
-                        <button
+                        // Kart içinde ayrı "Grid'e ekle" düğmesi olduğu için kart kendisi düğme değildir.
+                        <div
                           className="session-card"
                           key={session.id}
+                          role="button"
+                          tabIndex={0}
+                          draggable
+                          onDragStart={(e) => e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id)}
                           onClick={() => onSelect(session.id)}
+                          onKeyDown={(e) => {
+                            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+                            e.preventDefault()
+                            onSelect(session.id)
+                          }}
                         >
                           <div className="card-heading">
                             <span className="program-mark">
@@ -166,9 +178,20 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                             <span>
                               {session.isolation === 'worktree' ? 'İzole worktree' : 'Ortak klasör'}
                             </span>
-                            <span>Terminali aç ↗</span>
+                            <span className="card-actions">
+                              <button
+                                className="card-grid-add"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onAddToGrid(session.id)
+                                }}
+                              >
+                                ⊞ Grid'e ekle
+                              </button>
+                              <span>Terminali aç ↗</span>
+                            </span>
                           </footer>
-                        </button>
+                        </div>
                       )
                     })}
                     <button className="new-session-card" onClick={() => onNewSession(project)}>

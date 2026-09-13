@@ -1285,6 +1285,30 @@ test('ikinci izleyici salt okunur; açık kontrol devri eski generation girdisin
   })
 })
 
+test('kontrol sahibi ayrılınca izleyiciye sahipsiz lease bildirilir', { timeout: 15000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const query = `session=${created.body.id}&run=${created.body.runId}&token=${daemon.token}`
+    const a = connectWs(daemon, query)
+    const b = connectWs(daemon, query)
+    try {
+      const owner = await a.waitFor((m) => m.type === 'control')
+      const viewer = await b.waitFor((m) => m.type === 'control')
+      assert.equal(owner.owned, true)
+      assert.equal(owner.vacant, false)
+      assert.equal(viewer.owned, false)
+      assert.equal(viewer.vacant, false, 'sahibi olan lease sahipsiz görünmez')
+
+      // Grid ile tek görünüm arasında geçişte eski bağlantı yeni bağlantıdan sonra kapanabilir.
+      a.close()
+      const vacated = await b.waitFor((m) => m.type === 'control' && m.vacant === true)
+      assert.equal(vacated.owned, false, 'sahipsiz lease kendiliğinden kimseye verilmez')
+      b.send({ type: 'take-control' })
+      await b.waitFor((m) => m.type === 'control' && m.owned === true && m.vacant === false)
+    } finally { a.close(); b.close() }
+  })
+})
+
 test('önceki Run bağlantısı yeniden başlatılan Run a girdi gönderemez', { timeout: 15000 }, async () => {
   await withDaemon(async ({ daemon, api, projectId }) => {
     const created = await api.post<SessionView>('/api/sessions', createBody(projectId))

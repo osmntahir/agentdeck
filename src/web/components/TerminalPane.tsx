@@ -6,9 +6,17 @@ import type { SessionView } from '../../shared/types'
 import { inputChunks, TerminalStream, type StreamStatus } from '../../shared/terminalStream'
 import { TOKEN } from '../api'
 
-interface Props { session: SessionView; daemonId: string; stateHealthy: boolean }
+interface Props {
+  session: SessionView
+  daemonId: string
+  stateHealthy: boolean
+  /** Tek görünümde terminal odağı alır; grid'de paneller birbirinin odağını çalmaz. */
+  autoFocus?: boolean
+  /** Grid paneli: durum şeridi terminalin üstünde yüzen kompakt çubuk olur. */
+  compact?: boolean
+}
 
-export function TerminalPane({ session, daemonId, stateHealthy }: Props) {
+export function TerminalPane({ session, daemonId, stateHealthy, autoFocus = true, compact = false }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const actions = useRef({ history: () => {}, control: () => {} })
@@ -24,7 +32,13 @@ export function TerminalPane({ session, daemonId, stateHealthy }: Props) {
       fontSize: 13,
       fontFamily: 'ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace',
       cursorBlink: true, disableStdin: true,
-      theme: { background: '#0e1116', foreground: '#d5dae2', cursor: '#7aa2f7' },
+      theme: {
+        background: '#0e1116', foreground: '#d5dae2', cursor: '#7aa2f7',
+        // Uygulamanın kaydırma çubuklarıyla aynı palet.
+        scrollbarSliderBackground: 'rgba(160, 163, 174, 0.22)',
+        scrollbarSliderHoverBackground: 'rgba(160, 163, 174, 0.42)',
+        scrollbarSliderActiveBackground: 'rgba(155, 180, 255, 0.55)',
+      },
     })
     termRef.current = term
     const fit = new FitAddon()
@@ -56,6 +70,7 @@ export function TerminalPane({ session, daemonId, stateHealthy }: Props) {
     const connect = () => {
       if (disposed) return
       requestedSize = ''
+      let claimed = 0
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       const query = new URLSearchParams({ session: session.id, run: session.runId!, token: TOKEN })
       const ws = new WebSocket(`${proto}://${location.host}/ws?${query}`)
@@ -66,6 +81,12 @@ export function TerminalPane({ session, daemonId, stateHealthy }: Props) {
         setStatus(next)
         term.options.disableStdin = !healthy.current || !next.ready || !next.live || !next.owned
         if (next.ready) { attempts = 0; resize() }
+        // Sahipsiz kontrol kimseden alınmaz: grid ile tek görünüm arasında geçişte
+        // eski bağlantı yeni bağlantıdan sonra kapansa da terminal girdiye açılır.
+        if (next.ready && next.live && !next.owned && next.vacant && claimed !== next.generation) {
+          claimed = next.generation
+          send({ type: 'take-control' })
+        }
       }, () => { protocolFailed = true; ws.close() })
       stream = consumer
       setStatus(consumer.status)
@@ -104,7 +125,7 @@ export function TerminalPane({ session, daemonId, stateHealthy }: Props) {
     }
     const observer = new ResizeObserver(resize)
     observer.observe(hostRef.current!)
-    term.focus()
+    if (autoFocus) term.focus()
     return () => {
       disposed = true
       if (reconnect) clearTimeout(reconnect)
@@ -121,13 +142,22 @@ export function TerminalPane({ session, daemonId, stateHealthy }: Props) {
     if (termRef.current) termRef.current.options.disableStdin = !stateHealthy || !status?.ready || !status.live || !status.owned
   }, [stateHealthy, status])
 
+  const needsControl = Boolean(status?.ready && status.live && !status.owned)
+  // Salt okunur kalma veya bağlantı mesajı kompakt şeritte de sürekli görünür.
+  const attention = !stateHealthy || Boolean(status?.message) || needsControl
   return (
     <div className="terminal-pane">
-      <div className="terminal-status" role="status">
+      <div className={`terminal-status${compact ? ' compact' : ''}${attention ? ' attention' : ''}`} role="status">
         <span>{!stateHealthy ? 'Durum güncel değil · girdi kapalı' : status?.message || (status?.owned ? 'Kontrol sizde' : 'Salt okunur izleyici')}</span>
-        {status?.ready && status.live && !status.owned && <button onClick={() => actions.current.control()}>Kontrolü al</button>}
-        {status?.ready && status.live && !status.historyLoaded && <button onClick={() => actions.current.history()}>Terminal geçmişini yükle</button>}
-        <button onClick={() => setRetry((value) => value + 1)}>Yeniden bağlan</button>
+        {needsControl && <button onClick={() => actions.current.control()}>Kontrolü al</button>}
+        {status?.ready && status.live && !status.historyLoaded && (
+          <button title="Terminal geçmişini yükle" onClick={() => actions.current.history()}>
+            {compact ? 'Geçmiş' : 'Terminal geçmişini yükle'}
+          </button>
+        )}
+        <button title="Yeniden bağlan" aria-label="Yeniden bağlan" onClick={() => setRetry((value) => value + 1)}>
+          {compact ? '↻' : 'Yeniden bağlan'}
+        </button>
       </div>
       {!session.runId && <p>Bu oturumda henüz Run çalışmadı.</p>}
       <div ref={hostRef} className="term-host" />

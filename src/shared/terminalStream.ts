@@ -9,6 +9,8 @@ export interface StreamStatus {
   ready: boolean
   live: boolean
   owned: boolean
+  /** Kontrolün şu an sahibi yok; almak başka bir istemciyi düşürmez. */
+  vacant: boolean
   generation: number
   historyLoaded: boolean
   message: string
@@ -25,7 +27,7 @@ const integer = (value: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): value 
   typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max
 
 export class TerminalStream {
-  status: StreamStatus = { ready: false, live: false, owned: false, generation: 0, historyLoaded: false, message: 'Bağlanıyor…' }
+  status: StreamStatus = { ready: false, live: false, owned: false, vacant: false, generation: 0, historyLoaded: false, message: 'Bağlanıyor…' }
   private queue = Promise.resolve()
   private queuedBytes = 0
   private stopped = false
@@ -118,7 +120,7 @@ export class TerminalStream {
         return
       case 'control':
         if (typeof m.owned !== 'boolean' || !integer(m.generation, 1)) throw new Error('Kontrol kaydı geçersiz')
-        this.update({ owned: m.owned, generation: m.generation })
+        this.update({ owned: m.owned, generation: m.generation, vacant: m.vacant === true })
         return
       case 'run-ended':
         if (m.runId !== this.identity.runId) throw new Error('Run kimliği değişti')

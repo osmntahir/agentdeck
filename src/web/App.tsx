@@ -6,6 +6,8 @@ import { Sidebar } from './components/Sidebar'
 import { TerminalPane } from './components/TerminalPane'
 import { DiffView } from './components/DiffView'
 import { NewSessionDialog } from './components/NewSessionDialog'
+import { TerminalGrid } from './components/TerminalGrid'
+import { savedGridSessionIds } from './gridLayout'
 import type { Isolation, Project, StateResponse } from '../shared/types'
 
 const EMPTY: StateResponse = {
@@ -22,6 +24,10 @@ export function App() {
   const [state, setState] = useState<StateResponse>(EMPTY)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [tab, setTab] = useState<'terminal' | 'diff'>('terminal')
+  // Oturum seçili değilken ana alanın gösterdiği görünüm.
+  const [view, setView] = useState<'sessions' | 'grid'>('sessions')
+  const [gridIds, setGridIds] = useState<string[]>(savedGridSessionIds)
+  const [pendingGridAdd, setPendingGridAdd] = useState<string | null>(null)
   const [addingProject, setAddingProject] = useState(false)
   const [dialogProject, setDialogProject] = useState<Project | null>(null)
   const [pendingDelete, setPendingDelete] = useState<api.DeletePreview | null>(null)
@@ -94,6 +100,19 @@ export function App() {
       .finally(() => setCreating(false))
   }
 
+  const openSession = (id: string) => {
+    setActiveId(id)
+    setTab('terminal')
+  }
+
+  // Grid'e ekleme grid'i açar. Tek görünüm kapanır; aynı Run için iki terminal açık kalmaz.
+  const addToGrid = (id: string) => {
+    setPendingGridAdd(id)
+    setActiveId(null)
+    setPendingDelete(null)
+    setView('grid')
+  }
+
   // Silme her zaman taze bir önizlemeyle başlar: kullanıcı neyin gideceğini görür.
   const askDelete = () => {
     if (!active) return
@@ -138,7 +157,16 @@ export function App() {
         onHome={() => {
           setActiveId(null)
           setPendingDelete(null)
+          setView('sessions')
         }}
+        view={view}
+        gridCount={gridIds.length}
+        onGrid={() => {
+          setActiveId(null)
+          setPendingDelete(null)
+          setView('grid')
+        }}
+        onAddToGrid={addToGrid}
         activeId={activeId}
         onSelect={(id) => {
           setActiveId(id)
@@ -161,13 +189,13 @@ export function App() {
           <>
             <header className="topbar">
               <button
-                title="Tüm oturumlara dön"
+                title={view === 'grid' ? 'Terminal grid’e dön' : 'Tüm oturumlara dön'}
                 onClick={() => {
                   setActiveId(null)
                   setPendingDelete(null)
                 }}
               >
-                ← Oturumlar
+                {view === 'grid' ? '← Grid' : '← Oturumlar'}
               </button>
               <div className="topbar-info">
                 <div className="title">{active.name}</div>
@@ -208,6 +236,7 @@ export function App() {
                     <button onClick={() => run(api.restartSession(active.id, active.runId))}>
                       {active.lifecycle === 'live' ? 'durdur ve yeniden çalıştır' : 'yeniden çalıştır'}
                     </button>
+                    <button onClick={() => addToGrid(active.id)}>grid'e ekle</button>
                     <button onClick={askDelete}>sil</button>
                   </>
                 )}
@@ -254,17 +283,26 @@ export function App() {
                 {state.serviceError}
               </div>
             )}
-            <Workspace
-              onPreviewIds={setPreviewIds}
-              state={state}
-              healthy={stateHealthy}
-              onSelect={(id) => {
-                setActiveId(id)
-                setTab('terminal')
-              }}
-              onNewSession={setDialogProject}
-              onAddProject={() => setAddingProject(true)}
-            />
+            {view === 'grid' ? (
+              <TerminalGrid
+                state={state}
+                healthy={stateHealthy}
+                pendingAdd={pendingGridAdd}
+                onPendingHandled={() => setPendingGridAdd(null)}
+                onOpen={openSession}
+                onPanelsChange={setGridIds}
+              />
+            ) : (
+              <Workspace
+                onPreviewIds={setPreviewIds}
+                state={state}
+                healthy={stateHealthy}
+                onSelect={openSession}
+                onNewSession={setDialogProject}
+                onAddProject={() => setAddingProject(true)}
+                onAddToGrid={addToGrid}
+              />
+            )}
           </>
         )}
       </main>

@@ -1202,7 +1202,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       controls.set(runId, control)
     }
     const lease = control
-    const notifyControl = () => sendJson({ type: 'control', owned: lease.owner === ws, generation: lease.generation })
+    // vacant: kontrolün sahibi yok; almak kimseyi düşürmez. Sahipten almak yine açık eylemdir.
+    const notifyControl = () =>
+      sendJson({ type: 'control', owned: lease.owner === ws, generation: lease.generation, vacant: lease.owner === null })
     lease.viewers.set(ws, notifyControl)
     let inputOpen = false
     let replaying = false

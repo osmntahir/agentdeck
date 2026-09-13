@@ -269,11 +269,13 @@ select:focus {
 .terminals {
   height: 100%;
 }
+/* Kabın kaydırma çubuğu kullanılabilir genişliği daraltıp sığdırma hesabını
+   taşırıyordu; terminal geçmişi xterm'in kendi kaydırma alanında gezilir. */
 .term-host {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 6px 0 6px 8px;
+  overflow: hidden;
+  padding: 8px 2px 6px 12px;
   background: #0e1116;
 }
 
@@ -427,6 +429,41 @@ select:focus {
 }
 .terminal-status span {
   flex: 1;
+}
+
+/* --- kaydırma çubukları: ince, izsiz, üzerine gelince belirginleşir --- */
+:root {
+  --scroll-thumb: rgba(160, 163, 174, 0.26);
+  --scroll-thumb-hover: rgba(160, 163, 174, 0.48);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-color: var(--scroll-thumb);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scroll-thumb-hover);
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
 }
 
 /* Workspace surfaces share one neutral palette and a restrained blue accent. */
@@ -1022,3 +1059,263 @@ button.primary {
 .sidebar-add-project { width: 100%; padding: 9px; text-align: left; }
 .folder-chooser { min-height: 58px; border-style: dashed; color: var(--accent); background: #232936; font-size: 14px; }
 .radio:has(input:disabled) { opacity: .55; cursor: not-allowed; }
+
+/* --- terminal grid --- */
+.main-nav {
+  display: grid;
+  gap: 4px;
+  margin: 8px 12px 26px;
+}
+.main-nav .home-nav {
+  margin: 0;
+}
+.session-row-wrap {
+  position: relative;
+}
+.row-grid-add {
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  transform: translateY(-50%);
+  min-height: 0;
+  padding: 1px 6px;
+  opacity: 0;
+}
+.session-row-wrap:hover .row-grid-add,
+.row-grid-add:focus-visible {
+  opacity: 1;
+}
+/* Kart artık düğme değil; düğme görünümü burada korunur. */
+.session-card {
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.session-card:hover {
+  border-color: var(--accent);
+}
+.session-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card-grid-add {
+  min-height: 0;
+  padding: 2px 8px;
+  font-size: 10px;
+}
+.terminal-grid {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.grid-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+.grid-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+.grid-count {
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.grid-stage {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px 12px;
+}
+.grid-dock {
+  height: 100%;
+}
+.terminal-grid .dockview-theme-dark {
+  --dv-group-view-background-color: #0e1116;
+  --dv-tabs-and-actions-container-background-color: var(--panel);
+  --dv-tabs-and-actions-container-height: 36px;
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-activegroup-visiblepanel-tab-background-color: var(--panel-2);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--panel);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--panel-2);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--panel);
+  --dv-tab-divider-color: var(--line);
+  --dv-activegroup-visiblepanel-tab-color: var(--text);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-inactivegroup-visiblepanel-tab-color: #c8cad1;
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-separator-border: var(--line);
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--accent);
+  --dv-active-sash-transition-delay: 0.05s;
+  --dv-drag-over-background-color: rgba(155, 180, 255, 0.16);
+  --dv-drag-over-border-color: var(--accent);
+  --dv-drag-over-border: 1px solid rgba(155, 180, 255, 0.6);
+  --dv-edge-dock-indicator-color: var(--accent);
+  background: var(--bg);
+}
+.grid-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.grid-group-meta {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grid-group-actions button {
+  min-height: 24px;
+  padding: 2px 9px;
+  border-color: transparent;
+  background: transparent;
+  color: #c2d0ff;
+  font-size: 11px;
+}
+.grid-group-actions button:hover {
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+.grid-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #0e1116;
+}
+/* Grid'de durum şeridi terminalin üstünde yüzer; dikkat gerekince veya üzerine gelince görünür. */
+.terminal-pane {
+  position: relative;
+}
+.terminal-status.compact {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 5;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(23, 24, 28, 0.92);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.terminal-status.compact span {
+  flex: none;
+}
+.terminal-pane:hover > .terminal-status.compact,
+.terminal-status.compact:focus-within,
+.terminal-status.compact.attention {
+  opacity: 1;
+  pointer-events: auto;
+}
+.terminal-status.compact.attention {
+  color: var(--text);
+  border-color: #3b496b;
+}
+.terminal-status.compact button {
+  min-height: 22px;
+  padding: 1px 8px;
+  font-size: 11px;
+}
+.grid-empty {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+.grid-empty strong {
+  color: var(--text);
+  font-size: 14px;
+}
+.grid-empty span {
+  max-width: 360px;
+  line-height: 1.6;
+}
+.grid-empty-mark {
+  width: 46px;
+  height: 46px;
+  margin: 0 auto 8px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: #c2d0ff;
+  font-size: 22px;
+}
+/* Gruplar kart gibi ayrışır; öndeki grup ince bir vurgu alır. */
+.terminal-grid .dv-groupview {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.terminal-grid .dv-groupview.dv-active-group {
+  border-color: #3b496b;
+}
+.terminal-grid .dv-tabs-and-actions-container {
+  border-bottom: 1px solid var(--line);
+}
+.terminal-grid .dv-tab {
+  padding: 0 6px 0 12px;
+}
+.terminal-grid .dv-groupview.dv-active-group .dv-tab.dv-active-tab {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.terminal-grid .dv-default-tab {
+  gap: 8px;
+}
+.terminal-grid .dv-default-tab[data-lifecycle]::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.terminal-grid .dv-default-tab[data-lifecycle='live']::before {
+  background: var(--green);
+}
+.terminal-grid .dv-default-tab[data-lifecycle='orphaned']::before {
+  background: var(--yellow, #d6a75c);
+}
+/* Sekme kapatma bir düğmedir; uygulamanın genel düğme görünümü burada sıfırlanır. */
+.terminal-grid .dv-default-tab-action {
+  min-height: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+}
+.terminal-grid .dv-default-tab-action:hover {
+  background: rgba(160, 163, 174, 0.16);
+}
+.terminal-grid .dv-default-tab-action svg {
+  width: 10px;
+  height: 10px;
+}

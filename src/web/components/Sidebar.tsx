@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Project, SessionView, StateResponse } from '../../shared/types'
 import { commandLabel } from '../../shared/types'
 import type { OrphanScanResult } from '../api'
+import { SESSION_DRAG_TYPE } from '../gridLayout'
 
 interface Props {
   state: StateResponse
@@ -14,6 +15,10 @@ interface Props {
   onDeleteProject: (id: string) => void
   orphans: OrphanScanResult | null
   onRefreshOrphans: () => void
+  view: 'sessions' | 'grid'
+  gridCount: number
+  onGrid: () => void
+  onAddToGrid: (sessionId: string) => void
 }
 
 export function Sidebar({
@@ -27,6 +32,10 @@ export function Sidebar({
   onDeleteProject,
   orphans,
   onRefreshOrphans,
+  view,
+  gridCount,
+  onGrid,
+  onAddToGrid,
 }: Props) {
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
@@ -35,9 +44,14 @@ export function Sidebar({
       <div className="brand">
         <span className="brand-symbol">&gt;_</span>agentdeck<span className="brand-local">LOCAL</span>
       </div>
-      <button className={`home-nav${activeId === null ? ' selected' : ''}`} onClick={onHome}>
-        <span>▦</span> Tüm oturumlar <span className="nav-count">{state.sessions.length}</span>
-      </button>
+      <nav className="main-nav">
+        <button className={`home-nav${activeId === null && view === 'sessions' ? ' selected' : ''}`} onClick={onHome}>
+          <span>▦</span> Tüm oturumlar <span className="nav-count">{state.sessions.length}</span>
+        </button>
+        <button className={`home-nav${activeId === null && view === 'grid' ? ' selected' : ''}`} onClick={onGrid}>
+          <span>⊞</span> Terminal grid <span className="nav-count">{gridCount}</span>
+        </button>
+      </nav>
       <div className="sidebar-label">
         PROJELER <span>{state.projects.length}</span>
       </div>
@@ -93,6 +107,7 @@ export function Sidebar({
                   session={session}
                   active={session.id === activeId}
                   onSelect={() => onSelect(session.id)}
+                  onAddToGrid={() => onAddToGrid(session.id)}
                 />
               ))}
             </div>
@@ -167,21 +182,35 @@ function SessionRow({
   session,
   active,
   onSelect,
+  onAddToGrid,
 }: {
   session: SessionView
   active: boolean
   onSelect: () => void
+  onAddToGrid: () => void
 }) {
   return (
-    <button
-      className={`session-row${active ? ' active' : ''}`}
-      onClick={onSelect}
-      title={stateLabel(session)}
-    >
-      <span className={`dot ${session.lifecycle}`} />
-      <span className="session-name">{session.name}</span>
-      <span className="session-agent">{commandLabel(session.command)}</span>
-      {session.isolation === 'worktree' && <span className="badge">izole</span>}
-    </button>
+    <div className="session-row-wrap">
+      <button
+        className={`session-row${active ? ' active' : ''}`}
+        onClick={onSelect}
+        title={`${stateLabel(session)} · terminal grid'e sürüklenebilir`}
+        draggable
+        onDragStart={(e) => e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id)}
+      >
+        <span className={`dot ${session.lifecycle}`} />
+        <span className="session-name">{session.name}</span>
+        <span className="session-agent">{commandLabel(session.command)}</span>
+        {session.isolation === 'worktree' && <span className="badge">izole</span>}
+      </button>
+      <button
+        className="row-grid-add"
+        title="Terminal grid'e ekle"
+        aria-label={`${session.name} oturumunu terminal grid'e ekle`}
+        onClick={onAddToGrid}
+      >
+        ⊞
+      </button>
+    </div>
   )
 }

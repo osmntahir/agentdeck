@@ -23,12 +23,18 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Yerel klasör projeleri** — Git deposu olmayan klasörler de eklenebilir; Git başlatılmaz, dosyalar taşınmaz. Ortak oturum doğrudan klasörde çalışır. Klasörün altındaki Git depoları (en çok 4 seviye, 30 depo) ayrı ayrı ele alınır: izole oturum her depo için aynı branch adıyla ayrı worktree açar, depo dışındaki dosyaları kopyalamaz.
 - **Klasör seçici** — masaüstünde “Proje ekle → Klasör seç…” sistem penceresini açar. Tarayıcıda tam klasör yolu yazılır.
 - **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması ve yaşam döngüsü filtreleri. Görünen sonuçların ilk 24 oturumu için önizleme alınır; karttan tek terminale geçilir.
-- **Oturumlar arası geçiş** — yalnız odaktaki terminal açılır; ekran daemon'daki
+- **Terminal grid** — birden çok oturumun terminali yan yana açılır. Sekmeyi
+  sürükleyip bir panelin kenarına bırakarak bölünür, aradaki çizgiyle
+  boyutlandırılır. Oturumlar kenar çubuğundan veya karttan sürüklenerek ya da
+  “Grid'e ekle” ile eklenir; en çok 8 panel. Yerleşim bu cihazda hatırlanır.
+  Gizli sekmede terminal açık tutulmaz ([ADR 0010](docs/adr/0010-terminal-grid.md)).
+- **Oturumlar arası geçiş** — tek oturum görünümünde yalnız odaktaki terminal açılır; ekran daemon'daki
   headless modelden kurulur. Scrollback açık “Terminal geçmişini yükle” eylemiyle gelir.
 - **Kalıcı terminal görüntüsü** — son iki Run checkpoint'i tutulur; canlı olmayan
   güncel Run salt okunur açılır. Eksik ve bozuk geçmiş ayrı bildirilir.
 - **Tek kontrol sahibi** — diğer istemciler salt okunur izler; “Kontrolü al”
-  ile kullanıcı girdi ve boyutlandırma sahipliğini devralır.
+  ile kullanıcı girdi ve boyutlandırma sahipliğini devralır. Sahibi olmayan
+  kontrolü açık terminal kendiliğinden alır; sahipten alınması yine açık eylemdir.
 - **Diff görünümü** — oturumun worktree'sindeki değişiklikler, ajanın yeni
   yazdığı takip edilmeyen dosyalar dahil. Klasör projelerinde her alt depo ayrı
   bölüm olarak gösterilir.
@@ -143,7 +149,7 @@ docs/                  spec, ADR'ler, doğrulama kapıları, ölçüm script'ler
 Bilinçli olarak MVP dışında bırakılanlar:
 
 - Ajanlar arası iletişim / paylaşılan context (MCP katmanı)
-- Aynı anda birden fazla etkileşimli terminal, dosya ağacı, kod editörü
+- Dosya ağacı, kod editörü
 - Görev adının ajana ilk prompt olarak geçmesi
 - Otomatik PR açma, kanban
 - Yeni masaüstü kabuğuna geçiş (mevcut Electron başlatıcı vardır)
