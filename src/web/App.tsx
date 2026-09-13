@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as api from './api'
 import { AddProjectDialog } from './components/AddProjectDialog'
 import { Workspace } from './components/Workspace'
@@ -9,7 +9,7 @@ import { NewSessionDialog } from './components/NewSessionDialog'
 import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
 import { savedGridSessionIds } from './gridLayout'
-import { createStatePoller } from '../shared/statePoll'
+import { createStatePoller, pollPreviewIds } from '../shared/statePoll'
 import {
   commandLabel,
   formatAge,
@@ -73,6 +73,8 @@ export function App() {
   const [stateHealthy, setStateHealthy] = useState(false)
   const previewIds = useRef<string[]>([])
   const pollerRef = useRef<ReturnType<typeof createStatePoller<StateResponse>> | null>(null)
+  const scanVisibleRef = useRef(true)
+  const inflightState = useRef<AbortController | null>(null)
   const receivedAt = useRef(performance.now())
   const [, setTick] = useState(0)
   const [scanFocusId, setScanFocusId] = useState<string | null>(null)
@@ -99,7 +101,12 @@ export function App() {
 
   useEffect(() => {
     const poller = createStatePoller<StateResponse>({
-      fetchState: () => api.getState(previewIds.current),
+      fetchState: () => {
+        inflightState.current?.abort()
+        const ac = new AbortController()
+        inflightState.current = ac
+        return api.getState(pollPreviewIds(scanVisibleRef.current, previewIds.current), ac.signal)
+      },
       schedule: (fn, ms) => window.setTimeout(fn, ms),
       cancel: (handle) => window.clearTimeout(handle as number),
       isHidden: () => document.visibilityState === 'hidden',
@@ -127,6 +134,8 @@ export function App() {
     return () => {
       poller.stop()
       pollerRef.current = null
+      inflightState.current?.abort()
+      inflightState.current = null
       document.removeEventListener('visibilitychange', onVis)
       window.clearInterval(tick)
     }
@@ -135,6 +144,12 @@ export function App() {
   const now = state.serverNow ? state.serverNow + (performance.now() - receivedAt.current) : Date.now()
 
   const active = state.sessions.find((s) => s.id === activeId) ?? null
+  const scanVisible = !active && view === 'sessions'
+  scanVisibleRef.current = scanVisible
+  // Gizli taramada 24 kart önizlemesi 5 sn timeout'u aşıp girdiyi kapatmasın.
+  useLayoutEffect(() => {
+    if (!scanVisible) setPreviewIds([])
+  }, [scanVisible, setPreviewIds])
   const activeProject = active ? (state.projects.find((p) => p.id === active.projectId) ?? null) : null
   const showTrust = Boolean(
     active && active.isolation === 'worktree' && active.lifecycle === 'live' && !trustHidden && sessionStorage.getItem(trustKey(active.id)) !== '1',

@@ -6,6 +6,11 @@
 /** Başarılı okumadan sonra bir sonraki okuma, önceki istek bittikten bu kadar sonra. */
 const POLL_INTERVAL_MS = 2000
 
+/** Önizleme yalnız görünür tarama kartları içindir; gizli tarama 24 kartlık işi GET'e koymaz. */
+export function pollPreviewIds(scanVisible: boolean, ids: readonly string[]): string[] {
+  return scanVisible ? [...ids] : []
+}
+
 /** Ağ ve sunucu hatasında ardışık bekleme; son değer tekrarlanır. */
 const BACKOFF_MS = [2000, 4000, 8000, 10000]
 

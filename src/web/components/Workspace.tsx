@@ -87,11 +87,7 @@ export function Workspace({
     .map((session) => session.id)
     .join(',')
   useEffect(() => {
-    if (!previewsEnabled) {
-      onPreviewIds([])
-      return
-    }
-    onPreviewIds(previewKey ? previewKey.split(',') : [])
+    onPreviewIds(previewsEnabled && previewKey ? previewKey.split(',') : [])
     return () => onPreviewIds([])
   }, [previewKey, onPreviewIds, previewsEnabled])
 

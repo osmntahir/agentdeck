@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createStatePoller, type PollFailure } from '../src/shared/statePoll'
+import { createStatePoller, pollPreviewIds, type PollFailure } from '../src/shared/statePoll'
 
 interface FakeState {
   daemonId: string
@@ -8,6 +8,11 @@ interface FakeState {
 }
 
 const state = (daemonId: string, revision: number): FakeState => ({ daemonId, revision })
+
+test('önizleme kimlikleri gizli taramada GET e girmez', () => {
+  assert.deepEqual(pollPreviewIds(true, ['a', 'b']), ['a', 'b'])
+  assert.deepEqual(pollPreviewIds(false, ['a', 'b']), [])
+})
 
 /** Ağ, zamanlayıcı ve sekme görünürlüğü testin elindedir; gerçek süre beklenmez. */
 function harness() {

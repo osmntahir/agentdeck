@@ -52,9 +52,23 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
 const newRequestId = (): string =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
 
-export const getState = (previewIds: string[] = []) =>
+function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
+  const timeout = AbortSignal.timeout(ms)
+  if (!signal) return timeout
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([timeout, signal])
+  const combined = new AbortController()
+  const abort = () => combined.abort()
+  if (signal.aborted || timeout.aborted) abort()
+  else {
+    signal.addEventListener('abort', abort, { once: true })
+    timeout.addEventListener('abort', abort, { once: true })
+  }
+  return combined.signal
+}
+
+export const getState = (previewIds: string[] = [], signal?: AbortSignal) =>
   call<StateResponse>(`/api/state?previewIds=${encodeURIComponent(previewIds.join(','))}`, {
-    signal: AbortSignal.timeout(5000),
+    signal: withTimeout(signal, 5000),
   })
 
 export const addProject = (path: string) =>

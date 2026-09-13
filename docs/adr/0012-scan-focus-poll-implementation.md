@@ -6,7 +6,7 @@ Durum: accepted — 2026-09-13. Kapsam: [spec §8/5](../specs/agentdeck-v0.md) �
 
 **Degraded.** `/api/state` oturum ve proje görünümüne türetilmiş `degraded` ekler. Proje kökü ve benzersiz cwd 2 sn önbellekle sorgulanır; lifecycle değişmez. Kart, kenar çubuğu ve üst bant bu metni overlay olarak gösterir.
 
-**Poll.** Görünür istemci `createStatePoller` ile tek GET döngüsü kullanır: hemen, sonra önceki istek bitişinden 2 sn; 5 sn timeout; mutation ve önizleme kimliği değişince beklemeden tazeleme. `daemonId`/revision/generation eski cevabı atar; eşit revision işlenir. Gizli sekmede durur. 401/403 otomatik denemeyi keser; ağ/sunucu hatası 2/4/8/10 sn geri çekilir. Yaş `serverNow` + `performance.now()` ile ilerler.
+**Poll.** Görünür istemci `createStatePoller` ile tek GET döngüsü kullanır: hemen, sonra önceki istek bitişinden 2 sn; 5 sn timeout; mutation ve önizleme kimliği değişince beklemeden tazeleme. `daemonId`/revision/generation eski cevabı atar; eşit revision işlenir. Gizli sekmede durur. 401/403 otomatik denemeyi keser; ağ/sunucu hatası 2/4/8/10 sn geri çekilir. Yaş `serverNow` + `performance.now()` ile ilerler. Tarama kartları gizliyken `previewIds` boştur; önceki 24 kartlık GET iptal edilir, böylece 5 sn timeout girdi kapatmaz.
 
 **Kart ve bant.** Kartta ad, proje, program, lifecycle/activity, cwd/proje hata metni, çıkış, branch/izolasyon, önizleme ve yaş vardır. Idle hata rozeti değildir. Silme ikincil düğmedir. İzole canlı oturumda kapatılabilir güven notu vardır; uygulama onay vermez.
 
