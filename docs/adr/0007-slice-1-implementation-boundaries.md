@@ -11,6 +11,8 @@ Durdurma iki ayrı şeyi kanıtlar: liderin çıkışı ve grubun boşalması. L
 - **Silme onayı** şu an Session id, runId, canonical cwd, dizin kimliği (dev/ino) ve Git durum özetine bağlıdır; 60 sn TTL ve daemon ömrü sınırı vardır. Sözleşmenin ignored dosyalar dahil **içerik fingerprint'i** ve 5 sn / 10.000 dosya / 128 MiB bütçesi §8/4'ün işidir. Önizleme yanıtı kapsamını `fingerprintScope` alanında açıkça söyler; "içerik değişmedi" iddiası bu dilimde üretilmez.
 - **Proje silme kademeli değildir.** Oturum kaydı olan proje 409 `project_has_sessions` ile reddedilir ve oturum kimlikleri döner. Sözleşmenin proje onayını Session kümesine ve her onay fingerprint'ine bağlayan kuralı §8/4'te uygulanır; o zamana kadar gizli cascade yapılmaz.
 
+Güncelleme (13 Eylül 2026): iki daraltma da §8/4 diliminde kapandı ([ADR 0011](0011-work-result-slice-implementation.md)).
+
 Bu dilimde bilinçli olarak yer almayanlar: headless terminal state, güvenli kesim, sorgu ayıklama, iki katmanlı replay ve checkpoint (§8/3 — WS yolu prototip ham tamponu olarak kalır ve doğru ekran temsili diye sunulmaz); yönetilen konuşma kimliği `fresh`/`resume`/`picker` (G2 insan kabul testi geçmeden hiçbir CLI için açılmaz, bu yüzden `lastLaunch` yalnız `command` niyeti üretir); arşivleme, baseCommit diff kapsamları ve korunan branch görünümü (§8/4); `environment.json` (§8/2); terminal control lease.
 
 İki uygulama ayrıntısı kayda geçer: `COLORTERM` izin listesinden miras alınır, miras yoksa uygulama `truecolor` verir — ekran tarafındaki xterm bunu destekler ve daemon'ın başlatıldığı ortam belirleyici olmamalıdır. `AGENTDECK_DATA_DIR` veri dizinini geçersiz kılar; testler ve ayrı örnekler için gereklidir ve tek yazar kilidi canonical yola bağlı olduğu için alias'la ikinci yazar doğurmaz.

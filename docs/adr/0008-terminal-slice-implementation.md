@@ -39,8 +39,8 @@ bildirilir. Checkpoint yazma hatası PTY'yi öldürmez; state metadata'sı ve ar
 son kayıt zamanı/hatasını gösterir. Fsync/güç kaybı garantisi yoktur.
 
 Son iki Run checkpoint'i tutulur; saklama sınırı yalnız **kayda girmiş** Run yayımlandığında uygulanır. Spawn veya state commit'i başarısız olan Run'ın görüntüsü önceki Run'ların kayıtlarını budayamaz ve atılır; kayda hiç girmemiş oturum için `terminal/` dizini kalmaz. Güncel veya bilinen eski runId ile
-salt okunur WS inspection mümkündür. **Önceki Run seçicisi henüz arayüzde yoktur**;
-aynı dosyalarda launch eylemleriyle §8/4'te bağlanacaktır. Grid kartları henüz
+salt okunur WS inspection mümkündür. Önceki Run seçicisi §8/4'te terminal sekmesine
+bağlandı ([ADR 0011](0011-work-result-slice-implementation.md)). Grid kartları henüz
 preview API'sine bağlanmamıştır (§8/5). CLI managed fresh/resume açılmadı.
 
 ## Kanıt ve açık kabul

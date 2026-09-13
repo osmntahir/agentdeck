@@ -4,10 +4,11 @@ Revizyon: 2.2 — 12 Eylül 2026. **Durum: tasarım kararları kapandı ve termi
 
 Bu belge güncel normatif sözleşmedir; ADR'ler gerekçeyi, araştırmalar tarihli kanıtı taşır. Eski GitHub resolution yorumları tarihçedir; çelişen önceki hükümler bu revizyonla yürürlükten kalkar. İki incelemedeki 15 bulgunun karşılığı [revizyon kaydında](../reviews/2026-09-12-decision-reconciliation.md); terminal kararlarının ölçüm kanıtı [doğrulama notunda](../research/terminal-state-validation.md).
 
-**Uygulama durumu:** §8/1 ve §8/3 terminal dilimi ürün koduna girdi. Sınırlar
-[ADR 0007](../adr/0007-slice-1-implementation-boundaries.md) ve
-[ADR 0008](../adr/0008-terminal-slice-implementation.md) içinde. Gerçek tarayıcı/CLI
-ürün kabulü, önceki Run seçicisi ve diğer dilimler açık; sözleşmenin bütünü uygulanmış değildir.
+**Uygulama durumu:** §8/1, §8/3 terminal dilimi ve §8/4 çalışma sonucu dilimi ürün koduna girdi. Sınırlar
+[ADR 0007](../adr/0007-slice-1-implementation-boundaries.md),
+[ADR 0008](../adr/0008-terminal-slice-implementation.md) ve
+[ADR 0011](../adr/0011-work-result-slice-implementation.md) içinde. Gerçek tarayıcı/CLI
+ürün kabulü, §8/2 insan kabulü ve §8/5–6 kabulleri açık; sözleşmenin bütünü uygulanmış değildir.
 
 ## 1. Hedef ve kapsam
 
@@ -175,7 +176,7 @@ State schemaVersion:2. V0 eski agent/status kaydı veya schemaVersion:1 yalnız 
 1. Güvenilir tek Session: schema, tek sahiplik, lifecycle/Run, stop doğrulaması, dosya koruma, salt okunur orphan keşfi. **Uygulandı** (12 Eylül 2026); iki hüküm §8/4'e daraltıldı: silme onayının içerik fingerprint'i ve kademeli proje silme ([ADR 0007](../adr/0007-slice-1-implementation-boundaries.md)).
 2. Gerçek bir worktree'de insanın CLI trust/auth ekranını tamamladığı ilk kullanım; onay öncesi stop ve aynı dosyalarda fresh tekrar. Bu test shell/environment ve restart çıkmazını erken yakalar.
 3. Headless terminal/snapshot/preview/encoding ve kontrol yanıtları. **Uygulandı:** terminal-state worker’ı, güvenli kesim, sorgu ayıklama, iki katmanlı replay, checkpoint ve odak istemcisi. Gerçek tarayıcı/CLI kabulü açık ([ADR 0008](../adr/0008-terminal-slice-implementation.md)).
-4. Çalışma diff'i/baseCommit, aynı cwd'de açık launch, arşiv ve branch bulma; sınırlı/safe delete.
+4. Çalışma diff'i/baseCommit, aynı cwd'de açık launch, arşiv ve branch bulma; sınırlı/safe delete. **Uygulandı** (13 Eylül 2026); launch yalnız command modunu açar, yönetilen kimlik G2'ye bağlı kalır ([ADR 0011](../adr/0011-work-result-slice-implementation.md)).
 5. Grid/odak/klavye/poll entegrasyonu; 4–8 gerçek oturum, sonra 32 sentetik PTY/256 kayıt.
 6. Çöküş/disk-full/bozuk state/eski yedek/timeout/çoklu istemci/tekrar istek/Unicode/ANSI/çok büyük dosya ve dış Git yarış kabulü; README ile gerçek davranış hizası.
 

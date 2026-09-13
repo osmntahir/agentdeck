@@ -41,6 +41,9 @@ _Avoid_: Güvenlik sandbox'ı, session branch
 **Session branch**:
 Worktree oturumu oluşturulurken açılan, kullanıcıya ait Git branch'i. Klasör oturumunda her Alt depoda aynı addır. Session kaldırılması branch'i kaldırmaz.
 
+**Korunan branch**:
+Session kaldırılsa da Git'te kalan `agentdeck/` önekli Session branch'i. Proje görünümünde ad ve tip OID'siyle listelenir; branch'i gösteren kayıt yoksa görev bilgisi uydurulmaz. Uygulama branch silmez.
+
 **Base commit**:
 Çalışmanın başlangıcında seçilen commit; kayıtta `baseCommit` alanıdır. Çalışmanın toplam değişikliğini incelerken kullanılan sabit referanstır. Bilinmiyorsa uydurulmaz. Klasör oturumunda tek bir base commit yoktur; her Alt depo worktree'si kendi commit'ini `worktrees` kaydında tutar.
 _Avoid_: HEAD, hareketli ana branch

@@ -1,6 +1,6 @@
 # agentdeck
 
-> Bu README mevcut runtime’ı anlatır. §8/1 ve §8/3 terminal dilimi uygulandı; sınırlar [ADR 0007](docs/adr/0007-slice-1-implementation-boundaries.md) ve [ADR 0008](docs/adr/0008-terminal-slice-implementation.md) içinde. Gerçek CLI/tarayıcı ürün kabulü, yönetilen konuşma devamı ve arşiv henüz tamamlanmadı.
+> Bu README mevcut runtime’ı anlatır. §8/1, §8/3 terminal dilimi ve §8/4 çalışma sonucu dilimi uygulandı; sınırlar [ADR 0007](docs/adr/0007-slice-1-implementation-boundaries.md), [ADR 0008](docs/adr/0008-terminal-slice-implementation.md) ve [ADR 0011](docs/adr/0011-work-result-slice-implementation.md) içinde. Gerçek CLI/tarayıcı ürün kabulü ve yönetilen konuşma devamı henüz tamamlanmadı.
 
 Paralel AI ajan oturumlarını izole git worktree'lerde yöneten yerel çalışma tezgâhı.
 
@@ -17,9 +17,12 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Doğrulanmış durdurma** — süreç grubunun gerçekten bittiği kanıtlanır;
   lider çıkıp çocuk kalırsa bu izlenir. Süre dolması başarı sayılmaz ve
   doğrulanmamış durdurmadan sonra yeni Run başlamaz, silme yapılmaz.
-- **Dosya koruma** — silme yalnız taze bir onayla yapılır, branch hiçbir
-  koşulda silinmez, `git worktree remove` başarısızsa zorla silme yoluna
-  düşülmez. Kayıtsız çalışma kopyaları yalnız listelenir, temizlenmez.
+- **Dosya koruma** — silme yalnız taze bir onayla yapılır; onay ignored dosyalar
+  (.env, bağımlılıklar) dahil geri getirilemeyecek içeriğin hash'ine bağlıdır ve
+  5 sn / 10.000 dosya / 128 MiB bütçesini aşan klasör için onay üretilmez. Branch
+  hiçbir koşulda silinmez, `git worktree remove` başarısızsa zorla silme yoluna
+  düşülmez. Oturumu olan proje tek onayla sırayla silinir; ilk hatada durulur ve
+  proje kalır. Kayıtsız çalışma kopyaları yalnız listelenir, temizlenmez.
 - **Yerel klasör projeleri** — Git deposu olmayan klasörler de eklenebilir; Git başlatılmaz, dosyalar taşınmaz. Ortak oturum doğrudan klasörde çalışır. Klasörün altındaki Git depoları (en çok 4 seviye, 30 depo) ayrı ayrı ele alınır: izole oturum her depo için aynı branch adıyla ayrı worktree açar, depo dışındaki dosyaları kopyalamaz.
 - **Klasör seçici** — masaüstünde “Proje ekle → Klasör seç…” sistem penceresini açar. Tarayıcıda tam klasör yolu yazılır.
 - **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması ve yaşam döngüsü filtreleri. Görünen sonuçların ilk 24 oturumu için önizleme alınır; karttan tek terminale geçilir.
@@ -35,9 +38,20 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Tek kontrol sahibi** — diğer istemciler salt okunur izler; “Kontrolü al”
   ile kullanıcı girdi ve boyutlandırma sahipliğini devralır. Sahibi olmayan
   kontrolü açık terminal kendiliğinden alır; sahipten alınması yine açık eylemdir.
-- **Diff görünümü** — oturumun worktree'sindeki değişiklikler, ajanın yeni
-  yazdığı takip edilmeyen dosyalar dahil. Klasör projelerinde her alt depo ayrı
-  bölüm olarak gösterilir.
+- **Diff görünümü** — “Bu çalışma” başlangıç commit'inden bu yana toplam farkı
+  (ajanın commit'leri dahil), “Commit edilmemiş” HEAD'e göre farkı gösterir;
+  takip edilmeyen dosyalar ikisinde de vardır. Okuma 5 sn / 1 MiB patch / 50 yeni
+  dosya ile sınırlıdır ve kesilme söylenir; Git hatası temiz diff sayılmaz.
+  Klasör projelerinde her alt depo ayrı bölüm olarak gösterilir.
+- **Aynı çalışma kopyasında komut** — “komut çalıştır…” aynı klasörde yeni Run
+  açar; CLI seçicileri (`claude --resume`, `codex resume`, `gemini --resume`)
+  hazır komut olarak gelir. Başlangıç programı değişmez; “yeniden çalıştır” son
+  komutu tekrarlar. Önceki Run'ın terminal görüntüsü salt okunur açılır.
+- **Arşiv** — iş bitince oturum arşivlenir: dosyalar, branch ve görüntüler kalır,
+  oturum aktif taramadan çıkar ve Arşiv filtresiyle bulunur. Çalışan süreç ancak
+  açık “durdur ve arşivle” ile durdurulur.
+- **Korunan branch'ler** — proje başlığındaki “Branch'ler” silinen oturumların da
+  `agentdeck/` branch'lerini tip commit'iyle listeler ve adı kopyalatır.
 - **Ortak mod** — izolasyon istemediğin işler için ana çalışma kopyasında
   oturum açabilirsin.
 
@@ -136,10 +150,12 @@ src/
     env.ts             Run ortamı izin listesi
     orphans.ts         salt okunur yetim çalışma kopyası keşfi
     repos.ts           klasör projesindeki alt Git depolarının sınırlı keşfi
-    git.ts             worktree, HEAD OID, status ve diff işlemleri
+    git.ts             worktree, HEAD OID, status, diff ve branch okuması
+    fingerprint.ts     silme onayının içerik fingerprint'i ve bütçesi
   web/
     App.tsx            düzen, oturum seçimi, sekmeler
-    components/        Sidebar, TerminalPane, DiffView, NewSessionDialog
+    components/        Sidebar, TerminalPane, DiffView, NewSessionDialog,
+                       LaunchDialog, ProtectedBranches
 tests/                 node:test paketi (store, stop, kilit, dedup, API)
 docs/                  spec, ADR'ler, doğrulama kapıları, ölçüm script'leri
 ```
@@ -164,17 +180,19 @@ Bilinçli olarak MVP dışında bırakılanlar:
   sahipliği bir multiplexer'a (tmux) taşınmalıdır.
 - **Terminal ürün kabulü açık.** Ekran/scrollback replay ve checkpoint uygulanmıştır;
   gerçek tarayıcı render, mouse/paste/IME ve yoğun çıktı kabulü yapılmadı.
-  Oturum panosu önizleme API’sine bağlıdır. Proje ekleme, kabuk başlatma, terminal girdisi, diff, arama ve durdurma akışı gerçek Chromium üzerinde doğrulandı; ajan CLI’larının ürün kabulü ayrı kalır.
+  Oturum panosu önizleme API’sine bağlıdır. Proje ekleme, kabuk başlatma, terminal girdisi, diff, arama ve durdurma akışı gerçek Chromium üzerinde doğrulandı; arşiv, diff kapsamları, komut çalıştırma, önceki Run, branch paneli ve kademeli proje silme derlenmiş arayüzle Electron/Chromium duman testinden geçti. Ajan CLI’larının ürün kabulü ayrı kalır.
 - **Geçmiş sınırlıdır.** En fazla son iki yazılmış Run görüntüsü tutulur; tam
-  konuşma arşivi değildir. Önceki Run seçicisi henüz arayüzde yoktur.
-- **Konuşmayı sürdürme yolu yok.** Yeniden çalıştırma başlangıç komutunu
-  aynen tekrarlar; yönetilen kimlikle `fresh`/`resume` ve CLI seçicisi
-  [G2](docs/specs/agentdeck-v0-validation-gates.md) insan kabul testi geçmeden
-  açılmaz.
-- **Proje silme kademeli değildir.** Oturum kaydı olan proje reddedilir;
-  oturumlar tek tek silinir. Arşivleme henüz yok.
-- Silme onayı dizin kimliği ve Git durumuna bağlıdır; ignored dosyaları da
-  kapsayan içerik fingerprint'i ve bütçeleri §8/4'te gelir. Ortak oturumlarda yalnız dizin kimliği doğrulanır; proje dosyaları silinmez.
+  konuşma arşivi değildir.
+- **Yönetilen konuşma devamı yok.** Konuşma CLI'ın kendi seçicisi komut olarak
+  çalıştırılarak sürdürülür; AgentDeck konuşma kimliği üretmez. Yönetilen
+  `fresh`/`resume`/`picker` [G2](docs/specs/agentdeck-v0-validation-gates.md)
+  insan kabul testi geçmeden açılmaz; `launch` bunları reddeder.
+- **Büyük klasör uygulamadan silinemez.** Bütçeyi aşan çalışma kopyası (ör. büyük
+  `node_modules`) için onay üretilmez; dosyalar yerel araçla temizlenip tekrar
+  denenir. Proje silmede bütçe bütün oturumlara paylaştırılır.
+- Ortak oturumlarda yalnız dizin kimliği doğrulanır; proje dosyaları silinmez. Klasör
+  oturumunda ajanın depo dışına yazdığı dosyalar silinmediği için onaya girmez. Dış
+  programların onay ile kaldırma arasındaki yazımına dosya sistemi garantisi yoktur.
 - Klasör projesinde alt depo taraması eksik kalırsa veya bir depoda commit yoksa
   izole oturum hiç worktree açmadan reddedilir. Silmede bir worktree
   kaldırılamazsa kaldırılanlar kayıttan düşer, kalanlar ve dosyaları korunur.
