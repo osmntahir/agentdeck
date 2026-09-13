@@ -24,6 +24,8 @@ import { TerminalPane } from './TerminalPane'
 interface GridContextValue {
   state: StateResponse
   healthy: boolean
+  focusRequest: { sessionId: string; sequence: number; origin: HTMLElement } | null
+  onFocusHandled: () => void
   onOpen: (sessionId: string) => void
 }
 
@@ -97,6 +99,8 @@ function TerminalPanel({ params, api }: IDockviewPanelProps) {
         daemonId={grid.state.daemonId}
         stateHealthy={grid.healthy}
         autoFocus={false}
+        focusRequest={grid.focusRequest?.sessionId === session.id ? grid.focusRequest : undefined}
+        onFocusHandled={grid.onFocusHandled}
         compact
       />
     </div>
@@ -168,7 +172,14 @@ interface Props {
 
 export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onOpen, onPanelsChange }: Props) {
   const [api, setApi] = useState<DockviewApi | null>(null)
-  const [count, setCount] = useState(0)
+  const [panelIds, setPanelIds] = useState<string[]>([])
+  const [candidate, setCandidate] = useState<string | null>(null)
+  const [focusRequest, setFocusRequest] = useState<{ sessionId: string; sequence: number; origin: HTMLElement } | null>(null)
+  const focusSequence = useRef(0)
+  const navigation = useRef<HTMLDivElement>(null)
+  const count = panelIds.length
+  const candidateId = candidate && panelIds.includes(candidate) ? candidate : panelIds[0]
+
   const [notice, setNotice] = useState<string | null>(null)
   const latest = useRef({ sessions: state.sessions, onPanelsChange })
   latest.current = { sessions: state.sessions, onPanelsChange }
@@ -186,7 +197,7 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
     }
     const publish = () => {
       saveGridLayout(ready.toJSON())
-      setCount(ready.panels.length)
+      setPanelIds(ready.panels.map((panel) => panel.id))
       latest.current.onPanelsChange(ready.panels.map((panel) => panel.id))
     }
     ready.onDidLayoutChange(publish)
@@ -221,7 +232,7 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
   }, [api, healthy, state.sessions])
 
   return (
-    <GridContext.Provider value={{ state, healthy, onOpen }}>
+    <GridContext.Provider value={{ state, healthy, onOpen, focusRequest, onFocusHandled: () => setFocusRequest(null) }}>
       <section className="terminal-grid">
         <header className="workspace-header">
           <div>
@@ -237,6 +248,44 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
             </span>
           </div>
         </header>
+        {panelIds.length > 0 && (
+          <div className="grid-panel-navigation" role="toolbar" aria-label="Grid terminalleri" ref={navigation}>
+            <span>Oklarla seç · Enter ile terminale geç</span>
+            {panelIds.map((id) => (
+              <button
+                key={id}
+                type="button"
+                data-grid-session={id}
+                tabIndex={id === candidateId ? 0 : -1}
+                onFocus={() => setCandidate(id)}
+                onKeyDown={(event) => {
+                  if (event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) return
+                  const index = panelIds.indexOf(id)
+                  let next: number
+                  switch (event.key) {
+                    case 'ArrowRight': case 'ArrowDown': next = (index + 1) % panelIds.length; break
+                    case 'ArrowLeft': case 'ArrowUp': next = (index + panelIds.length - 1) % panelIds.length; break
+                    case 'Home': next = 0; break
+                    case 'End': next = panelIds.length - 1; break
+                    default: return
+                  }
+                  event.preventDefault()
+                  navigation.current?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus()
+                }}
+                onClick={(event) => {
+                  const origin = event.currentTarget
+                  origin.focus()
+                  const panel = api?.getPanel(id)
+                  if (!panel) return
+                  panel.api.setActive()
+                  setFocusRequest({ sessionId: id, sequence: ++focusSequence.current, origin })
+                }}
+              >
+                {state.sessions.find((session) => session.id === id)?.name ?? id}
+              </button>
+            ))}
+          </div>
+        )}
         {notice && (
           <div className="error" role="alert">
             {notice}

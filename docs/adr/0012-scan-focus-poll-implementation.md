@@ -15,3 +15,17 @@ Durum: accepted — 2026-09-13. Kapsam: [spec §8/5](../specs/agentdeck-v0.md) �
 Açık kalanlar: grid panellerinin kendi içindeki tam klavye döşemesi, dar ekran çekmece odağı (çekmece yok), IME / ekran okuyucu / %200 zoom ve 4–8 gerçek CLI kabulü (G3/G4).
 
 Doğrulama: `npm test`, `npm run typecheck`. DOM davranışı derlenmiş arayüzde tarayıcı duman testiyle bakılır.
+
+### Grid klavye gezinmesi — 13 Eylül 2026
+
+Grid başlığının altında tek Tab durağı olan panel gezinme çubuğu eklendi. Oklar
+adaylar arasında döner; Home/End ilk/son adaya gider. Bu hareketler paneli
+etkinleştirmez. Enter/Space veya tıklama seçilen paneli etkinleştirir ve replay
+hazır olduğunda terminale tek seferlik odak isteği gönderir. İsteği başlatan
+düğme artık odakta değilse istek tüketilir ama terminale odak verilmez; geciken
+replay kullanıcının sonraki seçimini bozamaz. Normal reconnect yeni istek üretmez.
+
+Bu ek, panel seçimini klavyeye açar; panelleri taşıma/bölme/boyutlandırmanın tam
+klavye karşılığı ve gerçek tarayıcı erişilebilirlik kabulü açık kalır.
+Doğrulama: `npm test` 212/212, `npm run typecheck`, `npm run build` ve iki eksenli
+kod incelemesi. Bu test paketi yeni DOM davranışının tarayıcı kabulünü kapsamaz.

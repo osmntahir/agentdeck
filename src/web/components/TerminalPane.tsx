@@ -17,6 +17,9 @@ interface Props {
   autoFocus?: boolean
   /** Grid paneli: durum şeridi terminalin üstünde yüzen kompakt çubuk olur. */
   compact?: boolean
+  /** Açık kullanıcı isteği; hazır replay üzerinde bir kez tüketilir. */
+  focusRequest?: { sequence: number; origin: HTMLElement }
+  onFocusHandled?: () => void
   /** Salt okunur incelenecek önceki Run; verilmezse oturumun güncel Run'ı açılır. */
   runId?: string | null
 }
@@ -27,6 +30,8 @@ export function TerminalPane({
   stateHealthy,
   autoFocus = true,
   compact = false,
+  focusRequest,
+  onFocusHandled,
   runId: inspectRunId = null,
 }: Props) {
   const runId = inspectRunId ?? session.runId
@@ -40,6 +45,13 @@ export function TerminalPane({
   const focusedReady = useRef(false)
   const [retry, setRetry] = useState(0)
   const [status, setStatus] = useState<StreamStatus | null>(null)
+
+  useEffect(() => {
+    if (focusRequest !== undefined && status?.ready) {
+      if (document.activeElement === focusRequest.origin) termRef.current?.focus()
+      onFocusHandled?.()
+    }
+  }, [focusRequest, status?.ready, onFocusHandled])
 
   useEffect(() => {
     focusedReady.current = false

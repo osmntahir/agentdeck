@@ -30,7 +30,8 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Terminal grid** — birden çok oturumun terminali yan yana açılır. Sekmeyi
   sürükleyip bir panelin kenarına bırakarak bölünür, aradaki çizgiyle
   boyutlandırılır. Oturumlar kenar çubuğundan veya karttan sürüklenerek ya da
-  “Grid'e ekle” ile eklenir; en çok 8 panel. Yerleşim bu cihazda hatırlanır.
+  “Grid'e ekle” ile eklenir; en çok 8 panel. Grid gezinme çubuğunda oklar ve
+  Home/End panel adayını seçer; Enter/Space terminale geçer. Yerleşim bu cihazda hatırlanır.
   Gizli sekmede terminal açık tutulmaz ([ADR 0010](docs/adr/0010-terminal-grid.md)).
 - **Oturumlar arası geçiş** — tek oturum görünümünde yalnız odaktaki terminal açılır; ekran daemon'daki
   headless modelden kurulur. Scrollback açık “Terminal geçmişini yükle” eylemiyle gelir.
