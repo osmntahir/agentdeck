@@ -167,7 +167,7 @@ export function TerminalPane({
     term.attachCustomKeyEventHandler((event) => {
       if (event.key !== 'F6') return true
       if (event.type === 'keydown') {
-        ;(document.querySelector<HTMLElement>('.topbar-back') ?? document.querySelector<HTMLElement>('.home-nav'))?.focus()
+        ;(document.querySelector<HTMLElement>('.topbar-back') ?? document.querySelector<HTMLElement>('.mobile-navigation button') ?? document.querySelector<HTMLElement>('.home-nav'))?.focus()
       }
       return false
     })

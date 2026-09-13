@@ -3,6 +3,7 @@ import * as api from './api'
 import { AddProjectDialog } from './components/AddProjectDialog'
 import { Workspace } from './components/Workspace'
 import { Sidebar } from './components/Sidebar'
+import { SidebarShell } from './components/SidebarShell'
 import { TerminalPane } from './components/TerminalPane'
 import { DiffView } from './components/DiffView'
 import { NewSessionDialog } from './components/NewSessionDialog'
@@ -197,16 +198,17 @@ export function App() {
     const inTerminal = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest('.xterm'))
     const chromeStops = () =>
       [
-        document.querySelector<HTMLElement>('.sidebar .home-nav'),
+        document.querySelector<HTMLElement>('.mobile-navigation button') ?? document.querySelector<HTMLElement>('.sidebar .home-nav'),
         document.querySelector<HTMLElement>('.topbar-back'),
         document.querySelector<HTMLElement>('.term-host textarea, .term-host canvas, .xterm-helper-textarea'),
-      ].filter((el): el is HTMLElement => el !== null)
+      ].filter((el): el is HTMLElement => el !== null && el.getClientRects().length > 0)
 
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'F6') {
         event.preventDefault()
+        if (document.querySelector('dialog[open]')) return
         if (inTerminal(event.target)) {
-          ;(document.querySelector<HTMLElement>('.topbar-back') ?? document.querySelector<HTMLElement>('.home-nav'))?.focus()
+          ;(document.querySelector<HTMLElement>('.topbar-back') ?? document.querySelector<HTMLElement>('.mobile-navigation button') ?? document.querySelector<HTMLElement>('.home-nav'))?.focus()
           return
         }
         const stops = chromeStops()
@@ -409,27 +411,27 @@ export function App() {
 
   return (
     <div className="app">
-      <Sidebar
+      <SidebarShell>{(navigate) => <Sidebar
         state={state}
         healthy={stateHealthy}
-        onHome={() => {
+        onHome={() => navigate(() => {
           leaveToScan()
           setView('sessions')
-        }}
+        })}
         view={view}
         gridCount={gridIds.length}
-        onGrid={() => {
+        onGrid={() => navigate(() => {
           leaveToScan()
           setView('grid')
-        }}
-        onAddToGrid={addToGrid}
+        })}
+        onAddToGrid={(id) => navigate(() => addToGrid(id))}
         activeId={activeId}
-        onSelect={(id) => {
+        onSelect={(id) => navigate(() => {
           setActiveId(id)
           setPendingDelete(null)
-        }}
-        onNewSession={setDialogProject}
-        onAddProject={() => setAddingProject(true)}
+        })}
+        onNewSession={(project) => navigate(() => setDialogProject(project))}
+        onAddProject={() => navigate(() => setAddingProject(true))}
         onDeleteProject={(id) => run(api.deleteProject(id))}
         projectDelete={projectDelete}
         onPreviewProjectDelete={askProjectDelete}
@@ -437,7 +439,7 @@ export function App() {
         onCancelProjectDelete={() => setProjectDelete(null)}
         orphans={orphans}
         onRefreshOrphans={refreshOrphans}
-      />
+      />}</SidebarShell>
 
       <main className="main">
         {connectionError && (

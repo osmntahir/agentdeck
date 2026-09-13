@@ -12,7 +12,7 @@ Durum: accepted — 2026-09-13. Kapsam: [spec §8/5](../specs/agentdeck-v0.md) �
 
 **Odak.** F6 terminalden kromuna çıkar; Electron menüsü gerçek F6'yı PTY'ye gönderir (`CSI 17~`). Escape PTY'de kalır; kromda önce modal, sonra tarama. Kart ve kenar listesi roving Tab / okla aday, Enter/Space ile açılır; aday değiştirmek PTY açmaz. Kullanıcı seçiminden sonra replay hazırken odaklanır; reconnect çalmaz. Tarama Workspace gizli kalarak kaydırma ve filtreyi korur. Silme komşu karta döner, komşu PTY açılmaz.
 
-Açık kalanlar: grid panellerinin kendi içindeki tam klavye döşemesi, dar ekran çekmece odağı (çekmece yok), IME / ekran okuyucu / %200 zoom ve 4–8 gerçek CLI kabulü (G3/G4).
+Açık kalanlar: IME / ekran okuyucu / %200 zoom ve 4–8 gerçek CLI kabulü (G3/G4). Grid döşemesi ve dar ekran çekmecesi aşağıdaki güncellemeyle ürün koduna girdi.
 
 Doğrulama: `npm test`, `npm run typecheck`. DOM davranışı derlenmiş arayüzde tarayıcı duman testiyle bakılır.
 
@@ -29,3 +29,18 @@ Bu ek, panel seçimini klavyeye açar; panelleri taşıma/bölme/boyutlandırman
 klavye karşılığı ve gerçek tarayıcı erişilebilirlik kabulü açık kalır.
 Doğrulama: `npm test` 212/212, `npm run typecheck`, `npm run build` ve iki eksenli
 kod incelemesi. Bu test paketi yeni DOM davranışının tarayıcı kabulünü kapsamaz.
+
+### Yerleşim ve dar ekran çekmecesi — 13 Eylül 2026
+
+Panel taşıma/bölme/boyutlandırma diyaloğu [ADR 0010](0010-terminal-grid.md)
+kapsamını tamamlar. 700 px ve altında Sidebar native modal çekmecededir; Tab ve
+Shift+Tab gezinme içinde kalır, Escape/kapat tetikleyene döner. Proje ekleme,
+oturum açma veya grid seçimi önce çekmeceyi kapatır. F6 mobil grid terminalinden
+görünür gezinme tetikleyicisine çıkar; kapalı çekmeceye odak göndermez. Modal
+açıkken global F6 odağı dışarı taşımaz.
+
+Chromium otomasyonu: roving aday/Enter/F6, gruba sekmeleştirme, yeniden bölme,
+boyut değişimi ve yerleşimin yeniden yüklenmesi; dar ekranda Tab döngüsü,
+Escape/F6 ve gezinme; UUID alanında geçersiz ve geçerli Enter; 8 paneli aşan
+kalıcı yerleşim reddi. Betik: `docs/research/adr-runtime-probe.cjs`.
+Bu kontroller gerçek işletim sistemi IME'si veya ekran okuyucu kabulü değildir.

@@ -151,3 +151,33 @@ test('okunamayan dosya "değişmedi" sayılmaz', { skip: isRoot ? 'root izinleri
     }
   })
 })
+
+test('gerçek 128 MiB sınırında içerik okunur; tek bayt aşımında onay üretilmez', { timeout: 15000 }, async () => {
+  await withRepo(async (dir) => {
+    const file = path.join(dir, '.env')
+    const fd = fs.openSync(file, 'w')
+    try { fs.ftruncateSync(fd, 128 * 1024 * 1024) } finally { fs.closeSync(fd) }
+    const within = await contentFingerprint(dir, createBudget())
+    assert.equal(within.ok, true, JSON.stringify(within))
+    fs.appendFileSync(file, 'x')
+    const over = await contentFingerprint(dir, createBudget())
+    assert.equal(over.ok, false)
+    assert.equal(!over.ok && over.reason, 'budget')
+    assert.equal(fs.statSync(file).size, 128 * 1024 * 1024 + 1, 'okuma dosyayı değiştirmez')
+  })
+})
+
+test('ignored iç içe Git deposundaki çalışma dosyası değişikliği onayı değiştirir', async () => {
+  await withRepo(async (dir) => {
+    const nested = path.join(dir, 'node_modules', 'nested')
+    fs.mkdirSync(nested, { recursive: true })
+    execFileSync('git', ['init', '-q'], { cwd: nested })
+    const file = path.join(nested, 'work.txt')
+    fs.writeFileSync(file, 'önce')
+    const before = await fingerprint(dir)
+    fs.writeFileSync(file, 'sonra')
+    const after = await fingerprint(dir)
+    assert.notEqual(after.digest, before.digest)
+    assert.equal(fs.readFileSync(file, 'utf8'), 'sonra')
+  })
+})

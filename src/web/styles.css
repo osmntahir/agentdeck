@@ -1573,3 +1573,19 @@ button.primary {
 .grid-panel-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; }
 .grid-panel-navigation > span { color: var(--text-muted, #9ca3af); font-size: 12px; }
 .grid-panel-navigation button:focus-visible { outline: 2px solid #7aa2f7; outline-offset: 2px; }
+
+.explicit-resume { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 6px; margin: 0; padding: 12px; min-width: 0; }
+.explicit-resume legend { font-size: 13px; padding: 0 4px; }
+.session-modal { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.mobile-navigation { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.project-drawer { margin: 0; padding: 0; width: min(320px, 90vw); max-width: 90vw; height: 100dvh; max-height: 100dvh; border: 0; background: var(--panel); color: var(--text); }
+.project-drawer::backdrop { background: rgb(0 0 0 / 55%); }
+.project-drawer[open] { display: flex; flex-direction: column; }
+.project-drawer .sidebar { width: 100%; flex: 1; min-height: 0; }
+.drawer-close { margin: 8px; align-self: flex-end; }
+@media (max-width: 700px) {
+  .app { flex-direction: column; }
+  .main { min-height: 0; }
+}
+.grid-layout-action { padding: 0 16px 8px; }
+.grid-size-actions { min-width: 0; border: 1px solid var(--line); padding: 12px; }

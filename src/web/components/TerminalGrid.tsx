@@ -20,6 +20,7 @@ import { commandLabel } from '../../shared/types'
 import { clearGridLayout, loadGridLayout, MAX_GRID_PANELS, saveGridLayout, SESSION_DRAG_TYPE } from '../gridLayout'
 import { stateLabel } from './Sidebar'
 import { TerminalPane } from './TerminalPane'
+import { GridLayoutDialog } from './GridLayoutDialog'
 
 interface GridContextValue {
   state: StateResponse
@@ -180,6 +181,7 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
   const count = panelIds.length
   const candidateId = candidate && panelIds.includes(candidate) ? candidate : panelIds[0]
 
+  const [layoutPanel, setLayoutPanel] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const latest = useRef({ sessions: state.sessions, onPanelsChange })
   latest.current = { sessions: state.sessions, onPanelsChange }
@@ -286,6 +288,11 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
             ))}
           </div>
         )}
+        {candidateId && <div className="grid-layout-action">
+          <button type="button" onClick={() => setLayoutPanel(candidateId)}>Seçilen panelin yerleşimi</button>
+        </div>}
+        {layoutPanel && api && <GridLayoutDialog api={api} panelId={layoutPanel} sessions={state.sessions}
+          onClose={() => setLayoutPanel(null)} />}
         {notice && (
           <div className="error" role="alert">
             {notice}

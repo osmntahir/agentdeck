@@ -26,12 +26,15 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Yerel klasör projeleri** — Git deposu olmayan klasörler de eklenebilir; Git başlatılmaz, dosyalar taşınmaz. Ortak oturum doğrudan klasörde çalışır. Klasörün altındaki Git depoları (en çok 4 seviye, 30 depo) ayrı ayrı ele alınır: izole oturum her depo için aynı branch adıyla ayrı worktree açar, depo dışındaki dosyaları kopyalamaz.
 - **Klasör seçici** — masaüstünde “Proje ekle → Klasör seç…” sistem penceresini açar. Tarayıcıda tam klasör yolu yazılır.
 - **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması, yaşam döngüsü, yaş ve çalışma dizini hatası. Görünen taramanın ilk 24 oturumu için önizleme alınır; oturum veya grid açıkken bu iş istenmez. Karttan tek terminale geçilir. Oklarla aday değişir, Enter açar; poll sırayı ve odağı değiştirmez.
+- **Dar ekran** — 700 px ve altında proje/oturum listesi çekmecede açılır; Escape odağı açan düğmeye döndürür.
 - **Klavye** — F6 terminalden uygulama çubuğuna çıkar; masaüstü menüsü gerçek F6'yı PTY'ye gönderir. Escape PTY'de kalır, kromda taramaya döner.
 - **Terminal grid** — birden çok oturumun terminali yan yana açılır. Sekmeyi
   sürükleyip bir panelin kenarına bırakarak bölünür, aradaki çizgiyle
   boyutlandırılır. Oturumlar kenar çubuğundan veya karttan sürüklenerek ya da
   “Grid'e ekle” ile eklenir; en çok 8 panel. Grid gezinme çubuğunda oklar ve
-  Home/End panel adayını seçer; Enter/Space terminale geçer. Yerleşim bu cihazda hatırlanır.
+  Home/End panel adayını seçer; Enter/Space terminale geçer. “Seçilen panelin
+  yerleşimi” ile klavyeden bölme, sekmeleştirme, boyutlandırma ve panel kapatma
+  yapılır. Yerleşim bu cihazda hatırlanır.
   Gizli sekmede terminal açık tutulmaz ([ADR 0010](docs/adr/0010-terminal-grid.md)).
 - **Oturumlar arası geçiş** — tek oturum görünümünde yalnız odaktaki terminal açılır; ekran daemon'daki
   headless modelden kurulur. Scrollback açık “Terminal geçmişini yükle” eylemiyle gelir.
@@ -47,7 +50,8 @@ tarayıcıyı kapatmak ajanı öldürmez.
   Klasör projelerinde her alt depo ayrı bölüm olarak gösterilir.
 - **Aynı çalışma kopyasında komut** — “komut çalıştır…” aynı klasörde yeni Run
   açar; CLI seçicileri (`claude --resume`, `codex resume`, `gemini --resume`)
-  hazır komut olarak gelir. Başlangıç programı değişmez; “yeniden çalıştır” son
+  hazır komut olarak gelir. Elinizdeki konuşma UUID’si ayrı alandan incelenebilir
+  komuta aktarılır; Enter bu alanda yalnız komutu hazırlar, süreç başlatmaz. Başlangıç programı değişmez; “yeniden çalıştır” son
   komutu tekrarlar. Önceki Run'ın terminal görüntüsü salt okunur açılır.
 - **Arşiv** — iş bitince oturum arşivlenir: dosyalar, branch ve görüntüler kalır,
   oturum aktif taramadan çıkar ve Arşiv filtresiyle bulunur. Çalışan süreç ancak
@@ -137,8 +141,10 @@ scripts/
   launch.mjs           sandbox tespiti + Electron başlatma
   install-desktop.mjs  .desktop kısayolu (node yolunu gömer)
 src/
-  shared/types.ts      daemon ve arayüzün ortak tipleri
-  shared/statePoll.ts  görünür istemcinin GET state döngüsü
+  shared/types.ts           daemon ve arayüzün ortak tipleri
+  shared/launchPolicy.ts    literal CLI uygunluğu ve açık UUID komutu
+  shared/gridLayoutGuard.ts kayıtlı grid yerleşiminin kaynak sınırı
+  shared/statePoll.ts       görünür istemcinin GET state döngüsü
   server/
     index.ts           giriş noktası: env, kapanış sinyalleri
     daemon.ts          HTTP + WebSocket, REST uçları, kilitler, silme onayı
@@ -159,8 +165,9 @@ src/
     fingerprint.ts     silme onayının içerik fingerprint'i ve bütçesi
   web/
     App.tsx            düzen, poll, oturum seçimi, sekmeler
-    components/        Sidebar, TerminalPane, DiffView, NewSessionDialog,
-                       LaunchDialog, ProtectedBranches
+    components/        Sidebar, SidebarShell, TerminalPane, TerminalGrid,
+                       DiffView, NewSessionDialog, LaunchDialog,
+                       GridLayoutDialog, ProtectedBranches
 tests/                 node:test paketi (store, stop, kilit, dedup, API)
 docs/                  spec, ADR'ler, doğrulama kapıları, ölçüm script'leri
 ```

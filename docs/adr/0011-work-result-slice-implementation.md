@@ -22,6 +22,9 @@ Bilinen sınırlar:
 - Klasör oturumunda ajanın depo dışına yazdığı dosyalar silinmediği için fingerprint'e girmez; kapsayıcı yerinde kalır ve yetim keşfinde görünür.
 - Dış programların onay ile kaldırma arasındaki yazımına dosya sistemi transaction garantisi yoktur.
 - Büyük `node_modules` tek bir oturumda bile bütçeyi aşabilir; kullanıcı yerel araçla temizler. Bu denge pilotta sınanır.
-- Eşzamanlı archive/delete yarışı ve gerçek 128 MiB / iç içe depo fixture'ı otomatik testle ölçülmedi.
+- Eşzamanlı archive/delete yarışı ve gerçek 128 MiB / iç içe depo fixture'ı
+  13 Eylül ek testleriyle ölçüldü: arşiv durdurması kilidi tutarken silme 409
+  döner ve dosya kalır; tam 128 MiB kabul edilir, bir bayt aşım reddedilir;
+  ignored iç içe Git deposunda dosya değişimi fingerprint'i değiştirir.
 
 Doğrulama: `npm test`, `npm run typecheck`, `npm run build`. Derlenmiş arayüz Electron'un Chromium'unda sürüldü: arşiv, arşiv filtresi, branch paneli, komut çalıştırma, önceki Run incelemesi, diff kapsamları ve kademeli proje silme 31 kontrolden geçti, konsol hatası yok. Bu bir duman testidir; G4 kullanıcı kabulü ve gerçek CLI akışı yapılmadı.

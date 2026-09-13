@@ -1,4 +1,7 @@
 import type { SerializedDockview } from 'dockview-react'
+import { MAX_GRID_PANELS, parseGridLayoutJson } from '../shared/gridLayoutGuard'
+
+export { MAX_GRID_PANELS }
 
 /**
  * Terminal grid yerleşimi yalnız bu istemcide tutulur; daemon kaydına girmez.
@@ -6,16 +9,19 @@ import type { SerializedDockview } from 'dockview-react'
  */
 const KEY = 'agentdeck.terminalGrid.v1'
 
-/** Grid'de aynı anda açık tutulan terminal sayısının üst sınırı. */
-export const MAX_GRID_PANELS = 8
-
 /** Kenar çubuğundan veya karttan sürüklenen oturumun veri türü. */
 export const SESSION_DRAG_TYPE = 'application/x-agentdeck-session'
 
 export function loadGridLayout(): SerializedDockview | null {
   try {
     const raw = localStorage.getItem(KEY)
-    return raw ? (JSON.parse(raw) as SerializedDockview) : null
+    if (!raw) return null
+    const layout = parseGridLayoutJson(raw)
+    if (!layout) {
+      clearGridLayout()
+      return null
+    }
+    return layout as SerializedDockview
   } catch {
     return null
   }

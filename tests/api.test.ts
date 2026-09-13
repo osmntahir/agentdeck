@@ -1915,3 +1915,30 @@ test('biçimsiz Run kimliği okunamayan geçmiş diye etiketlenmez', { timeout: 
     ws.close()
   })
 })
+
+test('arşiv durdurması sürerken silme reddedilir ve çalışma kopyası korunur', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, daemon, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId, {
+      command: 'trap "" HUP; touch ready; sleep 300',
+    }))
+    assert.equal(created.status, 200)
+    const session = created.body
+    await waitFor(async () => fs.existsSync(path.join(session.cwd, 'ready')))
+    const preview = await api.post<{ confirmationToken: string }>(`/api/sessions/${session.id}/delete-preview`)
+    assert.equal(preview.status, 200)
+    const archive = rawPost(daemon, `/api/sessions/${session.id}/archive`, {
+      expectedRunId: session.runId, stopIfLive: true,
+    })
+    await waitFor(async () => (await api.get(`/api/sessions/${session.id}/runs`)).status === 409)
+    const deletion = await api.del<{ code: string }>(`/api/sessions/${session.id}`, {
+      confirmationToken: preview.body.confirmationToken,
+    })
+    assert.equal(deletion.status, 409)
+    assert.equal(deletion.body.code, 'operation_in_progress')
+    assert.equal((await archive).status, 200)
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions[0].id, session.id)
+    assert.equal(typeof state.body.sessions[0].archivedAt, 'number')
+    assert.equal(fs.existsSync(path.join(session.cwd, 'ready')), true)
+  })
+})

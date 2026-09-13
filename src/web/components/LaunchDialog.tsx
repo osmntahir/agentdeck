@@ -2,15 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { SessionView } from '../../shared/types'
 import { hasRunningProcesses, lastCommand, PRESETS } from '../../shared/types'
 
-/**
- * CLI'ların kendi etkileşimli seçicisini açan literal komutlar. command niyetiyle
- * aynen çalışır; konuşmayı kullanıcı seçer, uygulama kimlik üretmez.
- */
-const RESUME_COMMANDS = [
-  { label: 'Claude seçicisi', command: 'claude --resume' },
-  { label: 'Codex seçicisi', command: 'codex resume' },
-  { label: 'Gemini seçicisi', command: 'gemini --resume' },
-]
+import { CLI_COMMANDS, explicitResumeCommand, launchCli, type LaunchCli } from '../../shared/launchPolicy'
+
+const RESUME_COMMANDS = Object.values(CLI_COMMANDS).map(({ label, picker }) => ({ label: `${label} seçicisi`, command: picker }))
 
 interface Props {
   session: SessionView
@@ -29,6 +23,9 @@ export function LaunchDialog({ session, busy, error, onCancel, onLaunch }: Props
   // null etkileşimli kabuk demektir; boş komut çalıştırılamaz.
   const [shell, setShell] = useState(initial === null)
   const [command, setCommand] = useState(initial ?? '')
+  const [resumeCli, setResumeCli] = useState<LaunchCli>(launchCli(session.command) ?? 'claude')
+  const [conversationId, setConversationId] = useState('')
+  const resumeCommand = explicitResumeCommand(resumeCli, conversationId)
   const running = hasRunningProcesses(session)
   const ready = shell || command.trim() !== ''
 
@@ -86,6 +83,30 @@ export function LaunchDialog({ session, busy, error, onCancel, onLaunch }: Props
             )
           })}
         </div>
+
+        <fieldset disabled={busy} className="explicit-resume">
+          <legend>Konuşma kimliğiyle sürdür</legend>
+          <label htmlFor="resume-cli">Program</label>
+            <select id="resume-cli" value={resumeCli} onChange={(event) => setResumeCli(event.target.value as LaunchCli)}>
+              {Object.entries(CLI_COMMANDS).map(([cli, { label }]) => <option key={cli} value={cli}>{label}</option>)}
+            </select>
+          <label>
+            Konuşma UUID’si
+            <input value={conversationId} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              aria-invalid={conversationId.trim() !== '' && !resumeCommand}
+              onChange={(event) => setConversationId(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+                event.preventDefault()
+                if (!busy && resumeCommand) fill(resumeCommand)
+              }} />
+          </label>
+          <button type="button" disabled={!resumeCommand} onClick={() => resumeCommand && fill(resumeCommand)}>
+            Komuta aktar
+          </button>
+          <p className="dialog-note muted">Elinizdeki tam UUID’yi girin. Komutu yukarıda inceleyip çalıştırın.
+            Konuşma bulunamazsa otomatik yeni konuşma açılmaz; erişimi CLI belirler.</p>
+        </fieldset>
 
         <p className="dialog-note muted">
           Komut aynı klasörde yeni Run olarak aynen çalışır; oturumun başlangıç programı değişmez. Seçiciler

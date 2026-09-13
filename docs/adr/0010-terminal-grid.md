@@ -14,4 +14,16 @@ Kullanıcı paralel ajanları aynı anda izleyip yönetmek istiyor; önizleme ka
 
 **Kontrol devri.** Kontrol mesajı `vacant` alanını taşır: lease'in sahibi yoksa `true`. İstemci kontrolü yalnız sahipsizken kendiliğinden alır. Sahibi olan lease'i almak yine açık "Kontrolü al" eylemidir; ADR 0008'in bu kuralı değişmedi. Neden: grid ile tek görünüm arasında geçerken aynı Run'a yeni bağlantı, eski bağlantının kapanışı sunucuya ulaşmadan gelebilir. O durumda yeni terminal izleyici olarak kalıyor ve sahip ayrıldıktan sonra kimse girdi gönderemiyordu. Birden çok izleyici aynı anda sahipsiz lease'i isterse son istek kazanır; diğerleri salt okunur kalır.
 
-Açık kalanlar: grid panellerinin kendi içindeki tam klavye döşemesi; tarama kartı/krom F6 ve roving [ADR 0012](0012-scan-focus-poll-implementation.md) ile kapanır. Gerçek tarayıcıda 4–8 canlı CLI ile yük kabulü.
+Klavye döşemesi (13 Eylül): gezinme çubuğunda aday seçilir; “Seçilen panelin
+yerleşimi” diyaloğunda başka panelin soluna/sağına/üstüne/altına bölünür veya
+aynı gruba sekme olarak taşınır. Grup 40 piksel adımlarla boyutlandırılır;
+Dockview komşu grup ve alan sınırlarını uygular. Panel kapatma yalnız görünümü
+kaldırır. Escape/Bitti tetikleyene döner; son panel kapanmışsa yaşayan krom
+odağı alır. Terminal tuşlarına yeni yerleşim kısayolu atanmaz.
+
+Kayıt okunurken 1 MiB metin, 8 panel ve panel/Session kimlik tutarlılığı portal
+açılmadan denetlenir; bozuk/aşırı kayıt atılır. Grid'in derin şeması Dockview
+`fromJSON` tarafından ayrıca doğrulanır.
+
+Açık kalan: gerçek tarayıcıda 4–8 canlı ajan CLI ile yük ve kullanıcı kabulü.
+Kabuk fixture'larıyla Chromium duman testi bu kabulün yerine geçmez.
