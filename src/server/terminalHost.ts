@@ -80,6 +80,10 @@ export interface TerminalHost {
   history(sessionId: string, runId: string): Promise<CheckpointRead>
   /** Canlı olmayan bir Run'ın son görüntüsünden kart önizlemesi. */
   historyPreview(sessionId: string, runId: string): Promise<PreviewResult>
+  /** Run kayda girdi: saklama sınırı (son iki Run) ancak şimdi uygulanır. */
+  publish(sessionId: string, runId: string): Promise<void>
+  /** Run kayda hiç girmedi: görüntüsü atılır, önceki Run'ların kayıtlarına dokunulmaz. */
+  discard(sessionId: string, runId: string): Promise<void>
   removeSession(sessionId: string): void
   failure(runId: string): TerminalFailure | null
   checkpointStatus(runId: string): CheckpointStatus
@@ -120,6 +124,8 @@ interface HostRun {
   dirty: boolean
   flushTimer: NodeJS.Timeout | null
   flushing: Promise<void> | null
+  /** Kayda girmemiş Run'ın yazımı eski kayıtları budayamaz. */
+  published: boolean
 }
 
 /** Dev'de kaynak .ts, üretimde derlenmiş .js yüklenir. */
@@ -143,12 +149,23 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
   let worker: Worker | null = null
   const closing = new Map<string, Promise<void>>()
 
+  /**
+   * Yazım yolunun durum kaydı; yoksa açar. Okuma yolu (checkpointStatus) kayıt
+   * açmaz. Sınır dolunca yalnız kapanmış Run'ların durumu atılır.
+   */
   function status(runId: string): CheckpointStatus {
     let entry = checkpointStatus.get(runId)
     if (!entry) {
       entry = { lastSuccessAt: null, lastError: null }
       checkpointStatus.set(runId, entry)
-      if (checkpointStatus.size > 512) checkpointStatus.delete(checkpointStatus.keys().next().value!)
+      if (checkpointStatus.size > 512) {
+        for (const key of checkpointStatus.keys()) {
+          if (!runs.has(key)) {
+            checkpointStatus.delete(key)
+            break
+          }
+        }
+      }
     }
     return entry
   }
@@ -300,6 +317,7 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
       const entry = status(run.runId)
       entry.lastSuccessAt = Date.now()
       entry.lastError = null
+      if (run.published) options.checkpoints.prune(run.sessionId, run.runId)
     } catch (err) {
       status(run.runId).lastError = (err as Error).message
     }
@@ -384,6 +402,7 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
         dirty: false,
         flushTimer: null,
         flushing: null,
+        published: false,
       })
       status(input.runId)
       send({ type: 'open', runId: input.runId, cols: clampCols(input.cols), rows: clampRows(input.rows) })
@@ -540,6 +559,24 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
       }
     },
 
+    async publish(sessionId: string, runId: string): Promise<void> {
+      const run = runs.get(runId)
+      if (run) run.published = true
+      // Run commit'ten önce çıkmış olabilir: son yazım bitsin, sonra budansın.
+      await closing.get(runId)
+      try {
+        options.checkpoints.prune(sessionId, runId)
+      } catch (err) {
+        status(runId).lastError = (err as Error).message
+      }
+    },
+
+    async discard(sessionId: string, runId: string): Promise<void> {
+      await this.close(runId)
+      options.checkpoints.removeRun(sessionId, runId)
+      checkpointStatus.delete(runId)
+    },
+
     removeSession(sessionId: string): void {
       options.checkpoints.removeSession(sessionId)
     },
@@ -549,7 +586,8 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
     },
 
     checkpointStatus(runId: string): CheckpointStatus {
-      return { ...status(runId) }
+      const entry = checkpointStatus.get(runId)
+      return entry ? { ...entry } : { lastSuccessAt: null, lastError: null }
     },
 
     async shutdown(): Promise<void> {

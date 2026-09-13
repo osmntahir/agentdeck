@@ -40,8 +40,13 @@ export type CheckpointRead =
 export interface CheckpointStore {
   readonly root: string
   fileFor(sessionId: string, runId: string): string
+  /** Yazar ama budamaz: kayda girmemiş bir Run önceki Run'ların kaydını silemez. */
   write(input: CheckpointInput): Promise<void>
   read(sessionId: string, runId: string): Promise<CheckpointRead>
+  /** Kayda girmiş Run için saklama sınırını uygular; o Run'ın kaydı her durumda kalır. */
+  prune(sessionId: string, keepRunId: string): void
+  /** Tek Run kaydını kaldırır; oturum dizini boşalırsa o da kalkar. */
+  removeRun(sessionId: string, runId: string): void
   removeSession(sessionId: string): void
   stats(): { peakConcurrentReads: number }
 }
@@ -50,9 +55,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** Kimlik dosya adına girebilir mi: yol ayırıcısı veya üst dizin kaçışı içermez. */
+export function isCheckpointId(id: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(id)
+}
+
 /** Kimlikler dosya adına girer; yol ayırıcısı veya üst dizin kaçışı kabul edilmez. */
 function safeId(id: string, what: string): string {
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new Error(`Checkpoint ${what} kimliği kullanılamaz: ${id}`)
+  if (!isCheckpointId(id)) throw new Error(`Checkpoint ${what} kimliği kullanılamaz: ${id}`)
   return id
 }
 
@@ -71,7 +81,7 @@ export function openCheckpointStore(dataDir: string): CheckpointStore {
   }
 
   /** En yeni KEPT_RUNS kaydı bırakır; kalanları kaldırır. */
-  function prune(dir: string, justWritten: string): void {
+  function pruneDir(dir: string, justWritten: string): void {
     let entries: string[]
     try {
       entries = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
@@ -79,6 +89,8 @@ export function openCheckpointStore(dataDir: string): CheckpointStore {
       return
     }
     if (entries.length <= KEPT_RUNS) return
+    // Korunan kaydın dosyası yoksa (yazım başarısız) diğerlerinden bir fazlası kalır.
+    const othersKept = entries.includes(path.basename(justWritten)) ? KEPT_RUNS - 1 : KEPT_RUNS
     // Az önce yazılan kayıt her durumda korunur; mtime eşitliği onu düşüremez.
     const byAge = entries
       .filter((name) => path.join(dir, name) !== justWritten)
@@ -91,7 +103,7 @@ export function openCheckpointStore(dataDir: string): CheckpointStore {
         }
       })
       .sort((a, b) => b.at - a.at)
-    for (const stale of byAge.slice(KEPT_RUNS - 1)) {
+    for (const stale of byAge.slice(othersKept)) {
       try {
         fs.unlinkSync(stale.full)
       } catch {
@@ -136,7 +148,6 @@ export function openCheckpointStore(dataDir: string): CheckpointStore {
         await fs.promises.rm(tmp, { force: true }).catch(() => undefined)
         throw new Error(`Terminal checkpoint yazılamadı: ${(err as Error).message}`)
       }
-      prune(dir, file)
     },
 
     async read(sessionId: string, runId: string): Promise<CheckpointRead> {
@@ -179,6 +190,20 @@ export function openCheckpointStore(dataDir: string): CheckpointStore {
         return { state: 'ready', checkpoint: parsed as unknown as StoredCheckpoint }
       } finally {
         release()
+      }
+    },
+
+    prune(sessionId: string, keepRunId: string): void {
+      pruneDir(sessionDir(sessionId), fileFor(sessionId, keepRunId))
+    },
+
+    removeRun(sessionId: string, runId: string): void {
+      fs.rmSync(fileFor(sessionId, runId), { force: true })
+      try {
+        // rmdir yalnız boş dizini kaldırır; başka Run'ın kaydı varsa dokunmaz.
+        fs.rmdirSync(sessionDir(sessionId))
+      } catch {
+        // Dizin dolu veya hiç yok.
       }
     },
 

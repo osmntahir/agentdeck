@@ -50,3 +50,24 @@ test('büyük paste Unicode kod noktalarını bölmeden 64 KiB parçalara ayrıl
     assert.equal(Buffer.from(part).toString(), part)
   }
 })
+
+test('1 MiB tan büyük replay yavaş yazımda istemci tarafında düşürülmez', async () => {
+  const pending: (() => void)[] = []
+  let failed = false
+  const stream = new TerminalStream({ reset() {}, resize() {}, write(_t, cb) { pending.push(cb) } }, identity, () => {}, () => { failed = true })
+  const chunk = 'x'.repeat(32 * 1024)
+  const count = 64 // 2 MiB: spec'in 8 MiB replay tavanının altında
+  const done: Promise<void>[] = [stream.receive(JSON.stringify(start({ totalBytes: chunk.length * count })))]
+  for (let index = 0; index < count; index++) {
+    done.push(stream.receive(JSON.stringify({ type: 'replay-chunk', snapshotId: 'snap', index, text: chunk })))
+  }
+  done.push(stream.receive(JSON.stringify({ type: 'replay-end', snapshotId: 'snap', chunkCount: count })))
+  assert.equal(failed, false, 'geçerli replay kuyrukta beklerken düşürüldü')
+  while (!stream.status.ready && !failed) {
+    pending.splice(0).forEach((cb) => cb())
+    await new Promise((r) => setTimeout(r, 1))
+  }
+  await Promise.all(done)
+  assert.equal(failed, false)
+  assert.equal(stream.status.ready, true)
+})

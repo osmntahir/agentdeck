@@ -1,4 +1,4 @@
-/** Ordered browser replay consumer. No terminal mutation bypasses this queue. */
+/** Tarayıcıdaki sıralı replay tüketicisi. Terminale giden hiçbir değişiklik bu kuyruğu atlamaz. */
 export interface ScreenWriter {
   reset(): void
   resize(cols: number, rows: number): void
@@ -15,6 +15,12 @@ export interface StreamStatus {
 }
 
 const bytes = (text: string) => new TextEncoder().encode(text).length
+
+/**
+ * Yazılmayı bekleyen mesaj tavanı. Replay tek başına 8 MiB olabilir ve xterm
+ * onu socket'ten yavaş tüketir; üstüne 1 MiB canlı devam payı bırakılır.
+ */
+const MAX_QUEUED_BYTES = 8 * 1024 * 1024 + 1024 * 1024
 const integer = (value: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max
 
@@ -46,7 +52,7 @@ export class TerminalStream {
     if (this.stopped) return Promise.resolve()
     const size = bytes(raw)
     this.queuedBytes += size
-    if (size > 256 * 1024 || this.queuedBytes > 1024 * 1024) {
+    if (size > 256 * 1024 || this.queuedBytes > MAX_QUEUED_BYTES) {
       this.fail('Terminal akışı yetişmiyor; yeniden bağlanın')
       return Promise.resolve()
     }
@@ -129,7 +135,7 @@ export class TerminalStream {
   }
 }
 
-/** Paste batches preserve code points; disconnected input is never replayed. */
+/** Yapıştırma parçaları kod noktasını bölmez; kopuşta girdi yeniden gönderilmez. */
 export function inputChunks(text: string, limit = 64 * 1024): string[] {
   const result: string[] = []
   let part = ''

@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { Terminal } from '@xterm/headless'
 import { openCheckpointStore } from '../src/server/checkpoints'
@@ -394,4 +396,78 @@ test('periyodik flush sürerken kapanış son çıktıyı onun ardından kaydede
     assert.equal(result.state, 'ready')
     if (result.state === 'ready') assert.match(result.checkpoint.text, /ilk son/)
   } finally { release(); await host.shutdown(); removeDir(dir) }
+})
+
+test('checkpoint durumu okumak kayıt üretmez; açık Run un durumu atılmaz', async () => {
+  const h = harness({ checkpointDelayMs: 20 })
+  try {
+    h.host.open({ sessionId: 's1', runId: 'canli', cols: 60, rows: 8 })
+    h.host.feed('canli', 'kayıt\r\n')
+    await h.host.drain('canli')
+    const deadline = Date.now() + 3000
+    while (h.host.checkpointStatus('canli').lastSuccessAt === null && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    assert.notEqual(h.host.checkpointStatus('canli').lastSuccessAt, null, 'zamanlanmış flush yazmadı')
+
+    // Durum yoklaması (GET /api/state) bilinmeyen Run'lar için kayıt açmamalı;
+    // aksi hâlde sınır dolunca açık Run'ın durumu sessizce kaybolur.
+    for (let i = 0; i < 600; i++) h.host.checkpointStatus(`bilinmeyen-${i}`)
+    assert.notEqual(h.host.checkpointStatus('canli').lastSuccessAt, null, 'açık Run un durumu atıldı')
+  } finally {
+    await h.close()
+  }
+})
+
+test('kayda girmemiş Run un görüntüsü önceki Run kayıtlarını silmez ve atılabilir', async () => {
+  const h = harness()
+  try {
+    for (const runId of ['r1', 'r2']) {
+      h.host.open({ sessionId: 's1', runId, cols: 60, rows: 8 })
+      h.host.feed(runId, `${runId} bitti\r\n`)
+      await h.host.close(runId)
+      await h.host.publish('s1', runId)
+    }
+
+    // Spawn/commit hatası: Run hiç yayımlanmadı ama terminali açılıp kapandı.
+    h.host.open({ sessionId: 's1', runId: 'r3', cols: 60, rows: 8 })
+    await h.host.close('r3')
+    assert.equal((await h.host.history('s1', 'r1')).state, 'ready', 'başarısız Run önceki kaydı sildi')
+    assert.equal((await h.host.history('s1', 'r2')).state, 'ready')
+
+    await h.host.discard('s1', 'r3')
+    assert.equal((await h.host.history('s1', 'r3')).state, 'missing', 'atılan Run un görüntüsü kaldı')
+    assert.equal((await h.host.history('s1', 'r1')).state, 'ready')
+  } finally {
+    await h.close()
+  }
+})
+
+test('yayımlanmadan önce çıkan Run un son görüntüsü yayımlanınca korunur', async () => {
+  const h = harness()
+  try {
+    // Hızlı çıkan komut: çıkış, state commit'inden önce gözlenebilir.
+    h.host.open({ sessionId: 's1', runId: 'r1', cols: 60, rows: 8 })
+    h.host.feed('r1', 'hemen çıktı\r\n')
+    await h.host.close('r1')
+    await h.host.publish('s1', 'r1')
+    const read = await h.host.history('s1', 'r1')
+    assert.equal(read.state, 'ready')
+    if (read.state === 'ready') assert.match(read.checkpoint.text, /hemen çıktı/)
+  } finally {
+    await h.close()
+  }
+})
+
+test('kayda hiç girmemiş oturum için terminal dizini bırakılmaz', async () => {
+  const h = harness()
+  try {
+    h.host.open({ sessionId: 'yetim', runId: 'r1', cols: 60, rows: 8 })
+    h.host.feed('r1', 'kısa ömür\r\n')
+    await h.host.close('r1')
+    await h.host.discard('yetim', 'r1')
+    assert.equal(fs.existsSync(path.join(h.dir, 'terminal', 'yetim')), false)
+  } finally {
+    await h.close()
+  }
 })

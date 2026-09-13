@@ -72,7 +72,7 @@ export function TerminalPane({ session, daemonId, stateHealthy }: Props) {
       ws.onmessage = (event) => { if (typeof event.data === 'string') void consumer.receive(event.data) }
       ws.onclose = (event) => {
         if (disposed || socket !== ws) return
-        // Inspect closes after queued replay; let write callbacks finish it.
+        // İnceleme bağlantısı replay kuyruğa alındıktan sonra kapanır; yazımlar kendi callback'leriyle biter.
         if (event.code === 1000 || protocolFailed) return
         consumer.dispose()
         term.options.disableStdin = true

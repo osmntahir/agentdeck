@@ -75,7 +75,7 @@ const QUERY_SEQUENCES = new RegExp(
   ].join('|'), 'g',
 )
 
-/** Remove query slots, preserving palette changes within the same OSC. */
+/** Sorgu yuvalarını ayıklar; aynı OSC içindeki renk atamaları korunur. */
 export function stripQueries(text: string): string {
   return text.replace(QUERY_SEQUENCES, '').replace(
     /(\x1b\]|\x9d)(4|10|11|12);([^\x07\x1b\x9c]*)(\x07|\x1b\\|\x9c)/g,

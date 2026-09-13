@@ -1055,3 +1055,16 @@ test('null WebSocket mesajı daemon u düşürmez', { timeout: 15000 }, async ()
     } finally { socket.close() }
   })
 })
+
+test('biçimsiz Run kimliği okunamayan geçmiş diye etiketlenmez', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    await api.post(`/api/sessions/${created.body.id}/stop`, { expectedRunId: created.body.runId })
+    const ws = connectWs(daemon, `session=${created.body.id}&run=${encodeURIComponent('../state')}&token=${daemon.token}`)
+    await ws.open().catch(() => undefined)
+    const msg = await ws.waitFor((m) => m.type === 'error' || m.type === 'history-unreadable' || m.type === 'history-missing')
+    assert.equal(msg.type, 'error')
+    assert.equal(msg.code, 'validation')
+    ws.close()
+  })
+})

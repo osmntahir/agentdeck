@@ -38,7 +38,7 @@ isteklerini sonlandırır; duraklatılan PTY serbest bırakılır, temsil hatas�
 bildirilir. Checkpoint yazma hatası PTY'yi öldürmez; state metadata'sı ve arayüz
 son kayıt zamanı/hatasını gösterir. Fsync/güç kaybı garantisi yoktur.
 
-Son iki yazılmış Run checkpoint'i tutulur; current veya bilinen eski runId ile
+Son iki Run checkpoint'i tutulur; saklama sınırı yalnız **kayda girmiş** Run yayımlandığında uygulanır. Spawn veya state commit'i başarısız olan Run'ın görüntüsü önceki Run'ların kayıtlarını budayamaz ve atılır; kayda hiç girmemiş oturum için `terminal/` dizini kalmaz. Güncel veya bilinen eski runId ile
 salt okunur WS inspection mümkündür. **Önceki Run seçicisi henüz arayüzde yoktur**;
 aynı dosyalarda launch eylemleriyle §8/4'te bağlanacaktır. Grid kartları henüz
 preview API'sine bağlanmamıştır (§8/5). CLI managed fresh/resume açılmadı.
@@ -57,3 +57,5 @@ hızı, 4–8 gerçek CLI ve 32 PTY ürün yük kabulü açıktır. G1'in öncek
 bu nedenle topluca kapatılmaz.
 
 Son doğrulama (13 Eylül): `npm test` 158/158; `npm run typecheck` ve `npm run build` başarılı. Derlenmiş worker + gerçek WS + ortak istemci tüketicisi üzerinden input, scrollback ve stop smoke testi geçti. Bu headless entegrasyon kanıtıdır, tarayıcı render kabulü değildir.
+
+İnceleme düzeltmeleri (13 Eylül): başarısız spawn/commit'in önceki Run checkpoint'ini budaması, durum yoklamasının açık Run'ın checkpoint durumunu düşürebilmesi, 1 MiB'yi aşan geçerli replay'in istemcide kesilmesi ve biçimsiz runId'nin "okunamadı" etiketi düzeltildi; her biri önce kırmızı görülen regresyon testiyle kapsandı. `npm test` 166/166, `npm run typecheck` başarılı.

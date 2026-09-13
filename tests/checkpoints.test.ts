@@ -86,6 +86,8 @@ test('son iki Run tutulur; yeni Run önceki Run un kaydını silmez', async () =
     await store.write(input('s1', 'r1'))
     await store.write(input('s1', 'r2'))
     await store.write(input('s1', 'r3'))
+    // Saklama sınırı yalnız kayda girmiş Run yayımlanınca uygulanır.
+    store.prune('s1', 'r3')
 
     assert.equal((await store.read('s1', 'r3')).state, 'ready')
     assert.equal((await store.read('s1', 'r2')).state, 'ready', 'önceki Run un görüntüsü korunur')
@@ -137,6 +139,34 @@ test('yazılamayan checkpoint hata olarak bildirilir ve yarım dosya bırakmaz',
       [],
     )
     assert.equal((await store.read('s1', 'r1')).state, 'ready', 'eski kayıt korunur')
+  } finally {
+    removeDir(dir)
+  }
+})
+
+test('yazım tek başına eski kayıtları budamaz', async () => {
+  const dir = tempDir()
+  try {
+    const store = openCheckpointStore(dir)
+    for (const runId of ['r1', 'r2', 'r3']) await store.write(input('s1', runId))
+    for (const runId of ['r1', 'r2', 'r3']) assert.equal((await store.read('s1', runId)).state, 'ready')
+  } finally {
+    removeDir(dir)
+  }
+})
+
+test('tek Run kaydı kaldırılınca boşalan oturum dizini de kalkar', async () => {
+  const dir = tempDir()
+  try {
+    const store = openCheckpointStore(dir)
+    await store.write(input('s1', 'r1'))
+    await store.write(input('s2', 'r1'))
+    await store.write(input('s2', 'r2'))
+
+    store.removeRun('s1', 'r1')
+    assert.equal(fs.existsSync(path.join(store.root, 's1')), false, 'boş oturum dizini kaldı')
+    store.removeRun('s2', 'r1')
+    assert.equal((await store.read('s2', 'r2')).state, 'ready', 'aynı oturumun diğer kaydı korunur')
   } finally {
     removeDir(dir)
   }

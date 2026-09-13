@@ -11,7 +11,7 @@ import { createRequestLedger, DedupConflictError } from './dedup'
 import { scanOrphanWorktrees } from './orphans'
 import * as sessions from './sessions'
 import * as git from './git'
-import { openCheckpointStore } from './checkpoints'
+import { isCheckpointId, openCheckpointStore } from './checkpoints'
 import { createTerminalHost, type TerminalEvent, type PreviewResult } from './terminalHost'
 import { chunkText, type SnapshotScope } from './terminalState'
 import { commandLabel, type Isolation, type Project, type Session, type SessionView } from '../shared/types'
@@ -482,7 +482,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
             onExit: (exit) => recordExit(sid, exit),
           })
         } catch (err) {
-          await host.close(runId)
+          // Kayda girmemiş Run'ın görüntüsü atılır; önceki kayıtlara dokunulmaz.
+          await host.discard(sid, runId)
           const detail: Record<string, unknown> = { cwd }
           if (isolation === 'worktree' && baseCommit) {
             detail.worktree = (await rollbackWorktree(project, cwd, baseCommit)) === 'removed' ? 'kaldırıldı' : 'korundu'
@@ -517,12 +518,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         } catch (err) {
           // PTY doğdu ama kayıt yazılamadı: yalnız kendi grubumuz durdurulur.
           await sessions.stop(sid)
+          await host.discard(sid, runId)
           const detail: Record<string, unknown> = { cwd }
           if (isolation === 'worktree' && baseCommit) {
             detail.worktree = (await rollbackWorktree(project, cwd, baseCommit)) === 'removed' ? 'kaldırıldı' : 'korundu'
           }
           throw new HttpError(503, 'persistence', `Oturum kaydedilemedi: ${(err as Error).message}`, detail)
         }
+        await host.publish(sid, runId)
         return session
       })
       // Yanıt kalıcı kayıttan okunur: Run bu arada çıkmışsa görünüm bunu söyler.
@@ -611,7 +614,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
               onExit: (exit) => recordExit(current.id, exit),
             })
           } catch (err) {
-            await host.close(runId)
+            await host.discard(current.id, runId)
             throw new HttpError(500, 'spawn_failed', `Yeniden başlatılamadı: ${(err as Error).message}`)
           }
 
@@ -628,8 +631,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
             })
           } catch (err) {
             await sessions.stop(current.id)
+            await host.discard(current.id, runId)
             throw new HttpError(503, 'persistence', `Yeni Run kaydedilemedi: ${(err as Error).message}`)
           }
+          // Yeni Run kayda girdi: saklama sınırı ancak şimdi eski kayıtları budar.
+          await host.publish(current.id, runId)
           return findSession(current.id) as Session
         },
       )
@@ -850,11 +856,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
    * replay-start'ta yapar; input replay-end'den önce açılmaz.
    */
   wss.on('connection', (ws, req) => {
+    // Origin ve token upgrade öncesi verifyClient'ta doğrulandı.
     const url = new URL(req.url ?? '', 'http://localhost')
-    if (!originOk(req.headers.origin) || url.searchParams.get('token') !== token) {
-      ws.close(1008, 'yetkisiz')
-      return
-    }
 
     /** Yavaş izleyici üreticiyi bekletmez; kuyruğu şişerse ayrılır. */
     function sendJson(payload: unknown): boolean {
@@ -949,6 +952,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (runId === null) {
         sendJson({ type: 'history-missing', message: 'Bu oturumda henüz Run çalışmadı' })
         ws.close(1000, 'geçmiş yok')
+        return
+      }
+      if (!isCheckpointId(runId)) {
+        sendJson({ type: 'error', code: 'validation', message: 'Run kimliği geçersiz' })
+        ws.close(1008, 'geçersiz Run kimliği')
         return
       }
       void host
