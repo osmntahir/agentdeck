@@ -851,6 +851,29 @@ button.primary {
   border-radius: 8px;
   font-size: 12px;
 }
+.project-delete-confirm ul {
+  margin: 0;
+  padding-left: 16px;
+}
+.project-delete-confirm code,
+.delete-target code {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+/* Eylemin tek cümlelik açıklaması; terminal boyutunu değiştirmemek için üstte yüzer. */
+.action-hint {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  z-index: 5;
+  max-width: min(520px, calc(100% - 24px));
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12px;
+  pointer-events: none;
+}
 .branch-panel {
   display: grid;
   gap: 6px;
@@ -1024,6 +1047,8 @@ button.primary {
 }
 .dialog-sub {
   font-size: 13px;
+  /* Uzun çalışma dizini yolu diyaloğu taşırmaz. */
+  overflow-wrap: anywhere;
 }
 .dialog input,
 .dialog select {

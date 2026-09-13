@@ -481,6 +481,11 @@ test('arşiv canlı işi açık istek olmadan durdurmaz; arşiv ve arşivden ç�
     const branch = created.body.branch as string
     assert.match(execFileSync('git', ['branch', '--list', branch], { cwd: repo, encoding: 'utf8' }), /agentdeck\//)
 
+    const relaunch = await api.post<{ code: string }>(`/api/sessions/${id}/restart`, { requestId: 'arsivde-restart' })
+    assert.equal(relaunch.status, 409)
+    assert.equal(relaunch.body.code, 'session_archived', 'arşivdeki oturum görünmeden canlanmaz')
+    assert.equal((await api.get<StateResponse>('/api/state')).body.sessions[0].lifecycle, 'exited')
+
     const restored = await api.post<SessionView>(`/api/sessions/${id}/unarchive`)
     assert.equal(restored.status, 200, JSON.stringify(restored.body))
     assert.equal(restored.body.archivedAt, null)
@@ -489,6 +494,29 @@ test('arşiv canlı işi açık istek olmadan durdurmaz; arşiv ve arşivden ç�
 
     state = await api.get<StateResponse>('/api/state')
     assert.equal(state.body.sessions[0].archivedAt, null)
+  })
+})
+
+test('lideri çıkmış süreç grubu durum görünümünde işaretlenir; arşiv onu açık durdurmayla kapatır', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', {
+      ...createBody(projectId),
+      command: 'trap "" HUP; sleep 300 & exit 0',
+    })
+    assert.equal(created.status, 200, JSON.stringify(created.body))
+    await waitFor(async () => (await api.get<StateResponse>('/api/state')).body.sessions[0]?.lifecycle === 'exited')
+
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions[0].remainingProcessGroup, true, 'lider çıktı ama grupta süreç kaldı')
+
+    const refused = await api.post<{ code: string }>(`/api/sessions/${created.body.id}/archive`, {})
+    assert.equal(refused.status, 409)
+    assert.equal(refused.body.code, 'live_requires_stop')
+
+    const archived = await api.post<SessionView>(`/api/sessions/${created.body.id}/archive`, { stopIfLive: true })
+    assert.equal(archived.status, 200, JSON.stringify(archived.body))
+    assert.equal(archived.body.remainingProcessGroup, false, 'kalan grup doğrulanmış biçimde durduruldu')
+    assert.equal(typeof archived.body.archivedAt, 'number')
   })
 })
 

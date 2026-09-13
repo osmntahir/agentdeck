@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { FORMAT_VERSION, type SnapshotScope } from './terminalState'
+import type { StoredRun } from '../shared/types'
 
 /**
  * Run kimlikli terminal checkpoint'leri (spec §4). state.json'ın dışında, özel
@@ -44,7 +45,7 @@ export interface CheckpointStore {
   write(input: CheckpointInput): Promise<void>
   read(sessionId: string, runId: string): Promise<CheckpointRead>
   /** Saklanmış Run kayıtları, en yeni önce; dosya içeriği okunmaz. */
-  list(sessionId: string): { runId: string; updatedAt: number }[]
+  list(sessionId: string): StoredRun[]
   /** Kayda girmiş Run için saklama sınırını uygular; o Run'ın kaydı her durumda kalır. */
   prune(sessionId: string, keepRunId: string): void
   /** Tek Run kaydını kaldırır; oturum dizini boşalırsa o da kalkar. */
@@ -195,7 +196,7 @@ export function openCheckpointStore(dataDir: string): CheckpointStore {
       }
     },
 
-    list(sessionId: string): { runId: string; updatedAt: number }[] {
+    list(sessionId: string): StoredRun[] {
       const dir = sessionDir(sessionId)
       let entries: string[]
       try {
@@ -203,7 +204,7 @@ export function openCheckpointStore(dataDir: string): CheckpointStore {
       } catch {
         return []
       }
-      const runs: { runId: string; updatedAt: number }[] = []
+      const runs: StoredRun[] = []
       for (const name of entries) {
         // Yarım kalmış temp dosyaları ve tanınmayan adlar Run kaydı değildir.
         const runId = name.slice(0, -'.json'.length)

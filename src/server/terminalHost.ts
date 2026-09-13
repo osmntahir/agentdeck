@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
 import type { CheckpointRead, CheckpointStore } from './checkpoints'
+import type { StoredRun } from '../shared/types'
 import { chunkText, clampCols, clampRows, type Preview, type Snapshot, type SnapshotScope, type TerminalFailure } from './terminalState'
 import type { WorkerEvent, WorkerRequest } from './terminalWorker'
 
@@ -86,7 +87,7 @@ export interface TerminalHost {
   discard(sessionId: string, runId: string): Promise<void>
   removeSession(sessionId: string): void
   /** Saklanmış Run görüntüleri, en yeni önce. */
-  listRuns(sessionId: string): { runId: string; updatedAt: number }[]
+  listRuns(sessionId: string): StoredRun[]
   failure(runId: string): TerminalFailure | null
   checkpointStatus(runId: string): CheckpointStatus
   shutdown(): Promise<void>
@@ -583,7 +584,7 @@ export function createTerminalHost(options: TerminalHostOptions): TerminalHost {
       options.checkpoints.removeSession(sessionId)
     },
 
-    listRuns(sessionId: string): { runId: string; updatedAt: number }[] {
+    listRuns(sessionId: string): StoredRun[] {
       return options.checkpoints.list(sessionId)
     },
 

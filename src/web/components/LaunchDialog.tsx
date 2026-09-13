@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { SessionView } from '../../shared/types'
-import { PRESETS } from '../../shared/types'
+import { hasRunningProcesses, lastCommand, PRESETS } from '../../shared/types'
 
-/** CLI'ların kendi etkileşimli seçicileri: konuşmayı kullanıcı seçer, uygulama kimlik üretmez. */
-const PICKERS = [
+/**
+ * CLI'ların kendi etkileşimli seçicisini açan literal komutlar. command niyetiyle
+ * aynen çalışır; konuşmayı kullanıcı seçer, uygulama kimlik üretmez.
+ */
+const RESUME_COMMANDS = [
   { label: 'Claude seçicisi', command: 'claude --resume' },
   { label: 'Codex seçicisi', command: 'codex resume' },
   { label: 'Gemini seçicisi', command: 'gemini --resume' },
@@ -22,11 +25,11 @@ export function LaunchDialog({ session, busy, error, onCancel, onLaunch }: Props
   useEffect(() => {
     dialog.current?.showModal()
   }, [])
-  const initial = session.lastLaunch?.mode === 'command' ? session.lastLaunch.command : session.command
+  const initial = lastCommand(session)
   // null etkileşimli kabuk demektir; boş komut çalıştırılamaz.
   const [shell, setShell] = useState(initial === null)
   const [command, setCommand] = useState(initial ?? '')
-  const live = session.lifecycle === 'live'
+  const running = hasRunningProcesses(session)
   const ready = shell || command.trim() !== ''
 
   const submit = (e: React.FormEvent) => {
@@ -68,17 +71,20 @@ export function LaunchDialog({ session, busy, error, onCancel, onLaunch }: Props
         </label>
 
         <div className="command-fills" role="group" aria-label="Hazır komutlar">
-          {[...PRESETS, ...PICKERS].map((preset) => (
-            <button
-              type="button"
-              key={preset.label}
-              aria-pressed={preset.command === null ? shell : !shell && command === preset.command}
-              className={(preset.command === null ? shell : !shell && command === preset.command) ? 'on' : ''}
-              onClick={() => fill(preset.command)}
-            >
-              {preset.label}
-            </button>
-          ))}
+          {[...PRESETS, ...RESUME_COMMANDS].map((shortcut) => {
+            const selected = shortcut.command === null ? shell : !shell && command === shortcut.command
+            return (
+              <button
+                type="button"
+                key={shortcut.label}
+                aria-pressed={selected}
+                className={selected ? 'on' : ''}
+                onClick={() => fill(shortcut.command)}
+              >
+                {shortcut.label}
+              </button>
+            )
+          })}
         </div>
 
         <p className="dialog-note muted">
@@ -86,7 +92,7 @@ export function LaunchDialog({ session, busy, error, onCancel, onLaunch }: Props
           CLI'ın kendi konuşma listesini açar, hangi konuşmanın süreceğini siz seçersiniz. Ajanlar arasında
           konuşma bağlamı aktarılmaz.
         </p>
-        {live && <p className="dialog-note">Canlı Run önce doğrulanmış biçimde durdurulur.</p>}
+        {running && <p className="dialog-note">Çalışan süreç grubu önce doğrulanmış biçimde durdurulur.</p>}
 
         {error && (
           <div className="error" role="alert">
@@ -98,7 +104,7 @@ export function LaunchDialog({ session, busy, error, onCancel, onLaunch }: Props
             vazgeç
           </button>
           <button type="submit" className="primary" disabled={busy || !ready}>
-            {busy ? 'Başlatılıyor…' : live ? 'Durdur ve çalıştır' : 'Çalıştır'}
+            {busy ? 'Başlatılıyor…' : running ? 'Durdur ve çalıştır' : 'Çalıştır'}
           </button>
         </div>
       </form>

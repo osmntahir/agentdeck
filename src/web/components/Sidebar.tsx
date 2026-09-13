@@ -114,6 +114,16 @@ export function Sidebar({
               {projectDelete?.projectId === project.id && (
                 <div className="project-delete-confirm" role="alert">
                   <span>{projectDeleteSummary(projectDelete)}</span>
+                  {/* Kullanıcı silinecek tam yolları onaydan önce görür. */}
+                  <ul>
+                    {projectDelete.sessions
+                      .filter((s) => s.isolation === 'worktree')
+                      .map((s) => (
+                        <li key={s.id}>
+                          <code>{s.cwd}</code>
+                        </li>
+                      ))}
+                  </ul>
                   <div className="project-actions">
                     <button onClick={onConfirmProjectDelete}>sil (branch'ler kalır)</button>
                     <button onClick={onCancelProjectDelete}>vazgeç</button>

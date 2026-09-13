@@ -69,6 +69,24 @@ export interface PersistedState {
 export interface SessionView extends Session {
   activity: Activity | null
   lastActivityAt: number | null
+  /** Kalan süreç grubu: Run'ın lideri çıktı ama grubunda hâlâ süreç var. */
+  remainingProcessGroup: boolean
+}
+
+/** Canlı Run veya kalan süreç grubu: arşiv ve yeni Run önce doğrulanmış durdurma ister. */
+export function hasRunningProcesses(session: SessionView): boolean {
+  return session.lifecycle === 'live' || session.remainingProcessGroup
+}
+
+/** Yeniden çalıştırmanın tekrarlayacağı program: son başarılı command niyeti, yoksa başlangıç Command'ı. */
+export function lastCommand(session: Pick<Session, 'command' | 'lastLaunch'>): string | null {
+  return session.lastLaunch?.mode === 'command' ? session.lastLaunch.command : session.command
+}
+
+/** Saklanmış terminal görüntüsü olan Run; updatedAt kaydın son yazım anıdır. */
+export interface StoredRun {
+  runId: string
+  updatedAt: number
 }
 
 export interface StateResponse {

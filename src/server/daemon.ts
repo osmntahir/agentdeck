@@ -6,7 +6,7 @@ import express from 'express'
 import { WebSocketServer } from 'ws'
 import { openStore, type Store } from './store'
 import { acquireDaemonLock, type DaemonLock } from './lock'
-import { createExclusiveLocks, createLimiter, createSerialQueues } from './locks'
+import { createExclusiveLocks, createLimiter, createSerialQueues, type HeldLock } from './locks'
 import { createRequestLedger, DedupConflictError } from './dedup'
 import { scanOrphanWorktrees } from './orphans'
 import { findSubRepos } from './repos'
@@ -18,6 +18,7 @@ import { createTerminalHost, type TerminalEvent, type PreviewResult } from './te
 import { chunkText, type SnapshotScope } from './terminalState'
 import {
   commandLabel,
+  lastCommand,
   type DiffScope,
   type RepoDiff,
   type Isolation,
@@ -217,6 +218,12 @@ function worktreePaths(session: Session): string[] {
   return session.worktrees.length > 0 ? session.worktrees.map((w) => w.path) : ['.']
 }
 
+/** Bir deponun toplam görünüm referansı: klasör oturumunda o alt depo worktree'sinin, Git projesinde oturumun commit'i. */
+function baseCommitFor(session: Session, rel: string): string | null {
+  if (session.worktrees.length > 0) return session.worktrees.find((w) => w.path === rel)?.baseCommit ?? null
+  return rel === '.' ? session.baseCommit : null
+}
+
 export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   // Sözleşme: state'e dokunmadan önce tek yazar kilidi alınır.
   const lock: DaemonLock = await acquireDaemonLock(options.dataDir)
@@ -235,8 +242,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const host = createTerminalHost({ checkpoints: openCheckpointStore(options.dataDir) })
   const sessionLocks = createExclusiveLocks()
   const gitQueues = createSerialQueues()
-  /** Diff okuması HTTP kontrol işlerini boğmaz: aynı anda en çok iki Git işi (spec §5). */
-  const diffSlots = createLimiter(2)
+  /** Diff ve branch okuması HTTP kontrol işlerini boğmaz: aynı anda en çok iki Git işi (spec §5). */
+  const gitReadSlots = createLimiter(2)
   const createLedger = createRequestLedger<Session>()
   const launchLedger = createRequestLedger<Session>()
   const confirmations = new Map<string, Confirmation>()
@@ -267,7 +274,12 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
   function sessionView(session: Session): SessionView {
     const live = sessions.activity(session.id)
-    return { ...session, activity: live?.activity ?? null, lastActivityAt: live?.lastActivityAt ?? null }
+    return {
+      ...session,
+      activity: live?.activity ?? null,
+      lastActivityAt: live?.lastActivityAt ?? null,
+      remainingProcessGroup: sessions.hasLingeringGroup(session.id),
+    }
   }
 
   function findSession(id: string): Session | undefined {
@@ -822,6 +834,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         async () => {
           const current = findSession(existing.id)
           if (!current) throw new HttpError(404, 'not_found', 'Oturum yok')
+          // Arşivdeki oturum aktif taramada görünmez; orada sessizce canlanmaz.
+          if (current.archivedAt !== null) {
+            throw new HttpError(409, 'session_archived', 'Oturum arşivde; yeni Run için önce arşivden çıkarın')
+          }
           if (req.body?.expectedRunId !== undefined && req.body.expectedRunId !== current.runId) {
             throw new HttpError(409, 'stale_run', 'Beklenen Run artık geçerli değil; görünüm tazelendi', {
               currentRunId: current.runId,
@@ -892,9 +908,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (typeof requestId !== 'string') return jsonError(res, 400, 'validation', requestId.error)
     // lastLaunch niyeti tekrarlanır; yönetilen kimlik (fresh/resume/picker) G2
     // geçmeden üretilmediği için yalnız command niyeti vardır.
-    await relaunch(req, res, requestId, {}, (current) =>
-      current.lastLaunch?.mode === 'command' ? current.lastLaunch.command : current.command,
-    )
+    await relaunch(req, res, requestId, {}, lastCommand)
   })
 
   const LAUNCH_FIELDS = new Set(['requestId', 'expectedRunId', 'mode', 'command'])
@@ -979,134 +993,116 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     })
   })
 
-  type RemovalOutcome =
-    | { ok: true }
-    | { ok: false; status: number; code: string; message: string; details?: unknown }
+  /*
+   * Silme üç adımdır ve çağıran Session kilidini tutar: onayın Run'ı kapsadığı
+   * denetlenir, süreç grubu doğrulanmış biçimde durdurulur, içerik yeniden
+   * okunup onayla karşılaştırılır; ancak sonra dosyalar ve kayıt kaldırılır.
+   */
+
+  /** Onaydan sonra yeni bir Run başladıysa onay onu kapsamaz; yeni Run durdurulmaz. */
+  function assertConfirmedRun(session: Session, confirmation: Confirmation): void {
+    if (confirmation.runId !== session.runId) {
+      throw new HttpError(409, 'confirmation_stale', 'Onaydan sonra yeni bir Run başladı; yeniden önizleme alın', {
+        currentRunId: session.runId,
+      })
+    }
+  }
+
+  async function stopForDeletion(session: Session): Promise<void> {
+    const stopped = await stopVerified(session.id)
+    if (!stopped.verified) {
+      throw new HttpError(409, 'stop_unverified', 'Süreç grubu durdurulamadı; silme başlatılmadı', {
+        reason: stopped.reason,
+      })
+    }
+  }
 
   /**
-   * Onaylanmış tek oturumu kaldırır. Onay Run'a, dizin kimliğine ve içerik
-   * fingerprint'ine bağlıdır; içerik doğrulanmış durdurmadan sonra yeniden
-   * okunur. Worktree kaldırılamazsa rmSync fallback yoktur: kaldırılanlar
-   * kayıttan düşer, kalan worktree'ler, dosyaları ve kayıt korunur.
+   * Durdurmadan sonra dizin kimliği ve içerik fingerprint'i yeniden okunur. Ortak
+   * klasörde dosyalar silinmediği için yalnız dizin kimliği bağlanır. Bütçe,
+   * proje silmede bütün oturumların yeniden okumasına paylaştırılır.
    */
-  async function removeConfirmedSession(session: Session, confirmation: Confirmation): Promise<RemovalOutcome> {
-    if (confirmation.runId !== session.runId) {
-      // Onaydan sonra yeni bir Run başladı: onay o Run'ı kapsamıyor.
-      return {
-        ok: false,
-        status: 409,
-        code: 'confirmation_stale',
-        message: 'Onaydan sonra yeni bir Run başladı; yeniden önizleme alın',
-        details: { currentRunId: session.runId },
-      }
+  async function verifyDeletionConfirmation(session: Session, confirmation: Confirmation, budget: Budget): Promise<void> {
+    const dirIdentity = dirIdentityOf(session.cwd)
+    const fingerprint = await deletionFingerprint(session, budget)
+    if (dirIdentity === null || !fingerprint.ok) {
+      throw new HttpError(409, 'confirmation_stale', 'Çalışma kopyası artık okunamıyor veya bütçeyi aşıyor; silme yapılmadı', {
+        cwd: session.cwd,
+      })
     }
-
-    const held = sessionLocks.tryAcquire(session.id)
-    if (!held) {
-      return { ok: false, status: 409, code: 'operation_in_progress', message: 'Bu oturumda başka bir işlem sürüyor' }
+    if (dirIdentity !== confirmation.dirIdentity || fingerprint.digest !== confirmation.contentDigest) {
+      throw new HttpError(409, 'confirmation_stale', 'Klasör içeriği onaydan sonra değişti; silme yapılmadı', {
+        cwd: session.cwd,
+      })
     }
-    try {
-      const stopped = await stopVerified(session.id)
-      if (!stopped.verified) {
-        return {
-          ok: false,
-          status: 409,
-          code: 'stop_unverified',
-          message: 'Süreç grubu durdurulamadı; silme başlatılmadı',
-          details: { reason: stopped.reason },
-        }
-      }
+  }
 
-      // Ortak klasörde dosyalar silinmez; yalnız dizin kimliği doğrulanır.
-      // Worktree kaldırılacaksa içerik fingerprint'i de tekrar okunur.
-      const dirIdentity = dirIdentityOf(session.cwd)
-      const fingerprint = await deletionFingerprint(session, createBudget())
-      if (dirIdentity === null || !fingerprint.ok) {
-        return {
-          ok: false,
-          status: 409,
-          code: 'confirmation_stale',
-          message: 'Çalışma kopyası artık okunamıyor veya bütçeyi aşıyor; silme yapılmadı',
-          details: { cwd: session.cwd },
-        }
-      }
-      if (dirIdentity !== confirmation.dirIdentity || fingerprint.digest !== confirmation.contentDigest) {
-        return {
-          ok: false,
-          status: 409,
-          code: 'confirmation_stale',
-          message: 'Klasör içeriği onaydan sonra değişti; silme yapılmadı',
-          details: { cwd: session.cwd },
-        }
-      }
-
+  /**
+   * Doğrulanmış oturumun worktree'lerini ve kaydını kaldırır. rmSync fallback
+   * yoktur: bir worktree kaldırılamazsa kaldırılanlar kayıttan düşer, kalan
+   * worktree'ler, dosyaları ve kayıt korunur.
+   */
+  async function removeVerifiedSession(session: Session): Promise<void> {
+    if (session.isolation === 'worktree') {
       const project = store.get().projects.find((p) => p.id === session.projectId)
-      if (session.isolation === 'worktree') {
-        if (!project) {
-          return { ok: false, status: 409, code: 'project_missing', message: 'Projenin kaydı yok; worktree güvenle kaldırılamaz' }
-        }
-        const rels = worktreePaths(session)
-        const removed: string[] = []
-        for (const rel of rels) {
-          const repo = path.join(project.path, rel)
-          const worktree = path.join(session.cwd, rel)
-          try {
-            // Önceki kısmi silmede veya yerel Git ile kalkmış worktree için iş yoktur.
-            if (!isMissing(worktree)) await inRepoQueue(repo, () => git.removeWorktree(repo, worktree))
-            removed.push(rel)
-          } catch (err) {
-            let recordUpdated = true
-            if (removed.length > 0) {
-              await store
-                .commit((draft) => {
-                  const target = draft.sessions.find((s) => s.id === session.id)
-                  if (target) target.worktrees = target.worktrees.filter((w) => !removed.includes(w.path))
-                })
-                .catch(() => {
-                  // Kaldırılan yollar kayıtta kalsa da yeniden denemede "yok" olarak atlanır.
-                  recordUpdated = false
-                })
-            }
-            return {
-              ok: false,
-              status: 500,
-              code: 'worktree_remove_failed',
-              message:
-                removed.length === 0
-                  ? `Worktree kaldırılamadı; hiçbir dosya silinmedi: ${(err as Error).message}`
-                  : `${rel} worktree'si kaldırılamadı; ${removed.join(', ')} kaldırıldı, kalanlar korundu${recordUpdated ? '' : ' (kayıt güncellenemedi)'}: ${(err as Error).message}`,
-              details: {
-                cwd: session.cwd,
-                removed,
-                degraded: !recordUpdated,
-                recovery: 'Klasörü yerel araçla inceleyip git worktree remove ile tekrar deneyin',
-              },
-            }
+      if (!project) {
+        throw new HttpError(409, 'project_missing', 'Projenin kaydı yok; worktree güvenle kaldırılamaz')
+      }
+      const rels = worktreePaths(session)
+      const removed: string[] = []
+      for (const rel of rels) {
+        const repo = path.join(project.path, rel)
+        const worktree = path.join(session.cwd, rel)
+        try {
+          // Önceki kısmi silmede veya yerel Git ile kalkmış worktree için iş yoktur.
+          if (!isMissing(worktree)) await inRepoQueue(repo, () => git.removeWorktree(repo, worktree))
+          removed.push(rel)
+        } catch (err) {
+          let recordUpdated = true
+          if (removed.length > 0) {
+            await store
+              .commit((draft) => {
+                const target = draft.sessions.find((s) => s.id === session.id)
+                if (target) target.worktrees = target.worktrees.filter((w) => !removed.includes(w.path))
+              })
+              .catch(() => {
+                // Kaldırılan yollar kayıtta kalsa da yeniden denemede "yok" olarak atlanır.
+                recordUpdated = false
+              })
           }
-        }
-        pruneEmptyDirs(session.cwd, rels)
-      }
-
-      try {
-        await store.commit((draft) => {
-          draft.sessions = draft.sessions.filter((s) => s.id !== session.id)
-        })
-      } catch (err) {
-        // Worktree kaldırıldı ama kayıt yazılamadı: kayıt korunur, kısmi sonuç görünür.
-        return {
-          ok: false,
-          status: 503,
-          code: 'persistence',
-          message: `${session.isolation === 'shared' ? 'Dosyalar korundu fakat oturum kaydı kaldırılamadı' : 'Dosyalar kaldırıldı ama kayıt güncellenemedi'}: ${(err as Error).message}`,
-          details: { cwd: session.cwd, degraded: true },
+          throw new HttpError(
+            500,
+            'worktree_remove_failed',
+            removed.length === 0
+              ? `Worktree kaldırılamadı; hiçbir dosya silinmedi: ${(err as Error).message}`
+              : `${rel} worktree'si kaldırılamadı; ${removed.join(', ')} kaldırıldı, kalanlar korundu${recordUpdated ? '' : ' (kayıt güncellenemedi)'}: ${(err as Error).message}`,
+            {
+              cwd: session.cwd,
+              removed,
+              degraded: !recordUpdated,
+              recovery: 'Klasörü yerel araçla inceleyip git worktree remove ile tekrar deneyin',
+            },
+          )
         }
       }
-      // Session silindi: ona ait terminal checkpoint'leri de kalkar.
-      host.removeSession(session.id)
-      return { ok: true }
-    } finally {
-      held.release()
+      pruneEmptyDirs(session.cwd, rels)
     }
+
+    try {
+      await store.commit((draft) => {
+        draft.sessions = draft.sessions.filter((s) => s.id !== session.id)
+      })
+    } catch (err) {
+      // Worktree kaldırıldı ama kayıt yazılamadı: kayıt korunur, kısmi sonuç görünür.
+      throw new HttpError(
+        503,
+        'persistence',
+        `${session.isolation === 'shared' ? 'Dosyalar korundu fakat oturum kaydı kaldırılamadı' : 'Dosyalar kaldırıldı ama kayıt güncellenemedi'}: ${(err as Error).message}`,
+        { cwd: session.cwd, degraded: true },
+      )
+    }
+    // Session silindi: ona ait terminal checkpoint'leri de kalkar.
+    host.removeSession(session.id)
   }
 
   app.delete('/api/sessions/:id', async (req, res) => {
@@ -1130,11 +1126,22 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       confirmations.delete(confirmationToken)
       return jsonError(res, 409, 'confirmation_stale', 'Onay süresi doldu; yeniden önizleme alın')
     }
-    const outcome = await removeConfirmedSession(session, confirmation)
-    // Eskimiş onay yeniden kullanılamaz; durdurma veya worktree hatasında aynı onayla yeniden denenebilir.
-    if (outcome.ok || outcome.code === 'confirmation_stale') confirmations.delete(confirmationToken)
-    if (!outcome.ok) return jsonError(res, outcome.status, outcome.code, outcome.message, outcome.details)
-    res.json({ ok: true, branchKept: session.branch })
+    const held = sessionLocks.tryAcquire(session.id)
+    if (!held) return jsonError(res, 409, 'operation_in_progress', 'Bu oturumda başka bir işlem sürüyor')
+    try {
+      assertConfirmedRun(session, confirmation)
+      await stopForDeletion(session)
+      await verifyDeletionConfirmation(session, confirmation, createBudget())
+      await removeVerifiedSession(session)
+      confirmations.delete(confirmationToken)
+      res.json({ ok: true, branchKept: session.branch })
+    } catch (err) {
+      // Eskimiş onay yeniden kullanılamaz; durdurma veya worktree hatasında aynı onayla yeniden denenebilir.
+      if (err instanceof HttpError && err.code === 'confirmation_stale') confirmations.delete(confirmationToken)
+      sendError(res, err)
+    } finally {
+      held.release()
+    }
   })
 
   /**
@@ -1166,7 +1173,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           res,
           409,
           fingerprint.reason === 'budget' ? 'preview_budget_exceeded' : 'status_unreadable',
-          `Projenin çalışma kopyaları birlikte büyük veya okunamıyor (${fingerprint.message}); oturumları tek tek temizleyip silin, ardından tekrar deneyin`,
+          `Projenin çalışma kopyaları birlikte büyük veya okunamıyor (${fingerprint.message}); oturumları tek tek temizleyip silin, ardından tekrar deneyin: ${session.cwd}`,
           { sessionId: session.id, cwd: session.cwd, reason: fingerprint.message },
         )
       }
@@ -1239,31 +1246,44 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
 
     projectsBeingDeleted.add(project.id)
+    const held: HeldLock[] = []
     try {
+      if (confirmation) {
+        const confirmed = (session: Session) => confirmation.sessions.get(session.id) as Confirmation
+        // Bütün oturum kilitleri önce alınır; biri meşgulse hiçbir şey durdurulmaz veya silinmez.
+        for (const session of owned) {
+          const lock = sessionLocks.tryAcquire(session.id)
+          if (!lock) {
+            throw new HttpError(409, 'operation_in_progress', `"${session.name}" oturumunda başka bir işlem sürüyor; hiçbir şey silinmedi`)
+          }
+          held.push(lock)
+        }
+        for (const session of owned) assertConfirmedRun(session, confirmed(session))
+        for (const session of owned) await stopForDeletion(session)
+        // Durdurmadan sonra içerik tek bütçeyle yeniden okunur; sınır oturum sayısıyla aşılmaz.
+        const budget = createBudget()
+        for (const session of owned) await verifyDeletionConfirmation(session, confirmed(session), budget)
+      }
+
       const removed: string[] = []
       for (const session of owned) {
-        const current = findSession(session.id)
-        if (current && confirmation) {
-          const outcome = await removeConfirmedSession(current, confirmation.sessions.get(session.id) as Confirmation)
-          if (!outcome.ok) {
-            // İlk hatada durulur; kalan varsa Project kalır ve kısmi sonuç listelenir.
-            const remainingSessionIds = owned.map((s) => s.id).filter((id) => !removed.includes(id))
-            return jsonError(
-              res,
-              outcome.status,
-              removed.length === 0 ? outcome.code : 'project_delete_partial',
-              removed.length === 0
-                ? outcome.message
-                : `${removed.length} oturum silindi; "${current.name}" silinemedi: ${outcome.message}. Proje ve kalan oturumlar korunur.`,
-              {
-                cause: outcome.code,
-                sessionId: current.id,
-                removedSessionIds: removed,
-                remainingSessionIds,
-                details: outcome.details,
-              },
-            )
-          }
+        try {
+          await removeVerifiedSession(session)
+        } catch (err) {
+          if (!(err instanceof HttpError) || removed.length === 0) throw err
+          // İlk hatada durulur; kalan varsa Project kalır ve kısmi sonuç listelenir.
+          throw new HttpError(
+            err.status,
+            'project_delete_partial',
+            `${removed.length} oturum silindi; "${session.name}" silinemedi: ${err.message}. Proje ve kalan oturumlar korunur.`,
+            {
+              cause: err.code,
+              sessionId: session.id,
+              removedSessionIds: removed,
+              remainingSessionIds: owned.map((s) => s.id).filter((id) => !removed.includes(id)),
+              details: err.details,
+            },
+          )
         }
         removed.push(session.id)
       }
@@ -1272,14 +1292,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           draft.projects = draft.projects.filter((p) => p.id !== project.id)
         })
       } catch (err) {
-        return jsonError(res, 503, 'persistence', `Proje kaydı silinemedi: ${(err as Error).message}`, {
+        throw new HttpError(503, 'persistence', `Proje kaydı silinemedi: ${(err as Error).message}`, {
           removedSessionIds: removed,
         })
       }
+      res.json({ ok: true })
+    } catch (err) {
+      sendError(res, err)
     } finally {
+      for (const lock of held) lock.release()
       projectsBeingDeleted.delete(project.id)
     }
-    res.json({ ok: true })
   })
 
   /**
@@ -1301,7 +1324,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     let remaining = MAX_BRANCH_REFS
     const repos = []
     for (const rel of scan.repos) {
-      const read = await diffSlots.run(() => git.agentdeckBranches(path.join(project.path, rel), remaining))
+      const read = await gitReadSlots.run(() => git.agentdeckBranches(path.join(project.path, rel), remaining))
       remaining = Math.max(0, remaining - read.branches.length)
       repos.push({
         path: rel,
@@ -1349,13 +1372,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     // Her depo birkaç git süreci açar; depolar sırayla okunur.
     for (const rel of scan.repos) {
       const dir = path.join(session.cwd, rel)
-      // Klasör oturumunda her alt depo worktree'si kendi başlangıç commit'ini taşır.
-      const baseCommit =
-        session.worktrees.length > 0
-          ? (session.worktrees.find((w) => w.path === rel)?.baseCommit ?? null)
-          : rel === '.'
-            ? session.baseCommit
-            : null
+      const baseCommit = baseCommitFor(session, rel)
       const branch = await git.currentBranch(dir)
       if (scope === 'work' && baseCommit === null) {
         // Base bilinmiyorsa hareketli HEAD/main ile sessiz ikame yapılmaz.
@@ -1375,7 +1392,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         })
         continue
       }
-      const read = await diffSlots.run(() => git.diff(dir, scope === 'work' ? (baseCommit as string) : 'HEAD'))
+      const read = await gitReadSlots.run(() => git.diff(dir, scope === 'work' ? (baseCommit as string) : 'HEAD'))
       repos.push({ path: rel, branch, baseCommit, ...read })
     }
     res.json({ scope, capturedAt, repos, truncated: scan.truncated })

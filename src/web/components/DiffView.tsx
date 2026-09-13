@@ -39,7 +39,8 @@ export function DiffView({ sessionId, isolation }: { sessionId: string; isolatio
 
   // Git projesinde tek depo vardır ve eski görünüm korunur.
   const single = data?.repos.length === 1 && data.repos[0].path === '.'
-  const changed = data?.repos.filter((repo) => repo.status !== '').length ?? 0
+  // "Bu çalışma"da commit edilmiş iş status'ta görünmez; patch de sayılır.
+  const changed = data?.repos.filter((repo) => repo.status !== '' || repo.diff !== '').length ?? 0
 
   return (
     <div className="diff-view">

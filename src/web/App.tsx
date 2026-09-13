@@ -9,7 +9,14 @@ import { NewSessionDialog } from './components/NewSessionDialog'
 import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
 import { savedGridSessionIds } from './gridLayout'
-import { commandLabel, type Isolation, type Project, type StateResponse } from '../shared/types'
+import {
+  commandLabel,
+  hasRunningProcesses,
+  lastCommand,
+  type Isolation,
+  type Project,
+  type StateResponse,
+} from '../shared/types'
 
 /** Silinecek içeriği onaydan önce söyler; ignored dosyalar da silinir. */
 function deleteQuestion(preview: api.DeletePreview): string {
@@ -112,6 +119,14 @@ export function App() {
     }
   }, [active?.id, active?.runId])
 
+  const [actionHint, setActionHint] = useState<string | null>(null)
+  const [copiedPath, setCopiedPath] = useState(false)
+  // Düğmeler değişince eski açıklama ve kopyalama bildirimi ekranda kalmaz.
+  useEffect(() => {
+    setActionHint(null)
+    setCopiedPath(false)
+  }, [active?.id, active?.archivedAt, active?.lifecycle])
+
   const run = (promise: Promise<unknown>) => {
     setError(null)
     promise.then(refresh).catch((e) => setError(e.message))
@@ -152,8 +167,25 @@ export function App() {
     run(
       active.archivedAt !== null
         ? api.unarchiveSession(active.id)
-        : api.archiveSession(active.id, active.runId, active.lifecycle === 'live'),
+        : api.archiveSession(active.id, active.runId, hasRunningProcesses(active)),
     )
+  }
+
+  // Eylem başlamadan önce ne yapacağını tek cümleyle söyler; fareyle ve klavye odağıyla görünür.
+  const describe = (text: string) => ({
+    onMouseEnter: () => setActionHint(text),
+    onMouseLeave: () => setActionHint(null),
+    onFocus: () => setActionHint(text),
+    onBlur: () => setActionHint(null),
+  })
+
+  const copyPath = () => {
+    if (!active) return
+    const cwd = active.cwd
+    navigator.clipboard
+      .writeText(cwd)
+      .then(() => setCopiedPath(true))
+      .catch(() => setError(`Pano erişimi reddedildi; yolu elle kopyalayın: ${cwd}`))
   }
 
   // Mevcut çalışma kopyasında yeni Run; başarılıysa terminal yeni Run'a bağlanır.
@@ -324,40 +356,77 @@ export function App() {
                   </>
                 ) : (
                   <>
-                    {active.lifecycle === 'live' && (
-                      <button onClick={() => run(api.stopSession(active.id, active.runId))}>durdur</button>
+                    {hasRunningProcesses(active) && (
+                      <button
+                        {...describe('Süreç grubunu doğrulanmış biçimde durdurur; kayıt, dosyalar ve branch kalır.')}
+                        onClick={() => run(api.stopSession(active.id, active.runId))}
+                      >
+                        durdur
+                      </button>
+                    )}
+                    {/* Arşivdeki oturum görünmeden canlanmaz; önce arşivden çıkarılır. */}
+                    {active.archivedAt === null && (
+                      <>
+                        <button
+                          {...describe(
+                            `Komutu bu çalışma kopyasında aynen yeniden çalıştırır: ${commandLabel(lastCommand(active))}`,
+                          )}
+                          onClick={() => run(api.restartSession(active.id, active.runId))}
+                        >
+                          {hasRunningProcesses(active) ? 'durdur ve yeniden çalıştır' : 'yeniden çalıştır'}
+                        </button>
+                        <button
+                          {...describe(
+                            'Bu çalışma kopyasında başka bir komut veya CLI seçicisi çalıştırır; başlangıç programı değişmez.',
+                          )}
+                          onClick={() => {
+                            setError(null)
+                            setLaunchOpen(true)
+                          }}
+                        >
+                          komut çalıştır…
+                        </button>
+                      </>
                     )}
                     <button
-                      title={`Son komutu aynı çalışma kopyasında aynen yeniden çalıştırır: ${commandLabel(
-                        active.lastLaunch?.mode === 'command' ? active.lastLaunch.command : active.command,
-                      )}`}
-                      onClick={() => run(api.restartSession(active.id, active.runId))}
+                      {...describe(
+                        active.archivedAt !== null
+                          ? 'Kaydı aktif taramaya döndürür; Run başlatmaz, dosyalara dokunmaz.'
+                          : hasRunningProcesses(active)
+                            ? 'Süreç grubunu doğrulanmış biçimde durdurur, sonra kaydı aktif taramadan kaldırır; dosyalar ve branch kalır.'
+                            : 'Kaydı aktif taramadan kaldırır; dosyalar, branch ve terminal görüntüleri kalır.',
+                      )}
+                      onClick={toggleArchive}
                     >
-                      {active.lifecycle === 'live' ? 'durdur ve yeniden çalıştır' : 'yeniden çalıştır'}
-                    </button>
-                    <button
-                      title="Bu çalışma kopyasında başka bir komut veya CLI seçicisi çalıştır"
-                      onClick={() => {
-                        setError(null)
-                        setLaunchOpen(true)
-                      }}
-                    >
-                      komut çalıştır…
-                    </button>
-                    <button onClick={toggleArchive}>
                       {active.archivedAt !== null
                         ? 'arşivden çıkar'
-                        : active.lifecycle === 'live'
+                        : hasRunningProcesses(active)
                           ? 'durdur ve arşivle'
                           : 'arşivle'}
                     </button>
-                    <button onClick={() => addToGrid(active.id)}>grid'e ekle</button>
-                    <button onClick={askDelete}>sil</button>
+                    <button {...describe(`Çalışma dizininin yolunu kopyalar: ${active.cwd}`)} onClick={copyPath}>
+                      {copiedPath ? 'kopyalandı' : 'yolu kopyala'}
+                    </button>
+                    <button {...describe('Terminali grid görünümünde açar.')} onClick={() => addToGrid(active.id)}>
+                      grid'e ekle
+                    </button>
+                    <button
+                      {...describe('Neyin silineceğini önce gösterir; branch her durumda kalır.')}
+                      onClick={askDelete}
+                    >
+                      sil
+                    </button>
                   </>
                 )}
               </div>
             </header>
 
+            {pendingDelete && (
+              <div className="pad muted delete-target">
+                {pendingDelete.isolation === 'shared' ? 'Korunacak klasör: ' : 'Silinecek klasör: '}
+                <code>{pendingDelete.cwd}</code>
+              </div>
+            )}
             {error && <div className="error">{error}</div>}
             {state.serviceError && <div className="error">{state.serviceError}</div>}
 
@@ -373,6 +442,11 @@ export function App() {
               </div>
             )}
             <div className="body">
+              {actionHint && (
+                <div className="action-hint" role="status">
+                  {actionHint}
+                </div>
+              )}
               {tab === 'terminal' && (
                 <div className="terminals">
                   {runs && runs.previous.length > 0 && (

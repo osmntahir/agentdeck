@@ -1,4 +1,12 @@
-import type { DiffResult, DiffScope, Isolation, Project, SessionView, StateResponse } from '../shared/types'
+import type {
+  DiffResult,
+  DiffScope,
+  Isolation,
+  Project,
+  SessionView,
+  StateResponse,
+  StoredRun,
+} from '../shared/types'
 
 // Token URL'den bir kez alınır, sonra adres çubuğundan temizlenir.
 const fromUrl = new URLSearchParams(location.search).get('token')
@@ -107,7 +115,7 @@ export const launchSession = (id: string, expectedRunId: string | null, command:
 
 export interface RunsResult {
   currentRunId: string | null
-  previous: { runId: string; updatedAt: number }[]
+  previous: StoredRun[]
 }
 
 /** Saklanmış önceki Run görüntüleri; en çok son iki Run tutulur. */
