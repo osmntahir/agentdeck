@@ -123,6 +123,19 @@ export const deleteSession = (id: string, confirmationToken: string) =>
 export const getDiff = (id: string, scope: DiffScope) =>
   call<DiffResult>(`/api/sessions/${id}/diff?scope=${scope}`)
 
+export interface BranchesResult {
+  repos: {
+    path: string
+    branches: { name: string; oid: string; sessionId: string | null }[]
+    truncated: boolean
+    error: string | null
+  }[]
+  truncated: boolean
+}
+
+/** Projedeki agentdeck/ branch'leri; oturum silinse de branch burada bulunur. */
+export const getBranches = (projectId: string) => call<BranchesResult>(`/api/projects/${projectId}/branches`)
+
 export interface OrphanScanResult {
   entries: { path: string; kind: string; gitLink: string | null }[]
   truncated: boolean

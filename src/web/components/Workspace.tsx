@@ -3,6 +3,7 @@ import type { Project, StateResponse } from '../../shared/types'
 import { commandLabel } from '../../shared/types'
 import { stateLabel } from './Sidebar'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
+import { ProtectedBranches } from './ProtectedBranches'
 
 interface Props {
   state: StateResponse
@@ -17,6 +18,8 @@ interface Props {
 export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject, onPreviewIds, onAddToGrid }: Props) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
+  // Branch okuması yalnız istenince yapılır; poll edilmez.
+  const [branchesFor, setBranchesFor] = useState<string | null>(null)
   const live = state.sessions.filter((s) => s.lifecycle === 'live').length
   const archivedCount = state.sessions.filter((s) => s.archivedAt !== null).length
   // Arşivlenen oturum aktif taramada görünmez; yalnız Arşiv filtresiyle bulunur.
@@ -138,8 +141,15 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                       </h3>
                       <p title={project.path}>{project.path}</p>
                     </div>
+                    <button
+                      aria-expanded={branchesFor === project.id}
+                      onClick={() => setBranchesFor(branchesFor === project.id ? null : project.id)}
+                    >
+                      Branch'ler
+                    </button>
                     <button onClick={() => onNewSession(project)}>+ Yeni oturum</button>
                   </header>
+                  {branchesFor === project.id && <ProtectedBranches project={project} sessions={state.sessions} />}
                   <div className="session-grid">
                     {owned.map((session) => {
                       const preview = state.previews?.[session.id]

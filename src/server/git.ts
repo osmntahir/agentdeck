@@ -83,6 +83,45 @@ export async function porcelainStatus(cwd: string): Promise<string[] | null> {
   }
 }
 
+/** Korunan branch okuması 5 sn ile sınırlıdır (spec §6). */
+const BRANCH_TIMEOUT_MS = 5000
+
+export interface BranchRead {
+  branches: { name: string; oid: string }[]
+  truncated: boolean
+  /** Git hatası boş listeyle karıştırılmaz. */
+  error: string | null
+}
+
+/** Depodaki agentdeck/ branch adları ve tip OID'leri; en çok `limit` ref, fazlası kesik işaretlenir. */
+export async function agentdeckBranches(repo: string, limit: number): Promise<BranchRead> {
+  try {
+    const { stdout } = await pexec(
+      'git',
+      ['for-each-ref', `--count=${limit + 1}`, '--format=%(refname)%00%(objectname)', 'refs/heads/agentdeck/'],
+      { cwd: repo, timeout: BRANCH_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+    )
+    const lines = stdout.split('\n').filter((line) => line.includes('\0'))
+    return {
+      branches: lines.slice(0, limit).map((line) => {
+        const [ref, oid] = line.split('\0')
+        return { name: ref.slice('refs/heads/'.length), oid }
+      }),
+      truncated: lines.length > limit,
+      error: null,
+    }
+  } catch (err) {
+    const failure = err as { killed?: boolean; stderr?: string; message: string }
+    return {
+      branches: [],
+      truncated: false,
+      error: failure.killed
+        ? `Branch okuması ${BRANCH_TIMEOUT_MS / 1000} sn sınırını aştı`
+        : failure.stderr?.trim() || failure.message,
+    }
+  }
+}
+
 /** Diff okuma sınırları (spec §5). Aşım görünür işaretlenir; sessiz kesme yoktur. */
 const DIFF_TIMEOUT_MS = 5000
 const MAX_PATCH_BYTES = 1024 * 1024

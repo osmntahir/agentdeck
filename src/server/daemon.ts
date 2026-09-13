@@ -35,6 +35,9 @@ const MAX_LIVE_RUNS = 32
 /** Silme onayı daemon ömrüne bağlıdır ve 60 sn sonra düşer. */
 const CONFIRMATION_TTL_MS = 60_000
 
+/** Korunan branch görünümünde okunacak en çok ref (spec §6). */
+const MAX_BRANCH_REFS = 1000
+
 /** Aynı anda önizleme istenebilecek kart sayısı (spec §4). */
 const MAX_PREVIEW_IDS = 24
 
@@ -1108,6 +1111,37 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       projectsBeingDeleted.delete(project.id)
     }
     res.json({ ok: true })
+  })
+
+  /**
+   * Korunan branch'ler: agentdeck/ ref adları ve tip OID'leri. Branch'i
+   * gösteren kayıt yoksa görev bilgisi uydurulmaz; Git hatası boş listeyle
+   * karıştırılmaz. Klasör projesinde her alt depo ayrı okunur.
+   */
+  app.get('/api/projects/:id/branches', async (req, res) => {
+    const project = store.get().projects.find((p) => p.id === req.params.id)
+    if (!project) return jsonError(res, 404, 'not_found', 'Proje yok')
+    const scan = project.kind === 'folder' ? await findSubRepos(project.path) : { repos: ['.'], truncated: false }
+    const sessionByBranch = new Map(
+      store
+        .get()
+        .sessions.filter((s) => s.projectId === project.id && s.branch !== null)
+        .map((s) => [s.branch as string, s.id]),
+    )
+    // 1000 ref sınırı projedeki bütün depolar içindir.
+    let remaining = MAX_BRANCH_REFS
+    const repos = []
+    for (const rel of scan.repos) {
+      const read = await diffSlots.run(() => git.agentdeckBranches(path.join(project.path, rel), remaining))
+      remaining = Math.max(0, remaining - read.branches.length)
+      repos.push({
+        path: rel,
+        branches: read.branches.map((b) => ({ ...b, sessionId: sessionByBranch.get(b.name) ?? null })),
+        truncated: read.truncated,
+        error: read.error,
+      })
+    }
+    res.json({ repos, truncated: scan.truncated })
   })
 
   app.get('/api/sessions/:id/diff', async (req, res) => {

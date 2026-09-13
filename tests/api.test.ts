@@ -1053,6 +1053,58 @@ test('oturumu olan proje gizlice cascade silinmez', { timeout: 30000 }, async ()
   })
 })
 
+test('korunan branch ler proje görünümünde tip OID siyle bulunur; kayıt yoksa görev bilgisi uydurulmaz', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, repo, projectId }) => {
+    type Branches = {
+      repos: {
+        path: string
+        branches: { name: string; oid: string; sessionId: string | null }[]
+        truncated: boolean
+        error: string | null
+      }[]
+      truncated: boolean
+    }
+    const removed = await api.post<SessionView>('/api/sessions', createBody(projectId, { name: 'silinecek' }))
+    const kept = await api.post<SessionView>('/api/sessions', createBody(projectId, { name: 'kalan' }))
+    execFileSync('git', ['branch', 'kullanici-dali'], { cwd: repo, stdio: 'pipe' })
+
+    const cwd = removed.body.cwd
+    fs.writeFileSync(path.join(cwd, 'is.txt'), 'ajan işi\n')
+    execFileSync('git', ['add', 'is.txt'], { cwd, stdio: 'pipe' })
+    execFileSync('git', ['commit', '-qm', 'ajan işi'], { cwd, stdio: 'pipe' })
+    const tip = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim()
+
+    const preview = await api.post<{ confirmationToken: string }>(`/api/sessions/${removed.body.id}/delete-preview`)
+    const deleted = await api.del(`/api/sessions/${removed.body.id}`, { confirmationToken: preview.body.confirmationToken })
+    assert.equal(deleted.status, 200, JSON.stringify(deleted.body))
+
+    const res = await api.get<Branches>(`/api/projects/${projectId}/branches`)
+    assert.equal(res.status, 200, JSON.stringify(res.body))
+    assert.equal(res.body.repos.length, 1)
+    const [only] = res.body.repos
+    assert.equal(only.path, '.')
+    assert.equal(only.error, null)
+    assert.equal(only.truncated, false)
+    const byName = new Map(only.branches.map((b) => [b.name, b]))
+    assert.equal(byName.get(removed.body.branch as string)?.oid, tip, 'silinen oturumun işi branch tipinde bulunur')
+    assert.equal(byName.get(removed.body.branch as string)?.sessionId, null, 'kaydı olmayan branch e görev bilgisi uydurulmaz')
+    assert.equal(byName.get(kept.body.branch as string)?.sessionId, kept.body.id)
+    assert.equal(byName.has('kullanici-dali'), false, 'yalnız agentdeck/ branch leri listelenir')
+    assert.equal(byName.has('main'), false)
+
+    // Okunamayan depo boş liste diye gösterilmez.
+    fs.renameSync(path.join(repo, '.git'), path.join(repo, '.git-gizli'))
+    try {
+      const broken = await api.get<Branches>(`/api/projects/${projectId}/branches`)
+      assert.equal(broken.status, 200)
+      assert.notEqual(broken.body.repos[0].error, null)
+      assert.deepEqual(broken.body.repos[0].branches, [])
+    } finally {
+      fs.renameSync(path.join(repo, '.git-gizli'), path.join(repo, '.git'))
+    }
+  })
+})
+
 test('kayıtsız çalışma kopyaları salt okunur biçimde listelenir', { timeout: 30000 }, async () => {
   await withDaemon(async ({ api, dataDir, projectId }) => {
     const created = await api.post<SessionView>('/api/sessions', createBody(projectId))

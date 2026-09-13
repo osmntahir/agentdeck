@@ -839,6 +839,36 @@ button.primary {
   margin-left: auto;
   flex: none;
 }
+.project-section > header > button + button {
+  margin-left: 0;
+}
+.branch-panel {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+}
+.branch-panel-head,
+.branch-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.branch-panel-head > button {
+  margin-left: auto;
+}
+.branch-row code {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+.branch-repo {
+  margin-top: 4px;
+  font-family: ui-monospace, monospace;
+}
 .session-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr));
