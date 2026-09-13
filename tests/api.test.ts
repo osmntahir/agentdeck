@@ -365,6 +365,42 @@ test('onaysız silme reddedilir, onay sonrası içerik değişirse silme durur',
   })
 })
 
+test('silme onayı ignored içeriği de kapsar; bütçe aşılırsa onay üretilmez', { timeout: 60000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    type Preview = { confirmationToken?: string; changedEntries: number; ignoredEntries: number; fingerprintScope: string }
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const id = created.body.id
+    const cwd = created.body.cwd
+    fs.writeFileSync(path.join(cwd, '.gitignore'), '.env\nnode_modules/\n')
+    fs.writeFileSync(path.join(cwd, '.env'), 'SECRET=1\n')
+
+    const preview = await api.post<Preview>(`/api/sessions/${id}/delete-preview`)
+    assert.equal(preview.status, 200, JSON.stringify(preview.body))
+    assert.equal(preview.body.fingerprintScope, 'content')
+    assert.equal(preview.body.changedEntries, 1)
+    assert.equal(preview.body.ignoredEntries, 1)
+
+    // Git durumu aynı kalır; yalnız ignored dosyanın içeriği değişir.
+    fs.writeFileSync(path.join(cwd, '.env'), 'SECRET=2\n')
+    const stale = await api.del<{ code: string }>(`/api/sessions/${id}`, {
+      confirmationToken: preview.body.confirmationToken,
+    })
+    assert.equal(stale.status, 409)
+    assert.equal(stale.body.code, 'confirmation_stale')
+    assert.equal(fs.readFileSync(path.join(cwd, '.env'), 'utf8'), 'SECRET=2\n', 'eski onayla ignored dosya silinmez')
+
+    const modules = path.join(cwd, 'node_modules')
+    fs.mkdirSync(modules)
+    for (let i = 0; i <= 10_000; i++) fs.writeFileSync(path.join(modules, `f${i}.js`), '')
+    const big = await api.post<Preview & { code: string; message: string }>(`/api/sessions/${id}/delete-preview`)
+    assert.equal(big.status, 409, JSON.stringify(big.body))
+    assert.equal(big.body.code, 'preview_budget_exceeded')
+    assert.equal(big.body.confirmationToken, undefined, 'bütçe aşımında onay üretilmez')
+    assert.match(big.body.message, /yerel araç/)
+    assert.equal(fs.existsSync(modules), true)
+  })
+})
+
 test('taze onayla silme dosyaları kaldırır ama branch i korur', { timeout: 30000 }, async () => {
   await withDaemon(async ({ api, repo, projectId }) => {
     const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
@@ -815,7 +851,7 @@ test('klasör projesinde izole oturum silinince tüm worktree\'ler kalkar, branc
       const first = await api.post<Preview>(`/api/sessions/${session.id}/delete-preview`)
       assert.equal(first.status, 200, JSON.stringify(first.body))
       assert.equal(first.body.changedEntries, 2, 'değişiklikler tüm worktree\'lerden toplanır')
-      assert.equal(first.body.fingerprintScope, 'dir-identity+git-status')
+      assert.equal(first.body.fingerprintScope, 'content')
 
       fs.writeFileSync(path.join(session.cwd, 'org', 'api', 'README.md'), '# sonradan\n')
       const stale = await api.del<{ code: string }>(`/api/sessions/${session.id}`, {

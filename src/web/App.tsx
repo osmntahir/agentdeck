@@ -11,6 +11,14 @@ import { TerminalGrid } from './components/TerminalGrid'
 import { savedGridSessionIds } from './gridLayout'
 import { commandLabel, type Isolation, type Project, type StateResponse } from '../shared/types'
 
+/** Silinecek içeriği onaydan önce söyler; ignored dosyalar da silinir. */
+function deleteQuestion(preview: api.DeletePreview): string {
+  const parts: string[] = []
+  if (preview.changedEntries > 0) parts.push(`${preview.changedEntries} değişiklik`)
+  if (preview.ignoredEntries > 0) parts.push(`${preview.ignoredEntries} ignored giriş (.env ve bağımlılıklar dahil)`)
+  return parts.length > 0 ? `${parts.join(' ve ')} ile birlikte klasörü sil?` : 'klasörü sil?'
+}
+
 const EMPTY: StateResponse = {
   protocolVersion: 2,
   daemonId: '',
@@ -270,9 +278,7 @@ export function App() {
                     <span className="muted" title={pendingDelete.cwd}>
                       {pendingDelete.isolation === 'shared'
                         ? 'Oturum kaydı kaldırılsın mı? Klasör ve dosyalar korunur.'
-                        : pendingDelete.changedEntries > 0
-                          ? `${pendingDelete.changedEntries} değişiklikle birlikte klasörü sil?`
-                          : 'klasörü sil?'}
+                        : deleteQuestion(pendingDelete)}
                     </span>
                     <button onClick={confirmDelete}>
                       {pendingDelete.isolation === 'shared' ? 'Kaydı kaldır' : 'sil (branch kalır)'}

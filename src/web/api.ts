@@ -106,6 +106,8 @@ export interface DeletePreview {
   branch: string | null
   isolation: Isolation
   changedEntries: number
+  /** Silmeyle gidecek ignored girişler (.env, bağımlılıklar). */
+  ignoredEntries: number
   fingerprintScope: string
   keepsBranch: boolean
 }

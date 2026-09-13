@@ -10,6 +10,7 @@ import { createExclusiveLocks, createLimiter, createSerialQueues } from './locks
 import { createRequestLedger, DedupConflictError } from './dedup'
 import { scanOrphanWorktrees } from './orphans'
 import { findSubRepos } from './repos'
+import { contentFingerprint, createBudget, type Budget, type ContentFingerprint } from './fingerprint'
 import * as sessions from './sessions'
 import * as git from './git'
 import { isCheckpointId, openCheckpointStore } from './checkpoints'
@@ -74,7 +75,7 @@ interface Confirmation {
   cwd: string
   /** Dizin kimliği: yol aynı kalsa da başka bir dizine dönmüşse onay düşer. */
   dirIdentity: string
-  statusDigest: string
+  contentDigest: string
   expiresAt: number
 }
 
@@ -405,28 +406,31 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   }
 
   /**
-   * Silme onayının bağlandığı Git durumu. Ortak oturumda dosyalar korunduğu
-   * için boştur; izole oturumda her worktree'nin durumu yoluyla birlikte
-   * toplanır. Önceki kısmi silmede veya yerel Git ile kalkmış worktree
-   * okunamaz değil yoktur ve özete böyle girer. Durumu okunamayan worktree
-   * varsa null döner; "temiz" sonucu çıkarılmaz.
+   * Silme onayının bağlandığı içerik durumu. Ortak oturumda dosyalar korunduğu
+   * için boştur; izole oturumda her worktree'nin içerik fingerprint'i
+   * (ignored dosyalar dahil) yoluyla birlikte toplanır ve bütçe hepsine
+   * paylaştırılır. Önceki kısmi silmede veya yerel Git ile kalkmış worktree
+   * okunamaz değil yoktur ve özete böyle girer. Bütçe aşımı veya okuma
+   * hatasında onay üretilmez; "değişmedi" sonucu çıkarılmaz.
    */
-  async function deletionFingerprint(session: Session): Promise<{ digest: string; changedEntries: number } | null> {
-    if (session.isolation === 'shared') return { digest: digestOf([]), changedEntries: 0 }
+  async function deletionFingerprint(session: Session, budget: Budget): Promise<ContentFingerprint> {
+    if (session.isolation === 'shared') return { ok: true, digest: digestOf([]), changedEntries: 0, ignoredEntries: 0 }
     const parts: string[] = []
     let changedEntries = 0
+    let ignoredEntries = 0
     for (const rel of worktreePaths(session)) {
       const dir = path.join(session.cwd, rel)
       if (isMissing(dir)) {
         parts.push(`${rel}: (yok)`)
         continue
       }
-      const status = await git.porcelainStatus(dir)
-      if (status === null) return null
-      changedEntries += status.length
-      parts.push(...status.map((entry) => `${rel}: ${entry}`))
+      const result = await contentFingerprint(dir, budget)
+      if (!result.ok) return result
+      changedEntries += result.changedEntries
+      ignoredEntries += result.ignoredEntries
+      parts.push(`${rel}: ${result.digest}`)
     }
-    return { digest: digestOf(parts), changedEntries }
+    return { ok: true, digest: digestOf(parts), changedEntries, ignoredEntries }
   }
 
   /** Hedefleri sırayla açar; biri başarısızsa açılmış olanlar geri alınır. */
@@ -931,11 +935,16 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (dirIdentity === null) {
       return jsonError(res, 409, 'cwd_missing', `Çalışma dizini okunamıyor: ${session.cwd}`, { cwd: session.cwd })
     }
-    const fingerprint = await deletionFingerprint(session)
-    if (fingerprint === null) {
-      return jsonError(res, 409, 'status_unreadable', 'Çalışma kopyasının durumu okunamadı; onay üretilmedi', {
-        cwd: session.cwd,
-      })
+    const fingerprint = await deletionFingerprint(session, createBudget())
+    if (!fingerprint.ok) {
+      // Bütçenin bypass/force yolu yoktur; kullanıcı dosyaları yerel araçla temizler.
+      return jsonError(
+        res,
+        409,
+        fingerprint.reason === 'budget' ? 'preview_budget_exceeded' : 'status_unreadable',
+        `Klasör büyük veya okunamıyor (${fingerprint.message}); dosyaları yerel araçla inceleyip temizleyin, ardından tekrar deneyin: ${session.cwd}`,
+        { cwd: session.cwd, reason: fingerprint.message },
+      )
     }
 
     const confirmationToken = crypto.randomBytes(24).toString('hex')
@@ -944,7 +953,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       runId: session.runId,
       cwd: session.cwd,
       dirIdentity,
-      statusDigest: fingerprint.digest,
+      contentDigest: fingerprint.digest,
       expiresAt: Date.now() + CONFIRMATION_TTL_MS,
     })
 
@@ -955,9 +964,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       branch: session.branch,
       isolation: session.isolation,
       changedEntries: fingerprint.changedEntries,
-      // Sözleşmenin içerik fingerprint'i ve ignored dosya bütçesi §8/4'te
-      // eklenir. Ortak klasörde dosyalar korunur; Git durumu gerekmez.
-      fingerprintScope: session.isolation === 'shared' ? 'dir-identity' : 'dir-identity+git-status',
+      ignoredEntries: fingerprint.ignoredEntries,
+      // Ortak klasörde dosyalar korunur; içerik okunmaz, yalnız dizin kimliği bağlanır.
+      fingerprintScope: session.isolation === 'shared' ? 'dir-identity' : 'content',
       keepsBranch: true,
     })
   })
@@ -1002,15 +1011,15 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       }
 
       // Ortak klasörde dosyalar silinmez; yalnız dizin kimliği doğrulanır.
-      // Worktree kaldırılacaksa Git durumu da tekrar okunur.
+      // Worktree kaldırılacaksa içerik fingerprint'i de tekrar okunur.
       const dirIdentity = dirIdentityOf(session.cwd)
-      const fingerprint = await deletionFingerprint(session)
-      if (dirIdentity === null || fingerprint === null) {
-        return jsonError(res, 409, 'confirmation_stale', 'Çalışma kopyası artık okunamıyor; silme yapılmadı', {
+      const fingerprint = await deletionFingerprint(session, createBudget())
+      if (dirIdentity === null || !fingerprint.ok) {
+        return jsonError(res, 409, 'confirmation_stale', 'Çalışma kopyası artık okunamıyor veya bütçeyi aşıyor; silme yapılmadı', {
           cwd: session.cwd,
         })
       }
-      if (dirIdentity !== confirmation.dirIdentity || fingerprint.digest !== confirmation.statusDigest) {
+      if (dirIdentity !== confirmation.dirIdentity || fingerprint.digest !== confirmation.contentDigest) {
         confirmations.delete(confirmationToken)
         return jsonError(res, 409, 'confirmation_stale', 'Klasör içeriği onaydan sonra değişti; silme yapılmadı', {
           cwd: session.cwd,
