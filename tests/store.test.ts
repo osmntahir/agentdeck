@@ -219,7 +219,7 @@ test('commit copy-on-write: yayımlanan state ancak rename sonrası değişir', 
     const store = openStore(dir)
     const before = store.get()
     await store.commit((draft) => {
-      draft.projects.push({ id: 'p1', name: 'x', path: '/tmp/x', createdAt: 1 })
+      draft.projects.push({ kind: 'git', id: 'p1', name: 'x', path: '/tmp/x', createdAt: 1 })
     })
     assert.equal(before.projects.length, 0, 'eski görünüm değişmez (copy-on-write)')
     assert.equal(store.get().projects.length, 1)
@@ -237,14 +237,14 @@ test('commit başarısızsa yayımlanan state ve disk korunur', async () => {
   try {
     const store = openStore(dir)
     await store.commit((draft) => {
-      draft.projects.push({ id: 'p1', name: 'x', path: '/tmp/x', createdAt: 1 })
+      draft.projects.push({ kind: 'git', id: 'p1', name: 'x', path: '/tmp/x', createdAt: 1 })
     })
 
     // Yazılamaz veri dizini disk hatasını taklit eder.
     fs.chmodSync(dir, 0o500)
     await assert.rejects(
       store.commit((draft) => {
-        draft.projects.push({ id: 'p2', name: 'y', path: '/tmp/y', createdAt: 2 })
+        draft.projects.push({ kind: 'git', id: 'p2', name: 'y', path: '/tmp/y', createdAt: 2 })
       }),
     )
     fs.chmodSync(dir, 0o755)
@@ -265,7 +265,7 @@ test('eşzamanlı commit çağrıları sıralanır ve hiçbiri kaybolmaz', async
     await Promise.all(
       Array.from({ length: 12 }, (_, i) =>
         store.commit((draft) => {
-          draft.projects.push({ id: `p${i}`, name: `x${i}`, path: `/tmp/x${i}`, createdAt: i })
+          draft.projects.push({ kind: 'git', id: `p${i}`, name: `x${i}`, path: `/tmp/x${i}`, createdAt: i })
         }),
       ),
     )
@@ -289,4 +289,26 @@ test('token dosyası yalnız sahibine okunur izinle üretilir', { skip: isRoot ?
   } finally {
     removeDir(dir)
   }
+})
+
+
+test('proje türü eski kayıtlarda git olur; klasör türü yeniden açılışta korunur', async () => {
+  const dir = tempDir()
+  try {
+    writeState(dir, { schemaVersion: 2, projects: [{ id: 'old', name: 'old', path: '/tmp/old', createdAt: 1 }], sessions: [] })
+    const store = openStore(dir)
+    assert.equal(store.get().projects[0].kind, 'git')
+    await store.commit(draft => {
+      draft.projects.push({ id: 'folder', name: 'kiosk', path: '/tmp/kiosk', kind: 'folder', createdAt: 2 })
+    })
+    assert.deepEqual(openStore(dir).get().projects.map(p => p.kind), ['git', 'folder'])
+  } finally { removeDir(dir) }
+})
+
+test('bilinmeyen proje türü bozuk kayıt olarak reddedilir', () => {
+  const dir = tempDir()
+  try {
+    writeState(dir, { schemaVersion: 2, projects: [{ id: 'p', name: 'p', path: '/tmp/p', kind: 'unknown', createdAt: 1 }], sessions: [] })
+    assert.throws(() => openStore(dir), StateError)
+  } finally { removeDir(dir) }
 })

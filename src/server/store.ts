@@ -59,7 +59,10 @@ function nullableNum(value: unknown, what: string): number | null {
 
 function project(raw: unknown): Project {
   if (!isObject(raw)) corrupt('project kaydı')
+  const kind = raw.kind === undefined ? 'git' : raw.kind
+  if (kind !== 'git' && kind !== 'folder') corrupt('project.kind')
   return {
+    kind,
     id: str(raw.id, 'project.id'),
     name: str(raw.name, 'project.name'),
     path: str(raw.path, 'project.path'),

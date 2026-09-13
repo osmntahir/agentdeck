@@ -20,6 +20,8 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Dosya koruma** — silme yalnız taze bir onayla yapılır, branch hiçbir
   koşulda silinmez, `git worktree remove` başarısızsa zorla silme yoluna
   düşülmez. Kayıtsız çalışma kopyaları yalnız listelenir, temizlenmez.
+- **Yerel klasör projeleri** — Git deposu olmayan klasörler de eklenebilir; bu projelerde oturumlar ortak klasörde çalışır. Git başlatılmaz, dosyalar taşınmaz. Worktree ve diff Git projelerine aittir.
+- **Klasör seçici** — masaüstünde “Proje ekle → Klasör seç…” sistem penceresini açar. Tarayıcıda tam klasör yolu yazılır.
 - **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması ve yaşam döngüsü filtreleri. Görünen sonuçların ilk 24 oturumu için önizleme alınır; karttan tek terminale geçilir.
 - **Oturumlar arası geçiş** — yalnız odaktaki terminal açılır; ekran daemon'daki
   headless modelden kurulur. Scrollback açık “Terminal geçmişini yükle” eylemiyle gelir.
@@ -164,7 +166,7 @@ Bilinçli olarak MVP dışında bırakılanlar:
 - **Proje silme kademeli değildir.** Oturum kaydı olan proje reddedilir;
   oturumlar tek tek silinir. Arşivleme henüz yok.
 - Silme onayı dizin kimliği ve Git durumuna bağlıdır; ignored dosyaları da
-  kapsayan içerik fingerprint'i ve bütçeleri §8/4'te gelir.
+  kapsayan içerik fingerprint'i ve bütçeleri §8/4'te gelir. Ortak oturumlarda yalnız dizin kimliği doğrulanır; proje dosyaları silinmez.
 - Electron'un `chrome-sandbox` yardımcısı npm kurulumunda root'a ait olmadığı
   için pencere `--no-sandbox` ile açılır. Yüklenen tek içerik kendi localhost
   daemon'umuz, `contextIsolation` açık ve `nodeIntegration` kapalı. Kalıcı

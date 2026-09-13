@@ -8,7 +8,7 @@ import WebSocket from 'ws'
 import { startDaemon, type Daemon } from '../src/server/daemon'
 import { acquireDaemonLock } from '../src/server/lock'
 import { StateError } from '../src/server/store'
-import type { SessionView, StateResponse } from '../src/shared/types'
+import type { Project, SessionView, StateResponse } from '../src/shared/types'
 import { tempDir, removeDir, isRoot } from './helpers'
 
 interface Reply<T = any> {
@@ -557,20 +557,69 @@ test('proje ekleme: alias aynı projeye çözülür, yönetilen kopya reddedilir
   })
 })
 
-test('git olmayan klasör ve bulunmayan yol reddedilir', async () => {
-  await withDaemon(async ({ api }) => {
+test('yerel klasör projesi ortak oturum açar; silme kullanıcı dosyalarını korur', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, dataDir }) => {
     const plain = tempDir()
     try {
-      const res = await api.post<{ message: string }>('/api/projects', { path: plain })
-      assert.equal(res.status, 400)
-      assert.match(res.body.message, /git deposu değil/)
-    } finally {
-      removeDir(plain)
-    }
+      const file = path.join(plain, 'kiosk.txt')
+      fs.writeFileSync(file, 'kiosk')
+      const added = await api.post<Project>('/api/projects', { path: plain })
+      assert.equal(added.status, 200)
+      assert.equal(added.body.kind, 'folder')
+      assert.equal(added.body.path, fs.realpathSync(plain))
+      assert.equal(fs.existsSync(path.join(plain, '.git')), false, 'Git deposu oluşturulmaz')
+      const persisted = JSON.parse(fs.readFileSync(path.join(dataDir, 'state.json'), 'utf8'))
+      assert.equal(persisted.projects.find((p: Project) => p.id === added.body.id).kind, 'folder')
 
-    const missing = await api.post<{ message: string }>('/api/projects', { path: '/tmp/agentdeck-yok-xyz' })
+      const alias = path.join(dataDir, 'kiosk-alias')
+      fs.symlinkSync(plain, alias)
+      assert.equal((await api.post('/api/projects', { path: alias })).status, 409)
+      const isolated = await api.post<{ code: string }>('/api/sessions', createBody(added.body.id))
+      assert.equal(isolated.status, 400)
+      assert.equal(isolated.body.code, 'git_required')
+
+      const created = await api.post<SessionView>('/api/sessions', createBody(added.body.id, { isolation: 'shared' }))
+      assert.equal(created.status, 200)
+      assert.equal(created.body.lifecycle, 'live')
+      assert.equal(created.body.cwd, fs.realpathSync(plain))
+      assert.equal(created.body.baseCommit, null)
+      assert.equal(created.body.branch, null)
+      const diff = await api.get<{ code: string }>(`/api/sessions/${created.body.id}/diff`)
+      assert.equal(diff.status, 409)
+      assert.equal(diff.body.code, 'git_required', 'Git olmayan klasör temiz diff gibi gösterilmez')
+
+      const stopped = await api.post(`/api/sessions/${created.body.id}/stop`, { expectedRunId: created.body.runId })
+      assert.equal(stopped.status, 200)
+      const restarted = await api.post<SessionView>(`/api/sessions/${created.body.id}/restart`, {
+        requestId: 'folder-restart', expectedRunId: created.body.runId,
+      })
+      assert.equal(restarted.status, 200)
+      assert.notEqual(restarted.body.runId, created.body.runId)
+      const preview = await api.post<{ confirmationToken: string; fingerprintScope: string }>(`/api/sessions/${created.body.id}/delete-preview`)
+      assert.equal(preview.status, 200)
+      assert.equal(preview.body.fingerprintScope, 'dir-identity')
+      fs.writeFileSync(file, 'kiosk değişti')
+      const deleted = await api.del(`/api/sessions/${created.body.id}`, { confirmationToken: preview.body.confirmationToken })
+      assert.equal(deleted.status, 200)
+      assert.equal(fs.readFileSync(file, 'utf8'), 'kiosk değişti', 'ortak klasör içeriğine dokunulmaz')
+      assert.equal((await api.del(`/api/projects/${added.body.id}`)).status, 200)
+      assert.equal(fs.existsSync(file), true)
+    } finally { removeDir(plain) }
+  })
+})
+
+test('bulunmayan yol, dosya, bare depo ve yönetilen normal klasör reddedilir', async () => {
+  await withDaemon(async ({ api, dataDir, repo }) => {
+    const missing = await api.post('/api/projects', { path: '/tmp/agentdeck-yok-xyz' })
     assert.equal(missing.status, 400)
-    assert.match(missing.body.message, /bulunamadı/)
+    const file = await api.post('/api/projects', { path: path.join(repo, 'README.md') })
+    assert.equal(file.status, 400)
+    const bare = path.join(dataDir, 'bare.git')
+    execFileSync('git', ['init', '--bare', bare], { stdio: 'pipe' })
+    assert.equal((await api.post('/api/projects', { path: bare })).status, 400)
+    const managed = path.join(dataDir, 'worktrees', 'plain')
+    fs.mkdirSync(managed, { recursive: true })
+    assert.equal((await api.post('/api/projects', { path: managed })).status, 400)
   })
 })
 

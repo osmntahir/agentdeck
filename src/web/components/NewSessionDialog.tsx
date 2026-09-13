@@ -18,7 +18,7 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
   const [name, setName] = useState('')
   // Preset yalnız başlangıç Command'ını doldurur; kalıcı ajan kimliği değildir.
   const [presetIndex, setPresetIndex] = useState(0)
-  const [isolation, setIsolation] = useState<Isolation>('worktree')
+  const [isolation, setIsolation] = useState<Isolation>(project.kind === 'folder' ? 'shared' : 'worktree')
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -65,26 +65,34 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
           <label className="radio">
             <input
               type="radio"
+              disabled={project.kind === 'folder'}
               checked={isolation === 'worktree'}
               onChange={() => setIsolation('worktree')}
             />
             <span>
-              <strong>İzole</strong> — kendi worktree'si ve branch'i
+              <strong>İzole</strong> —{' '}
+              {project.kind === 'folder' ? 'Git deposu gerektirir' : "kendi worktree'si ve branch'i"}
             </span>
           </label>
           <label className="radio">
             <input type="radio" checked={isolation === 'shared'} onChange={() => setIsolation('shared')} />
             <span>
-              <strong>Ortak</strong> — ana çalışma kopyasında
+              <strong>Ortak</strong> — doğrudan proje klasöründe
             </span>
           </label>
         </div>
 
+        {project.kind === 'folder' && (
+          <p className="dialog-note muted">
+            Bu proje Git deposu değil. Oturumlar aynı klasörde çalışır; dosyalar birbirinden izole edilmez ve
+            Git diff kullanılamaz.
+          </p>
+        )}
         {/* Yeni klasörde CLI'lar güven veya giriş onayı isteyebilir; bunu
             uygulama vermez, kullanıcı terminalden tamamlar. */}
         <p className="dialog-note muted">
-          Ajan, klasör güveni veya giriş onayı isteyebilir; terminalden tamamlayın. İzole kopyada `.env`,
-          bağımlılıklar ve servis portları hazır değildir.
+          Ajan, klasör güveni veya giriş onayı isteyebilir; terminalden tamamlayın.
+          {isolation === 'worktree' && ' İzole kopyada .env, bağımlılıklar ve servis portları hazır değildir.'}
         </p>
 
         {error && (

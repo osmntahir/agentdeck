@@ -90,8 +90,8 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
             <span className="eyebrow">İLK ÇALIŞMA ALANIN</span>
             <h2>İyi işler bir projeyle başlar.</h2>
             <p>
-              Yerel Git projenizi ekleyin. Claude Code, Codex, Gemini veya terminal ile kaldığınız yerden
-              devam edin.
+              Git projenizi veya yerel klasörünüzü ekleyin. Claude Code, Codex, Gemini veya terminal ile
+              kaldığınız yerden devam edin.
             </p>
             <button className="primary" onClick={onAddProject}>
               + İlk projeni ekle
@@ -100,7 +100,7 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
               <div>
                 <b>01</b>
                 <strong>Projeni bağla</strong>
-                <span>Bilgisayarındaki Git klasörünü seç.</span>
+                <span>Bilgisayarındaki proje klasörünü seç.</span>
               </div>
               <div>
                 <b>02</b>
@@ -125,7 +125,8 @@ export function Workspace({ state, healthy, onSelect, onNewSession, onAddProject
                     <div className="project-monogram">{project.name.slice(0, 2).toUpperCase()}</div>
                     <div>
                       <h3>
-                        {project.name} <span>{owned.length}</span>
+                        {project.name} <span>{owned.length}</span>{' '}
+                        {project.kind === 'folder' && <span>Yerel klasör</span>}
                       </h3>
                       <p title={project.path}>{project.path}</p>
                     </div>

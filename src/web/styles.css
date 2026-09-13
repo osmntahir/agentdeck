@@ -1006,3 +1006,7 @@ button.primary {
     transition: none;
   }
 }
+
+.sidebar-add-project { width: 100%; padding: 9px; text-align: left; }
+.folder-chooser { min-height: 58px; border-style: dashed; color: var(--accent); background: #232936; font-size: 14px; }
+.radio:has(input:disabled) { opacity: .55; cursor: not-allowed; }

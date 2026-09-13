@@ -5,7 +5,7 @@ Yerel, proje odaklı ajan ve terminal çalışma tezgâhı. Kullanıcı paralel 
 ## Language
 
 **Project**:
-Arayüze eklenmiş Git çalışma kopyası kökü; Session kayıtlarının kapsayıcısıdır.
+Arayüze eklenmiş yerel klasör; Session kayıtlarının kapsayıcısıdır. Git projesi bir çalışma kopyası köküdür ve worktree izolasyonu sunar; klasör projesinde oturumlar doğrudan ortak klasörde çalışır.
 
 **Session**:
 Bir çalışma kaydı ve ona bağlı ardışık Run'lar. Süreç sonlandığında çalışma kaydı yaşayabilir.

@@ -10,7 +10,7 @@ interface Props {
   onHome: () => void
   healthy: boolean
   onNewSession: (project: Project) => void
-  onAddProject: (path: string) => Promise<void>
+  onAddProject: () => void
   onDeleteProject: (id: string) => void
   orphans: OrphanScanResult | null
   onRefreshOrphans: () => void
@@ -28,25 +28,7 @@ export function Sidebar({
   orphans,
   onRefreshOrphans,
 }: Props) {
-  const [adding, setAdding] = useState(false)
-  const [addError, setAddError] = useState<string | null>(null)
-  const [path, setPath] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!path.trim() || adding) return
-    setAdding(true)
-    setAddError(null)
-    try {
-      await onAddProject(path.trim())
-      setPath('')
-    } catch (error) {
-      setAddError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setAdding(false)
-    }
-  }
 
   return (
     <aside className="sidebar">
@@ -124,24 +106,11 @@ export function Sidebar({
         <span className={`dot ${healthy ? 'live' : 'orphaned'}`} />
         {healthy ? 'Yerel bağlantı hazır' : 'Bağlantı bekleniyor'}
       </div>
-      {addError && (
-        <div className="error" role="alert">
-          {addError}
-        </div>
-      )}
-      <form className="add-project" onSubmit={submit}>
-        <input
-          id="project-path"
-          aria-label="Git proje klasörü"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          placeholder="~/proje/yolu"
-          spellCheck={false}
-        />
-        <button type="submit" disabled={adding}>
-          {adding ? 'Ekleniyor…' : 'Ekle'}
+      <div className="add-project">
+        <button className="sidebar-add-project" onClick={onAddProject}>
+          + Proje ekle
         </button>
-      </form>
+      </div>
     </aside>
   )
 }

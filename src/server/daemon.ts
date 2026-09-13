@@ -363,8 +363,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (await git.isBare(dir)) {
       return jsonError(res, 400, 'validation', 'Bare depo Project olamaz: çalışma kopyası yok')
     }
-    const root = await git.repoRoot(dir)
-    if (!root) return jsonError(res, 400, 'validation', 'Burası bir git deposu değil')
+    const gitRoot = await git.repoRoot(dir)
+    const root = gitRoot ? fs.realpathSync(gitRoot) : dir
 
     const managedRoot = path.resolve(store.worktreeRoot)
     const resolvedRoot = path.resolve(root)
@@ -378,6 +378,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
 
     const project: Project = {
+      kind: gitRoot ? 'git' : 'folder',
       id: crypto.randomBytes(8).toString('hex'),
       name: path.basename(root),
       path: root,
@@ -446,6 +447,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         let baseCommit: string | null = null
 
         if (isolation === 'worktree') {
+          if (project.kind === 'folder') {
+            throw new HttpError(
+              400,
+              'git_required',
+              'Bu proje yerel bir klasör. Oturumu ortak klasörde başlatın; worktree için Git deposu gerekir.',
+            )
+          }
           const base = await git.headOid(project.path)
           if (!base) {
             throw new HttpError(
@@ -655,7 +663,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (dirIdentity === null) {
       return jsonError(res, 409, 'cwd_missing', `Çalışma dizini okunamıyor: ${session.cwd}`, { cwd: session.cwd })
     }
-    const status = await git.porcelainStatus(session.cwd)
+    const status = session.isolation === 'shared' ? [] : await git.porcelainStatus(session.cwd)
     if (status === null) {
       return jsonError(res, 409, 'status_unreadable', 'Çalışma kopyasının durumu okunamadı; onay üretilmedi', {
         cwd: session.cwd,
@@ -680,8 +688,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       isolation: session.isolation,
       changedEntries: status.length,
       // Sözleşmenin içerik fingerprint'i ve ignored dosya bütçesi §8/4'te
-      // eklenir; bu onay dizin kimliği ve Git durumuna bağlıdır.
-      fingerprintScope: 'dir-identity+git-status',
+      // eklenir. Ortak klasörde dosyalar korunur; Git durumu gerekmez.
+      fingerprintScope: session.isolation === 'shared' ? 'dir-identity' : 'dir-identity+git-status',
       keepsBranch: true,
     })
   })
@@ -725,9 +733,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         })
       }
 
-      // Onay alındıktan sonra dosya durumu tekrar okunur.
+      // Ortak klasörde dosyalar silinmez; yalnız dizin kimliği doğrulanır.
+      // Worktree kaldırılacaksa Git durumu da tekrar okunur.
       const dirIdentity = dirIdentityOf(session.cwd)
-      const status = await git.porcelainStatus(session.cwd)
+      const status = session.isolation === 'shared' ? [] : await git.porcelainStatus(session.cwd)
       if (dirIdentity === null || status === null) {
         return jsonError(res, 409, 'confirmation_stale', 'Çalışma kopyası artık okunamıyor; silme yapılmadı', {
           cwd: session.cwd,
@@ -774,7 +783,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           res,
           503,
           'persistence',
-          `Dosyalar kaldırıldı ama kayıt güncellenemedi: ${(err as Error).message}`,
+          `${session.isolation === 'shared' ? 'Dosyalar korundu fakat oturum kaydı kaldırılamadı' : 'Dosyalar kaldırıldı ama kayıt güncellenemedi'}: ${(err as Error).message}`,
           { cwd: session.cwd, degraded: true },
         )
       }
@@ -816,6 +825,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
     if (dirIdentityOf(session.cwd) === null) {
       return jsonError(res, 409, 'cwd_missing', `Çalışma dizini yok: ${session.cwd}`)
+    }
+    const project = store.get().projects.find((p) => p.id === session.projectId)
+    if (project?.kind === 'folder' || !(await git.repoRoot(session.cwd))) {
+      return jsonError(
+        res, 409, 'git_required',
+        'Bu klasörde Git diff kullanılamıyor. Dosyalar doğrudan proje klasöründe düzenlenir.',
+      )
     }
     const [{ diff, status }, branch] = await Promise.all([git.diff(session.cwd), git.currentBranch(session.cwd)])
     res.json({ diff, status, branch })

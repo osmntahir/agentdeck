@@ -7,6 +7,7 @@ export type Lifecycle = 'live' | 'exited' | 'orphaned'
 export type Activity = 'active' | 'idle'
 
 export interface Project {
+  kind: 'git' | 'folder'
   id: string
   name: string
   path: string

@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, Menu, shell, dialog } = require('electron')
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron')
 const { spawn } = require('node:child_process')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -9,7 +9,7 @@ const os = require('node:os')
 const PORT = Number(process.env.AGENTDECK_PORT || 4711)
 const BASE = `http://127.0.0.1:${PORT}`
 const SERVER = path.join(__dirname, '..', 'dist', 'server', 'index.js')
-const TOKEN_FILE = path.join(os.homedir(), '.agentdeck', 'token')
+const TOKEN_FILE = path.join(process.env.AGENTDECK_DATA_DIR || path.join(os.homedir(), '.agentdeck'), 'token')
 
 let win = null
 
@@ -83,7 +83,11 @@ function buildMenu() {
         label: 'agentdeck',
         submenu: [
           { label: 'Yenile', accelerator: 'CmdOrCtrl+R', click: () => win?.reload() },
-          { label: 'Geliştirici araçları', accelerator: 'F12', click: () => win?.webContents.toggleDevTools() },
+          {
+            label: 'Geliştirici araçları',
+            accelerator: 'F12',
+            click: () => win?.webContents.toggleDevTools(),
+          },
           { type: 'separator' },
           {
             label: 'Daemon durumu…',
@@ -128,10 +132,18 @@ function createWindow(token) {
     autoHideMenuBar: true,
     title: 'agentdeck',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
   })
 
-  win.loadURL(`${BASE}/?token=${token}`)
+  win.webContents.on('will-navigate', (event, url) => {
+    if (new URL(url).origin !== BASE) event.preventDefault()
+  })
+  win.loadURL(`${BASE}/?token=${encodeURIComponent(token)}`)
   win.on('closed', () => {
     win = null
   })
@@ -178,6 +190,24 @@ if (!app.requestSingleInstanceLock()) {
       app.quit()
       return
     }
+
+    ipcMain.handle('agentdeck:select-project-folder', async (event) => {
+      if (
+        !win ||
+        event.sender !== win.webContents ||
+        event.senderFrame !== win.webContents.mainFrame ||
+        new URL(event.senderFrame.url).origin !== BASE
+      ) {
+        throw new Error('Klasör seçimi yalnız uygulama penceresinden yapılabilir')
+      }
+      const result = await dialog.showOpenDialog(win, {
+        title: 'Proje klasörünü seç',
+        buttonLabel: 'Klasörü seç',
+        defaultPath: app.getPath('desktop'),
+        properties: ['openDirectory'],
+      })
+      return result.canceled ? null : (result.filePaths[0] ?? null)
+    })
 
     buildMenu()
     createWindow(readToken())

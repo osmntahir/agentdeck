@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api'
+import { AddProjectDialog } from './components/AddProjectDialog'
 import { Workspace } from './components/Workspace'
 import { Sidebar } from './components/Sidebar'
 import { TerminalPane } from './components/TerminalPane'
@@ -21,6 +22,7 @@ export function App() {
   const [state, setState] = useState<StateResponse>(EMPTY)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [tab, setTab] = useState<'terminal' | 'diff'>('terminal')
+  const [addingProject, setAddingProject] = useState(false)
   const [dialogProject, setDialogProject] = useState<Project | null>(null)
   const [pendingDelete, setPendingDelete] = useState<api.DeletePreview | null>(null)
   const [orphans, setOrphans] = useState<api.OrphanScanResult | null>(null)
@@ -143,10 +145,7 @@ export function App() {
           setPendingDelete(null)
         }}
         onNewSession={setDialogProject}
-        onAddProject={async (path) => {
-          await api.addProject(path)
-          await refresh()
-        }}
+        onAddProject={() => setAddingProject(true)}
         onDeleteProject={(id) => run(api.deleteProject(id))}
         orphans={orphans}
         onRefreshOrphans={refreshOrphans}
@@ -190,11 +189,15 @@ export function App() {
                 {pendingDelete ? (
                   <>
                     <span className="muted" title={pendingDelete.cwd}>
-                      {pendingDelete.changedEntries > 0
-                        ? `${pendingDelete.changedEntries} değişiklikle birlikte klasörü sil?`
-                        : 'klasörü sil?'}
+                      {pendingDelete.isolation === 'shared'
+                        ? 'Oturum kaydı kaldırılsın mı? Klasör ve dosyalar korunur.'
+                        : pendingDelete.changedEntries > 0
+                          ? `${pendingDelete.changedEntries} değişiklikle birlikte klasörü sil?`
+                          : 'klasörü sil?'}
                     </span>
-                    <button onClick={confirmDelete}>sil (branch kalır)</button>
+                    <button onClick={confirmDelete}>
+                      {pendingDelete.isolation === 'shared' ? 'Kaydı kaldır' : 'sil (branch kalır)'}
+                    </button>
                     <button onClick={() => setPendingDelete(null)}>vazgeç</button>
                   </>
                 ) : (
@@ -260,12 +263,21 @@ export function App() {
                 setTab('terminal')
               }}
               onNewSession={setDialogProject}
-              onAddProject={() => document.getElementById('project-path')?.focus()}
+              onAddProject={() => setAddingProject(true)}
             />
           </>
         )}
       </main>
 
+      {addingProject && (
+        <AddProjectDialog
+          onCancel={() => setAddingProject(false)}
+          onAdd={async (path) => {
+            await api.addProject(path)
+            await refresh()
+          }}
+        />
+      )}
       {dialogProject && (
         <NewSessionDialog
           project={dialogProject}
