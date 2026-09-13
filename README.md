@@ -25,7 +25,7 @@ tarayıcıyı kapatmak ajanı öldürmez.
   proje kalır. Kayıtsız çalışma kopyaları yalnız listelenir, temizlenmez.
 - **Yerel klasör projeleri** — Git deposu olmayan klasörler de eklenebilir; Git başlatılmaz, dosyalar taşınmaz. Ortak oturum doğrudan klasörde çalışır. Klasörün altındaki Git depoları (en çok 4 seviye, 30 depo) ayrı ayrı ele alınır: izole oturum her depo için aynı branch adıyla ayrı worktree açar, depo dışındaki dosyaları kopyalamaz.
 - **Klasör seçici** — masaüstünde “Proje ekle → Klasör seç…” sistem penceresini açar. Tarayıcıda tam klasör yolu yazılır.
-- **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması, yaşam döngüsü, yaş ve çalışma dizini hatası. Görünen sonuçların ilk 24 oturumu için önizleme alınır; karttan tek terminale geçilir. Oklarla aday değişir, Enter açar; poll sırayı ve odağı değiştirmez.
+- **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması, yaşam döngüsü, yaş ve çalışma dizini hatası. Görünen taramanın ilk 24 oturumu için önizleme alınır; oturum veya grid açıkken bu iş istenmez. Karttan tek terminale geçilir. Oklarla aday değişir, Enter açar; poll sırayı ve odağı değiştirmez.
 - **Klavye** — F6 terminalden uygulama çubuğuna çıkar; masaüstü menüsü gerçek F6'yı PTY'ye gönderir. Escape PTY'de kalır, kromda taramaya döner.
 - **Terminal grid** — birden çok oturumun terminali yan yana açılır. Sekmeyi
   sürükleyip bir panelin kenarına bırakarak bölünür, aradaki çizgiyle

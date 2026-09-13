@@ -88,15 +88,14 @@ Uygulama durumu (13 Eylül 2026): spec §8/1, §8/3, §8/4 ve §8/5 ürün kodun
 
 ## Sıradaki iş ve açık kararlar
 
-Son durum (13 Eylül 2026): §8/1 ardından §8/3 terminal dilimi uygulandı; kaynak kod, istemci ve testler aynı protokolü kullanıyor. Kapsam ve açık kabul [ADR 0008](../adr/0008-terminal-slice-implementation.md) içinde. `npm test` 158/158, typecheck ve build başarılı. Derlenmiş worker + WS + istemci tüketicisi smoke testi geçti. Bu turda gerçek tarayıcı bağlantısı bulunamadı; görsel ürün kabulü yapılmadı.
+Son durum (13 Eylül 2026): §8/1, §8/3, §8/4 ve §8/5 ürün koduna girdi ([ADR 0012](../adr/0012-scan-focus-poll-implementation.md)). `npm test` 211/211, typecheck başarılı. Kart panosu `/api/state` önizlemesine bağlıdır; tarama gizliyken 24 kartlık GET istenmez. Derlenmiş arayüzde F6/Escape/kart duman testi yapıldı. G2 insan kabulü, G3 kalan maddeleri, G4 ve §8/6 açıktır.
 
 Sıradaki işler:
 
 1. **§8/2 — gerçek CLI ilk kullanımı.** Trust/auth onayı kullanıcı eylemidir. [`g2-human-acceptance.sh`](../research/g2-human-acceptance.sh) ile yürütülür. Managed fresh/resume henüz açılmaz.
 2. **§8/3 kabulü.** Gerçek tarayıcıda ekran/scrollback, >1 MiB renkli replay, paste/mouse/IME ve kopuş doğrulanmalı; 4–8 gerçek CLI ile sonra 32 PTY yükü ölçülmeli. Motor/host/checkpoint/API/protokol tüketicisi otomatik testleri ürün kabulünün yerine geçmez.
-3. **§8/4 — çalışma sonucu ve devam.** Uygulandı (13 Eylül 2026): baseCommit diff, aynı cwd’de command launch, önceki Run seçicisi, arşiv/branch görünümü, içerik fingerprint’li güvenli silme ve kademeli proje silme ([ADR 0011](../adr/0011-work-result-slice-implementation.md)). Gerçek kullanıcı kabulü G4'te.
-4. **§8/5 — grid entegrasyonu.** Preview API hazır; grid mock veridedir ve varyant kararı bekler. Odakta tek xterm ve diff’te terminal bırakma uygulanmıştır.
+3. **§8/4 kabulü.** Ürün kodu uygulandı ([ADR 0011](../adr/0011-work-result-slice-implementation.md)). Gerçek kullanıcı kabulü G4'te.
+4. **§8/5 kabulü.** Ürün kodu uygulandı ([ADR 0012](../adr/0012-scan-focus-poll-implementation.md)). Grid panellerinin kendi iç klavyesi, IME / ekran okuyucu / %200 zoom ve 4–8 gerçek oturum G4'te.
+5. **§8/6 — dayanıklılık.** Çöküş, disk-full, bozuk state, timeout, çoklu istemci ve dış Git yarışı; README ile gerçek davranış hizası.
 
-**Açık karar — grid varyantı.** `src/web/prototype/grid/` içinde dört varyant var ve hepsi `mock.ts` ile beslenir, `/api/state`'i hiç görmez. **Varyant B ve C sözleşmeye aykırı düşmüştür:** kartları `attentionRank` ile dizerler, revizyon 2.2 ise "sıra `createdAt,id` ile sabit" ve "idle hata rozeti gibi gösterilmez" diyor. Seçim **A** (proje şeritleri) ile **D** (grid ↔ odak modu) arasındadır ve kullanıcıya aittir. Hangisi seçilirse seçilsin kart önizlemesi §8/3'e bağlıdır; o gelmeden kart, spec §4 gereği "Önizleme hazırlanıyor/erişilemiyor" demelidir — uydurma düz çıktı yazılmaz.
-
-**Depo notu.** `main` dalı grid prototipinin commit'lerini de taşır. Bu, doküman senkronu sırasında istenmeden olmuş, kullanıcıya bildirilmiş ve kullanıcı kararıyla **olduğu gibi bırakılmıştır**; düzeltmek force-push gerektirirdi. Bu kayıt `7d39474` anındaki durumu anlatır; sonraki uygulama commit’leri etkin dalda ilerler.
+`src/web/prototype/grid/` mock varyantları tarihçedir; ürün panosu `createdAt,id` sırasını ve idle-hata rozeti yasağını tutar.
