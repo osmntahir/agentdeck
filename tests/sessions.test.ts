@@ -39,9 +39,9 @@ test('command null etkileşimli login kabuğu başlatır', { timeout: 20000 }, a
     runId: 'r1',
     command: null,
     cwd: os.tmpdir(),
+    onData: (chunk) => out.chunks.push(chunk),
     onExit: (exit) => exits.push(exit),
   })
-  sessions.subscribe('s-shell', (d) => out.chunks.push(d), () => {})
   try {
     assert.equal(sessions.isLive('s-shell'), true)
     assert.equal(sessions.currentRunId('s-shell'), 'r1')
@@ -63,9 +63,9 @@ test('string command aynen program olarak yürür ve gerçek çıkış kaydedili
     runId: 'r1',
     command: 'printf AGENTDECK_CIKTI; exit 7',
     cwd: os.tmpdir(),
+    onData: (chunk) => out.chunks.push(chunk),
     onExit: (exit) => exits.push(exit),
   })
-  sessions.subscribe('s-cmd', (d) => out.chunks.push(d), () => {})
 
   await out.waitFor('AGENTDECK_CIKTI')
   const deadline = Date.now() + 8000
@@ -86,9 +86,9 @@ test('Run ortamı izin listesine uyar ve AGENTDECK_RUN atanır', { timeout: 2000
       runId: 'r-env-42',
       command: 'echo "run=$AGENTDECK_RUN sizma=${AGENTDECK_TEST_SIZMA:-yok} term=$TERM"',
       cwd: os.tmpdir(),
+      onData: (chunk) => out.chunks.push(chunk),
       onExit: () => {},
     })
-    sessions.subscribe('s-env', (d) => out.chunks.push(d), () => {})
     await out.waitFor('run=r-env-42')
     await out.waitFor('sizma=yok')
     await out.waitFor('term=xterm-256color')
@@ -106,9 +106,9 @@ test('SIGHUP yetmeyen grup SIGKILL ile doğrulanarak durdurulur', { timeout: 200
     // Yoksayılan sinyal exec üzerinden miras alınır: hem kabuk hem çocuk HUP'ı yutar.
     command: 'trap "" HUP; echo AGENTDECK_HAZIR; sleep 300 & sleep 300',
     cwd: os.tmpdir(),
+    onData: (chunk) => out.chunks.push(chunk),
     onExit: () => {},
   })
-  sessions.subscribe('s-hup', (d) => out.chunks.push(d), () => {})
   await out.waitFor('AGENTDECK_HAZIR')
 
   const outcome = await sessions.stop('s-hup', FAST)
@@ -125,9 +125,9 @@ test('lider çıkıp çocuk kaldığında grup izlenir ve durdurma onu da temizl
     runId: 'r1',
     command: 'trap "" HUP; sleep 300 & echo AGENTDECK_COCUK; exit 0',
     cwd: os.tmpdir(),
+    onData: (chunk) => out.chunks.push(chunk),
     onExit: (exit) => exits.push(exit),
   })
-  sessions.subscribe('s-cocuk', (d) => out.chunks.push(d), () => {})
   await out.waitFor('AGENTDECK_COCUK')
 
   const deadline = Date.now() + 8000
@@ -144,11 +144,11 @@ test('lider çıkıp çocuk kaldığında grup izlenir ve durdurma onu da temizl
 })
 
 test('canlı Run varken ikinci Run açılamaz', { timeout: 20000 }, async () => {
-  sessions.spawn({ sessionId: 's-tek', runId: 'r1', command: 'sleep 300', cwd: os.tmpdir(), onExit: () => {} })
+  sessions.spawn({ sessionId: 's-tek', runId: 'r1', command: 'sleep 300', cwd: os.tmpdir(), onData: () => {}, onExit: () => {} })
   try {
     assert.throws(
       () =>
-        sessions.spawn({ sessionId: 's-tek', runId: 'r2', command: 'sleep 300', cwd: os.tmpdir(), onExit: () => {} }),
+        sessions.spawn({ sessionId: 's-tek', runId: 'r2', command: 'sleep 300', cwd: os.tmpdir(), onData: () => {}, onExit: () => {} }),
       /canlı Run/i,
     )
     assert.equal(sessions.currentRunId('s-tek'), 'r1')
@@ -169,9 +169,9 @@ test('aktivite yalnız gerçek çıktı ve girdiyle ilerler', { timeout: 20000 }
     runId: 'r1',
     command: 'echo AGENTDECK_AKTIF; sleep 300',
     cwd: os.tmpdir(),
+    onData: (chunk) => out.chunks.push(chunk),
     onExit: () => {},
   })
-  sessions.subscribe('s-akt', (d) => out.chunks.push(d), () => {})
   try {
     await out.waitFor('AGENTDECK_AKTIF')
     const first = sessions.activity('s-akt')
@@ -193,7 +193,7 @@ test('aktivite yalnız gerçek çıktı ve girdiyle ilerler', { timeout: 20000 }
 
 test('canlı Run sayısı kapasite kontrolü için görünür', { timeout: 20000 }, async () => {
   const before = sessions.liveCount()
-  sessions.spawn({ sessionId: 's-say', runId: 'r1', command: 'sleep 300', cwd: os.tmpdir(), onExit: () => {} })
+  sessions.spawn({ sessionId: 's-say', runId: 'r1', command: 'sleep 300', cwd: os.tmpdir(), onData: () => {}, onExit: () => {} })
   try {
     assert.equal(sessions.liveCount(), before + 1)
   } finally {
@@ -210,6 +210,7 @@ test('okunamayan cwd için Run başlamaz', () => {
         runId: 'r1',
         command: null,
         cwd: '/tmp/agentdeck-olmayan-dizin-xyz',
+        onData: () => {},
         onExit: () => {},
       }),
     /cwd/i,

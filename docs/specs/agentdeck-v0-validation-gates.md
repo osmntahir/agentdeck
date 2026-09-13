@@ -56,7 +56,7 @@ Ortam: Node 22.19.0, Linux, gerçek node-pty ve gerçek `git`. Kanıt: depodaki 
     - Açık: `archive` eylemi yok (§8/4). SIGKILL'e dirençli gerçek bir süreç grubu çekirdekte kurulamadığı için timeout yolu yalnız sahte grupla ölçüldü; gerçek uninterruptible süreçle ölçülmedi.
 - [ ] Spawn başarılı/state commit başarısız ve rollback başarısız; disk-full/izin hatası; crash sırasında iki Run checkpoint'i. Kaynaklar korunur, kısmi sonuç/gerçek exit doğru görünür.
     - Ölçülen: `api.test.ts`: "PTY doğup kayıt yazılamazsa yalnız kendi grubu durdurulur ve kendi worktree i geri alınır" (izin hatası, 503 `persistence`, değişmemiş kendi kaynağı kaldırıldı, yarım worktree kaydı kalmadı, oturum kayda girmedi). `store.test.ts`: "commit başarısızsa yayımlanan state ve disk korunur", "commit copy-on-write: yayımlanan state ancak rename sonrası değişir", "eşzamanlı commit çağrıları sıralanır ve hiçbiri kaybolmaz".
-    - Açık: rollback'in de başarısız olduğu yol, gerçek disk-full, ve iki Run checkpoint'i (checkpoint §8/3'te gelir).
+    - Açık: rollback'in de başarısız olduğu yol, gerçek disk-full, ve crash sırasında iki Run checkpoint’i. Normal checkpoint saklama/okuma artık otomatik testlidir.
 - [x] **İki daemon aynı data/farklı port veya symlink alias ile başlayamaz; SIGKILL sonrası kilit bırakılır; port/protokol uyuşmazlığında yabancı süreç öldürülmez.** `lock.test.ts`: "aynı veri dizini için ikinci yazar reddedilir", "symlink alias aynı kilide çözülür", "kilit bırakıldıktan sonra yeniden alınabilir", "farklı veri dizinleri birbirini engellemez". `api.test.ts`: "aynı veri dizini için ikinci daemon açılmaz", "SIGKILL edilen daemon kilidi bırakır" (kilidi ayrı süreçte tutup `SIGKILL` ile öldürerek), "porttaki yabancı servis öldürülmez" (yabancı HTTP servisi portu tutarken daemon açılmıyor, yabancı servis yaşamaya devam ediyor, kilit sızmıyor).
 - [ ] Commit edilmiş ve edilmemiş değişiklikler baseCommit görünümünde bulunur; staged/unstaged birbirini geri aldığında status kirli kalır. Shared attribution yok; base bilinmiyorsa uydurulmaz.
     - Ölçülen yalnız kaydın kendisi: `api.test.ts` "oturum açılır, canlı görünür ve gerçek çıkış kaydedilir" `baseCommit`'in çözümlenmiş OID olduğunu, "ortak çalışma kopyasında silme dosyalara dokunmaz" ise shared'de `baseCommit`'in uydurulmadığını (null) doğruluyor. Diff kapsamları §8/4.
@@ -68,7 +68,7 @@ Ortam: Node 22.19.0, Linux, gerçek node-pty ve gerçek `git`. Kanıt: depodaki 
 - [ ] Proje silme kısmi sonuçta kalan Project/Session'ları listeler; branch silme alanı reddedilir; external Git farkı stale gösterilir.
     - Ölçülen: `api.test.ts` "oturumu olan proje gizlice cascade silinmez" (409 `project_has_sessions` + oturum kimlikleri, dosyalar yerinde) ve "branch silme alanı reddedilir". Kademeli proje silme ve external Git stale işaretleme §8/4.
 - [ ] Yarım/okunamayan checkpoint ayrı hata verir; legacy history doğru snapshot diye gösterilmez. Terminal yüklemesi/serialize bütçesi aşılırsa açık hata.
-    - Açık: checkpoint mekanizması §8/3'te gelir. Bu dilimde canlı olmayan Run için "önceki terminal görüntüsü henüz saklanmıyor" denir; sahte ekran kurulmaz.
+    - Otomatik kanıt: `checkpoints.test.ts` eksik/bozuk/sürüm ve kimlik uyuşmazlığını; `terminalHost.test.ts` worker kaybı ve son flush’ı; `api.test.ts` salt okunur inspection ve dosya temizliğini doğrular. Gerçek tarayıcı/yük kabulü hâlâ açıktır.
 
 ## G4 — Bütünleşik kullanıcı akışı (ürün kabulü)
 
@@ -86,14 +86,15 @@ Uygulama durumu (12 Eylül 2026): spec §8/1 dilimi ürün koduna girdi ve G3'ü
 
 ## Sıradaki iş ve açık kararlar
 
-Son durum: spec §8/1 uygulandı (commit `c3cee0a`), `npm test` 87 test geçiyor, `npm run typecheck` üç config'i kapsıyor. Dilimin sınırları [ADR 0007](../adr/0007-slice-1-implementation-boundaries.md).
+Son durum (13 Eylül 2026): §8/1 ardından §8/3 terminal dilimi uygulandı; kaynak kod, istemci ve testler aynı protokolü kullanıyor. Kapsam ve açık kabul [ADR 0008](../adr/0008-terminal-slice-implementation.md) içinde. `npm test` 158/158, typecheck ve build başarılı. Derlenmiş worker + WS + istemci tüketicisi smoke testi geçti. Bu turda gerçek tarayıcı bağlantısı bulunamadı; görsel ürün kabulü yapılmadı.
 
-Sıradaki üç dilim birbirinden bağımsız yürüyebilir:
+Sıradaki işler:
 
-1. **§8/2 — gerçek CLI ilk kullanımı.** Ajan tarafından yapılamaz: trust/auth onayı kullanıcı eylemidir. Tek komutla yürüyen betik [`g2-human-acceptance.sh`](../research/g2-human-acceptance.sh); sonuç `docs/research/g2-results-<tarih>.md` olarak yazılır ve G2 kutuları o dosyaya bakılarak işaretlenir. Gemini'nin auth gerektiren yolları bu makinede `IneligibleTierError` verdiği için ölçülemedi; bu bir ürün kararı değil, kanıt eksikliğidir.
-2. **§8/3 — terminal temsili.** Kart önizlemesi, canlı olmayan Run'ın geçmişi ve replay protokolü buna bağlıdır. G1 tasarım kapısı ölçümle kapandı; burada yapılacak iş uygulamadır: terminal-state worker'ı, güvenli kesim tarayıcısı, sorgu ayıklama, iki katmanlı replay ve checkpoint. `@xterm/headless` + `@xterm/addon-serialize` şu an devDependency; bu dilimde üretim bağımlılığına taşınır.
-3. **§8/5 — grid/odak arayüzü.** Mevcut arayüz hâlâ prototip kabuğudur (sol liste + tek terminal); §8/1 görünmeyen katmanı değiştirdi.
+1. **§8/2 — gerçek CLI ilk kullanımı.** Trust/auth onayı kullanıcı eylemidir. [`g2-human-acceptance.sh`](../research/g2-human-acceptance.sh) ile yürütülür. Managed fresh/resume henüz açılmaz.
+2. **§8/3 kabulü.** Gerçek tarayıcıda ekran/scrollback, >1 MiB renkli replay, paste/mouse/IME ve kopuş doğrulanmalı; 4–8 gerçek CLI ile sonra 32 PTY yükü ölçülmeli. Motor/host/checkpoint/API/protokol tüketicisi otomatik testleri ürün kabulünün yerine geçmez.
+3. **§8/4 — çalışma sonucu ve devam.** BaseCommit diff, aynı cwd’de launch, önceki Run seçicisi, arşiv/branch görünümü ve içerik fingerprint’li güvenli silme.
+4. **§8/5 — grid entegrasyonu.** Preview API hazır; grid mock veridedir ve varyant kararı bekler. Odakta tek xterm ve diff’te terminal bırakma uygulanmıştır.
 
 **Açık karar — grid varyantı.** `src/web/prototype/grid/` içinde dört varyant var ve hepsi `mock.ts` ile beslenir, `/api/state`'i hiç görmez. **Varyant B ve C sözleşmeye aykırı düşmüştür:** kartları `attentionRank` ile dizerler, revizyon 2.2 ise "sıra `createdAt,id` ile sabit" ve "idle hata rozeti gibi gösterilmez" diyor. Seçim **A** (proje şeritleri) ile **D** (grid ↔ odak modu) arasındadır ve kullanıcıya aittir. Hangisi seçilirse seçilsin kart önizlemesi §8/3'e bağlıdır; o gelmeden kart, spec §4 gereği "Önizleme hazırlanıyor/erişilemiyor" demelidir — uydurma düz çıktı yazılmaz.
 
-**Depo notu.** `main` dalı grid prototipinin commit'lerini de taşır. Bu, doküman senkronu sırasında istenmeden olmuş, kullanıcıya bildirilmiş ve kullanıcı kararıyla **olduğu gibi bırakılmıştır**; düzeltmek force-push gerektirirdi. `main` ile `prototype/grid-cell-layout` aynı noktadadır.
+**Depo notu.** `main` dalı grid prototipinin commit'lerini de taşır. Bu, doküman senkronu sırasında istenmeden olmuş, kullanıcıya bildirilmiş ve kullanıcı kararıyla **olduğu gibi bırakılmıştır**; düzeltmek force-push gerektirirdi. Bu kayıt `7d39474` anındaki durumu anlatır; sonraki uygulama commit’leri etkin dalda ilerler.

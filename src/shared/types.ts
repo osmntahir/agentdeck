@@ -68,6 +68,15 @@ export interface StateResponse {
   projects: Project[]
   sessions: SessionView[]
   serviceError: string | null
+  terminals?: Record<string, {
+    failure: { code: string; message: string } | null
+    checkpoint: { lastSuccessAt: number | null; lastError: string | null }
+  }>
+  previews?: Record<string, {
+    state: 'ready' | 'preparing' | 'unavailable'
+    preview?: { text: string; truncated: boolean; capturedAt: number }
+    reason?: string
+  }>
 }
 
 export interface DiffResult {

@@ -1,124 +1,136 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import type { SessionView } from '../../shared/types'
+import { inputChunks, TerminalStream, type StreamStatus } from '../../shared/terminalStream'
 import { TOKEN } from '../api'
 
-interface Props {
-  session: SessionView
-  active: boolean
-}
+interface Props { session: SessionView; daemonId: string; stateHealthy: boolean }
 
-export function TerminalPane({ session, active }: Props) {
+export function TerminalPane({ session, daemonId, stateHealthy }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
+  const actions = useRef({ history: () => {}, control: () => {} })
+  const healthy = useRef(stateHealthy)
+  healthy.current = stateHealthy
+  const [retry, setRetry] = useState(0)
+  const [status, setStatus] = useState<StreamStatus | null>(null)
 
   useEffect(() => {
+    if (!session.runId) { setStatus(null); return }
     const term = new Terminal({
+      cols: 120, rows: 32, scrollback: 1000,
       fontSize: 13,
       fontFamily: 'ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace',
-      cursorBlink: true,
-      scrollback: 10000,
+      cursorBlink: true, disableStdin: true,
       theme: { background: '#0e1116', foreground: '#d5dae2', cursor: '#7aa2f7' },
     })
+    termRef.current = term
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(hostRef.current!)
-    termRef.current = term
-    fitRef.current = fit
-
-    if (session.lifecycle !== 'live') {
-      // Kayıtlı terminal görüntüsü (checkpoint) uygulama sırası §8/3'te gelir;
-      // o zamana kadar "önceki görüntü yok" denir, sahte ekran kurulmaz.
-      term.write(
-        '\x1b[90m[bu Run canlı değil; önceki terminal görüntüsü henüz saklanmıyor]\x1b[0m\r\n',
-      )
-      return () => {
-        term.dispose()
-      }
-    }
-
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${location.host}/ws?session=${session.id}&token=${TOKEN}`
-
-    let ws: WebSocket | null = null
-    let retryTimer: ReturnType<typeof setTimeout> | null = null
     let disposed = false
-    let dead = false
-    let attempt = 0
+    let socket: WebSocket | null = null
+    let stream: TerminalStream | null = null
+    let reconnect: ReturnType<typeof setTimeout> | null = null
+    let attempts = 0
+    let requestedSize = ''
+
+    const send = (message: object) => {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+    }
+    const canInput = () => healthy.current && stream?.status.ready && stream.status.live && stream.status.owned
+    const resize = () => {
+      if (!canInput()) return
+      const size = fit.proposeDimensions()
+      if (!size) return
+      const cols = Math.max(2, Math.min(300, size.cols))
+      const rows = Math.max(1, Math.min(120, size.rows))
+      const key = `${cols}:${rows}`
+      if (key === requestedSize || (cols === term.cols && rows === term.rows)) return
+      requestedSize = key
+      send({ type: 'resize', cols, rows, generation: stream!.status.generation })
+    }
 
     const connect = () => {
-      if (disposed || dead) return
-      // Sunucu her bağlantıda scrollback'i baştan gönderir; ekranı sıfırlayıp
-      // yazmazsak uyku/kopma sonrası içerik ikiye katlanır.
-      let replayPending = true
-      const socket = new WebSocket(url)
-      ws = socket
-
-      socket.onopen = () => {
-        attempt = 0
-        fit.fit()
-        socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-      }
-
-      socket.onmessage = (event) => {
-        const msg = JSON.parse(event.data)
-        if (msg.type === 'data') {
-          if (replayPending) {
-            term.reset()
-            replayPending = false
-          }
-          term.write(msg.data)
-        } else if (msg.type === 'exit') {
-          dead = true
-          term.write(`\r\n\x1b[33m[oturum kapandı — çıkış kodu ${msg.code}]\x1b[0m\r\n`)
-        }
-      }
-
-      socket.onclose = () => {
-        if (disposed || dead) return
-        attempt += 1
-        const delay = Math.min(500 * attempt, 5000)
-        term.write(`\r\n\x1b[90m[bağlantı koptu — ${delay / 1000}s sonra yeniden denenecek]\x1b[0m\r\n`)
-        retryTimer = setTimeout(connect, delay)
+      if (disposed) return
+      requestedSize = ''
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+      const query = new URLSearchParams({ session: session.id, run: session.runId!, token: TOKEN })
+      const ws = new WebSocket(`${proto}://${location.host}/ws?${query}`)
+      socket = ws
+      let protocolFailed = false
+      const consumer = new TerminalStream(term, { daemonId, sessionId: session.id, runId: session.runId! }, (next) => {
+        if (disposed || socket !== ws) return
+        setStatus(next)
+        term.options.disableStdin = !healthy.current || !next.ready || !next.live || !next.owned
+        if (next.ready) { attempts = 0; resize() }
+      }, () => { protocolFailed = true; ws.close() })
+      stream = consumer
+      setStatus(consumer.status)
+      ws.onmessage = (event) => { if (typeof event.data === 'string') void consumer.receive(event.data) }
+      ws.onclose = (event) => {
+        if (disposed || socket !== ws) return
+        // Inspect closes after queued replay; let write callbacks finish it.
+        if (event.code === 1000 || protocolFailed) return
+        consumer.dispose()
+        term.options.disableStdin = true
+        if (event.code === 1008) { setStatus({ ...consumer.status, message: 'Erişim reddedildi; bağlantı bilgilerini kontrol edin' }); return }
+        const delay = [2000, 4000, 8000, 10000][Math.min(attempts++, 3)]
+        setStatus({ ...consumer.status, message: `Bağlantı koptu · ${delay / 1000} sn sonra yeniden denenecek` })
+        reconnect = setTimeout(connect, delay)
       }
     }
-
     connect()
-
-    const onData = term.onData((data) => {
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }))
+    const input = term.onData((data) => {
+      if (!canInput()) return
+      for (const part of inputChunks(data)) {
+        if (!canInput() || socket?.readyState !== WebSocket.OPEN) break
+        if (socket.bufferedAmount > 1024 * 1024) {
+          stream?.suspend('Girdi gönderimi yetişmiyor; kalan yapıştırma gönderilmedi')
+          break
+        }
+        send({ type: 'input', data: part, generation: stream!.status.generation })
+      }
     })
-    const onResize = term.onResize(({ cols, rows }) => {
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }))
-    })
-
+    actions.current = {
+      history: () => {
+        if (!stream?.status.ready || !stream.status.live || stream.status.historyLoaded) return
+        stream.suspend('Geçmiş yükleniyor…')
+        send({ type: 'request-scrollback' })
+      },
+      control: () => send({ type: 'take-control' }),
+    }
+    const observer = new ResizeObserver(resize)
+    observer.observe(hostRef.current!)
+    term.focus()
     return () => {
       disposed = true
-      if (retryTimer) clearTimeout(retryTimer)
-      onData.dispose()
-      onResize.dispose()
-      ws?.close()
+      if (reconnect) clearTimeout(reconnect)
+      observer.disconnect()
+      input.dispose()
+      stream?.dispose()
+      socket?.close()
+      termRef.current = null
       term.dispose()
     }
-  }, [session.id, session.runId, session.lifecycle])
+  }, [session.id, session.runId, daemonId, retry])
 
-  // Gizliyken ölçüm yanlış çıkar; görünür olunca yeniden boyutla.
   useEffect(() => {
-    if (!active) return
-    const timer = setTimeout(() => {
-      fitRef.current?.fit()
-      termRef.current?.focus()
-    }, 0)
-    const handle = () => fitRef.current?.fit()
-    window.addEventListener('resize', handle)
-    return () => {
-      clearTimeout(timer)
-      window.removeEventListener('resize', handle)
-    }
-  }, [active])
+    if (termRef.current) termRef.current.options.disableStdin = !stateHealthy || !status?.ready || !status.live || !status.owned
+  }, [stateHealthy, status])
 
-  return <div ref={hostRef} className="term-host" style={{ display: active ? 'block' : 'none' }} />
+  return (
+    <div className="terminal-pane">
+      <div className="terminal-status" role="status">
+        <span>{!stateHealthy ? 'Durum güncel değil · girdi kapalı' : status?.message || (status?.owned ? 'Kontrol sizde' : 'Salt okunur izleyici')}</span>
+        {status?.ready && status.live && !status.owned && <button onClick={() => actions.current.control()}>Kontrolü al</button>}
+        {status?.ready && status.live && !status.historyLoaded && <button onClick={() => actions.current.history()}>Terminal geçmişini yükle</button>}
+        <button onClick={() => setRetry((value) => value + 1)}>Yeniden bağlan</button>
+      </div>
+      {!session.runId && <p>Bu oturumda henüz Run çalışmadı.</p>}
+      <div ref={hostRef} className="term-host" />
+    </div>
+  )
 }

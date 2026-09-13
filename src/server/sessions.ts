@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import * as pty from 'node-pty'
-import { EventEmitter } from 'node:events'
 import { DEFAULT_STOP_TIMING, realProcessGroup, verifiedStop, type ProcessGroup, type StopOutcome, type StopTiming } from './stop'
 import { runEnv } from './env'
 import type { Activity } from '../shared/types'
@@ -9,17 +8,15 @@ import type { Activity } from '../shared/types'
  * Run yönetimi. Bir Session'ın en çok bir canlı Run'ı olur; Run kimliği geç
  * gelen bir callback'in yeni koşuyu değiştirmesini engeller.
  *
- * NOT: terminal temsili hâlâ prototip ham tamponudur. Sözleşmenin (spec §4)
- * gerektirdiği headless ekran modeli, güvenli kesim ve checkpoint uygulama
- * sırası §8/3'ün işidir; burada yer almaz ve doğru ekran diye sunulmaz.
+ * PTY çıktısı burada saklanmaz: ekranın tek kaynağı terminal state'tir
+ * (spec §4, ADR 0004). Bu modül çıktıyı yalnız sahibine iletir.
  */
-const MAX_BUFFER = 256 * 1024
 
 /** Idle, 30 sn girdi/çıktı sessizliğidir; kullanıcı beklediğini kanıtlamaz. */
 const IDLE_AFTER_MS = 30_000
 
-const DEFAULT_COLS = 120
-const DEFAULT_ROWS = 32
+export const DEFAULT_COLS = 120
+export const DEFAULT_ROWS = 32
 
 export interface RunExit {
   runId: string
@@ -32,8 +29,6 @@ interface LiveRun {
   runId: string
   pid: number
   proc: pty.IPty
-  buffer: string
-  emitter: EventEmitter
   exited: Promise<void>
   markExited: () => void
   lastActivityAt: number
@@ -89,6 +84,8 @@ export interface SpawnInput {
   cwd: string
   cols?: number
   rows?: number
+  /** Ham PTY çıktısı; sıralı ekran modeline verilir. */
+  onData: (chunk: string) => void
   onExit: (exit: RunExit) => void
 }
 
@@ -120,26 +117,15 @@ export function spawn(input: SpawnInput): { runId: string; pid: number } {
     runId: input.runId,
     pid: proc.pid,
     proc,
-    buffer: '',
-    emitter: new EventEmitter(),
     exited,
     markExited,
     lastActivityAt: Date.now(),
   }
-  entry.emitter.setMaxListeners(0)
   live.set(input.sessionId, entry)
 
   proc.onData((data) => {
     entry.lastActivityAt = Date.now()
-    entry.buffer += data
-    if (entry.buffer.length > MAX_BUFFER) {
-      let cut = entry.buffer.slice(-MAX_BUFFER)
-      // Kesim bir vekil çiftinin ortasına denk gelmişse tek kalan yarıyı at.
-      const first = cut.charCodeAt(0)
-      if (first >= 0xdc00 && first <= 0xdfff) cut = cut.slice(1)
-      entry.buffer = cut
-    }
-    entry.emitter.emit('data', data)
+    input.onData(data)
   })
 
   proc.onExit(({ exitCode, signal }) => {
@@ -149,7 +135,6 @@ export function spawn(input: SpawnInput): { runId: string; pid: number } {
       exitSignal: typeof signal === 'number' ? signal : null,
       at: Date.now(),
     }
-    entry.emitter.emit('exit', exit)
     entry.markExited()
 
     // Yalnız hâlâ kayıtlı olan Run kendi kaydını kapatır: geç gelen bir çıkış
@@ -201,16 +186,31 @@ export function hasLingeringGroup(sessionId: string): boolean {
   return true
 }
 
-export function buffer(sessionId: string): string {
-  return live.get(sessionId)?.buffer ?? ''
-}
-
 export function write(sessionId: string, data: string): void {
   const entry = live.get(sessionId)
   if (!entry || data.length === 0) return
   // Kabul edilmiş kullanıcı girdisi aktiviteyi ilerletir.
   entry.lastActivityAt = Date.now()
   entry.proc.write(data)
+}
+
+/**
+ * Ekran modelinin sorgulara ürettiği cevap. Kullanıcı girdisi değildir:
+ * lastActivity'yi ilerletmez.
+ */
+export function respond(sessionId: string, data: string): void {
+  const entry = live.get(sessionId)
+  if (!entry || data.length === 0) return
+  entry.proc.write(data)
+}
+
+/** Emülatör yetişemediğinde üretici duraklatılır; hiçbir çıktı düşürülmez. */
+export function pause(sessionId: string): void {
+  live.get(sessionId)?.proc.pause()
+}
+
+export function resume(sessionId: string): void {
+  live.get(sessionId)?.proc.resume()
 }
 
 export function resize(sessionId: string, cols: number, rows: number): void {
@@ -220,21 +220,6 @@ export function resize(sessionId: string, cols: number, rows: number): void {
     entry.proc.resize(cols, rows)
   } catch {
     // pencere yeniden boyutlanırken süreç ölmüş olabilir
-  }
-}
-
-export function subscribe(
-  sessionId: string,
-  onData: (data: string) => void,
-  onExit: (exit: RunExit) => void,
-): () => void {
-  const entry = live.get(sessionId)
-  if (!entry) return () => {}
-  entry.emitter.on('data', onData)
-  entry.emitter.on('exit', onExit)
-  return () => {
-    entry.emitter.off('data', onData)
-    entry.emitter.off('exit', onExit)
   }
 }
 

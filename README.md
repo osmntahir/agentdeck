@@ -1,6 +1,6 @@
 # agentdeck
 
-> Bu README **mevcut runtime'ı** anlatır, hedefi değil. Hedef davranış [V0 spec revizyon 2.2](docs/specs/agentdeck-v0.md) içindedir; [doğrulama kapıları](docs/specs/agentdeck-v0-validation-gates.md) tamamlanmadan hedef özellikler uygulanmış sayılmaz. Sözleşmenin §8/1 dilimi (güvenilir tek Session) uygulandı — sınırları [ADR 0007](docs/adr/0007-slice-1-implementation-boundaries.md)'de; terminal temsili, yönetilen konuşma devamı ve arşiv hâlâ uygulanmadı.
+> Bu README mevcut runtime’ı anlatır. §8/1 ve §8/3 terminal dilimi uygulandı; sınırlar [ADR 0007](docs/adr/0007-slice-1-implementation-boundaries.md) ve [ADR 0008](docs/adr/0008-terminal-slice-implementation.md) içinde. Gerçek CLI/tarayıcı ürün kabulü, yönetilen konuşma devamı ve arşiv henüz tamamlanmadı.
 
 Paralel AI ajan oturumlarını izole git worktree'lerde yöneten yerel çalışma tezgâhı.
 
@@ -20,8 +20,12 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Dosya koruma** — silme yalnız taze bir onayla yapılır, branch hiçbir
   koşulda silinmez, `git worktree remove` başarısızsa zorla silme yoluna
   düşülmez. Kayıtsız çalışma kopyaları yalnız listelenir, temizlenmez.
-- **Oturumlar arası geçiş** — her terminal mount'ta kalır, scrollback ve
-  çalışma durumu korunur.
+- **Oturumlar arası geçiş** — yalnız odaktaki terminal açılır; ekran daemon'daki
+  headless modelden kurulur. Scrollback açık “Terminal geçmişini yükle” eylemiyle gelir.
+- **Kalıcı terminal görüntüsü** — son iki Run checkpoint'i tutulur; canlı olmayan
+  güncel Run salt okunur açılır. Eksik ve bozuk geçmiş ayrı bildirilir.
+- **Tek kontrol sahibi** — diğer istemciler salt okunur izler; “Kontrolü al”
+  ile kullanıcı girdi ve boyutlandırma sahipliğini devralır.
 - **Diff görünümü** — oturumun worktree'sindeki değişiklikler, ajanın yeni
   yazdığı takip edilmeyen dosyalar dahil.
 - **Ortak mod** — izolasyon istemediğin işler için ana çalışma kopyasında
@@ -31,14 +35,15 @@ tarayıcıyı kapatmak ajanı öldürmez.
 
 ```
 tarayıcı (React + xterm.js)
-    │  WebSocket  ── çözülmüş UTF-8 terminal metni
+    │  WebSocket  ── parçalı snapshot + sıralı UTF-8 devamı
     │  REST       ── proje/oturum CRUD, diff
     ▼
 daemon (Node + TypeScript)
-    ├── node-pty      Run başına PTY, prototip ham tampon (256KB)
+    ├── node-pty      Run başına PTY, high/low-water pause/resume
+    ├── worker        headless xterm, snapshot/preview, Run FIFO
     ├── execFile git  worktree add/remove, diff, status
     ├── tek yazar     canonical veri dizinine bağlı abstract socket kilidi
-    └── ~/.agentdeck  state.json (schemaVersion 2, 0600), token, worktrees/
+    └── ~/.agentdeck  state.json, token, worktrees/, terminal/ checkpoint'leri
 ```
 
 Arayüz tek kullanımlık bir istemcidir; oturumların sahibi daemon'dur. Kalıcı
@@ -108,7 +113,11 @@ src/
   server/
     index.ts           giriş noktası: env, kapanış sinyalleri
     daemon.ts          HTTP + WebSocket, REST uçları, kilitler, silme onayı
-    sessions.ts        Run yaşam döngüsü, prototip tampon, kalan süreç grubu
+    sessions.ts        Run yaşam döngüsü, PTY akışı, kalan süreç grubu
+    terminalHost.ts    worker sahipliği, bariyer, baskı ve flush
+    terminalWorker.ts  Run FIFO ve sınırlı tur bütçesi
+    terminalState.ts   güvenli kesim, headless ekran, sorgu ayıklama
+    checkpoints.ts     Run kimlikli atomik görüntü kaydı
     stop.ts            doğrulanmış durdurma (timeout başarı değildir)
     store.ts           şema 2 kalıcılık: doğrulanmış migrate, copy-on-write
     lock.ts            tek yazar kilidi (abstract socket)
@@ -142,12 +151,11 @@ Bilinçli olarak MVP dışında bırakılanlar:
   olur — ölüm saati ve çıkış kodu bilinmediği için uydurulmaz — ve yeniden
   çalıştırılabilir. Sürecin daemon'dan bağımsız yaşaması isteniyorsa oturum
   sahipliği bir multiplexer'a (tmux) taşınmalıdır.
-- **Terminal temsili hâlâ prototiptir.** WebSocket yolu ham tamponu JSON'da
-  taşır; sözleşmenin headless ekran modeli, güvenli kesim, iki katmanlı replay
-  ve checkpoint'i §8/3'te gelir. Bu yüzden canlı olmayan bir Run'ın önceki
-  görüntüsü saklanmaz ve grid önizlemesi yoktur.
-- Her oturum için bir xterm örneği mount'ta tutulur; çok sayıda eşzamanlı
-  oturumda ağırlaşır.
+- **Terminal ürün kabulü açık.** Ekran/scrollback replay ve checkpoint uygulanmıştır;
+  gerçek tarayıcı render, mouse/paste/IME ve yoğun çıktı kabulü yapılmadı.
+  Grid önizlemesi için API hazırdır; prototip grid henüz bağlanmadı.
+- **Geçmiş sınırlıdır.** En fazla son iki yazılmış Run görüntüsü tutulur; tam
+  konuşma arşivi değildir. Önceki Run seçicisi henüz arayüzde yoktur.
 - **Konuşmayı sürdürme yolu yok.** Yeniden çalıştırma başlangıç komutunu
   aynen tekrarlar; yönetilen kimlikle `fresh`/`resume` ve CLI seçicisi
   [G2](docs/specs/agentdeck-v0-validation-gates.md) insan kabul testi geçmeden

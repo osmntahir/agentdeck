@@ -4,7 +4,10 @@ Revizyon: 2.2 — 12 Eylül 2026. **Durum: tasarım kararları kapandı ve termi
 
 Bu belge güncel normatif sözleşmedir; ADR'ler gerekçeyi, araştırmalar tarihli kanıtı taşır. Eski GitHub resolution yorumları tarihçedir; çelişen önceki hükümler bu revizyonla yürürlükten kalkar. İki incelemedeki 15 bulgunun karşılığı [revizyon kaydında](../reviews/2026-09-12-decision-reconciliation.md); terminal kararlarının ölçüm kanıtı [doğrulama notunda](../research/terminal-state-validation.md).
 
-**Uygulama durumu:** §8'in **1. dilimi** (güvenilir tek Session) ürün koduna girdi ve G3'ün üç maddesi otomatik testle kapandı; dilimin sınırları ve bilinçli daraltmaları [ADR 0007](../adr/0007-slice-1-implementation-boundaries.md)'de. Belgenin geri kalanı hâlâ sözleşmedir, uygulanmış değildir.
+**Uygulama durumu:** §8/1 ve §8/3 terminal dilimi ürün koduna girdi. Sınırlar
+[ADR 0007](../adr/0007-slice-1-implementation-boundaries.md) ve
+[ADR 0008](../adr/0008-terminal-slice-implementation.md) içinde. Gerçek tarayıcı/CLI
+ürün kabulü, önceki Run seçicisi ve diğer dilimler açık; sözleşmenin bütünü uygulanmış değildir.
 
 ## 1. Hedef ve kapsam
 
@@ -88,7 +91,7 @@ Her Run için terminal event sequence monoton artar. Attach auth/protocol/sessio
 Zorunlu mekanizma iki parçalıdır ve ikisi birlikte uygulanır:
 
 1. **Güvenli kesim.** Emülatöre yalnız son *tamamlanmış* kontrol dizisine kadar veri verilir; yarım kalan ESC prefix'i tüketilmez, bir sonraki yazıma devredilir. Snapshot bariyeri her zaman bu sınırda kurulur.
-2. **Bekletilen prefix aktarımı.** Snapshot anında bekleyen prefix, replay bittikten sonra gönderilen **ilk devam verisidir**; ayrı bir alan olarak taşınır, ekrana metin diye yazılmaz.
+2. **Bekletilen prefix aktarımı.** Prefix yalnız daemon’da bekler; snapshot’a veya tarayıcıya yarım hâlde verilmez. Sonraki parça diziyi tamamladığında prefix + devam birlikte işlenir ve sorgular ayıklandıktan sonra izleyicilere gönderilir. Gerekçe ve önceki ayrı-alan kararının değişimi [ADR 0008](../adr/0008-terminal-slice-implementation.md) içinde.
 
 Tarayıcı şu sınıfların tamamını tanır ve **on iki sınıfta da ölçüldü**: tamamlanmamış CSI, alt parametreli CSI (`38:2:…`), ara baytlı CSI, tamamlanmamış OSC, gömülü veri taşıyan DCS, APC, PM, 8-bit C1 girişli CSI ve OSC, charset seçimi, yalnız ESC ve tek karakterli ESC. Her sınıfta kurulan ekran kesintisiz referansa eşit çıktı ([kanıt](../research/terminal-protocol-probe.cjs)). Bekleyen prefix için üst sınır **4096 bayt**: geriye tarama bu pencereyle sınırlıdır ve aşılırsa terminal representation hatası açıkça gösterilir, doğru olmayan snapshot yayımlanmaz. Eksik diziyi atarak "başarılı replay" denmez.
 
@@ -171,7 +174,7 @@ State schemaVersion:2. V0 eski agent/status kaydı veya schemaVersion:1 yalnız 
 
 1. Güvenilir tek Session: schema, tek sahiplik, lifecycle/Run, stop doğrulaması, dosya koruma, salt okunur orphan keşfi. **Uygulandı** (12 Eylül 2026); iki hüküm §8/4'e daraltıldı: silme onayının içerik fingerprint'i ve kademeli proje silme ([ADR 0007](../adr/0007-slice-1-implementation-boundaries.md)).
 2. Gerçek bir worktree'de insanın CLI trust/auth ekranını tamamladığı ilk kullanım; onay öncesi stop ve aynı dosyalarda fresh tekrar. Bu test shell/environment ve restart çıkmazını erken yakalar.
-3. Headless terminal/snapshot/preview/encoding ve kontrol yanıtları. Tasarım kapısı (G1) ölçümle kapandı; burada yapılacak iş uygulamadır: terminal-state worker'ı, güvenli kesim tarayıcısı, sorgu ayıklama, iki katmanlı replay ve checkpoint.
+3. Headless terminal/snapshot/preview/encoding ve kontrol yanıtları. **Uygulandı:** terminal-state worker’ı, güvenli kesim, sorgu ayıklama, iki katmanlı replay, checkpoint ve odak istemcisi. Gerçek tarayıcı/CLI kabulü açık ([ADR 0008](../adr/0008-terminal-slice-implementation.md)).
 4. Çalışma diff'i/baseCommit, aynı cwd'de açık launch, arşiv ve branch bulma; sınırlı/safe delete.
 5. Grid/odak/klavye/poll entegrasyonu; 4–8 gerçek oturum, sonra 32 sentetik PTY/256 kayıt.
 6. Çöküş/disk-full/bozuk state/eski yedek/timeout/çoklu istemci/tekrar istek/Unicode/ANSI/çok büyük dosya ve dış Git yarış kabulü; README ile gerçek davranış hizası.

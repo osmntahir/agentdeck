@@ -11,6 +11,9 @@ import { createRequestLedger, DedupConflictError } from './dedup'
 import { scanOrphanWorktrees } from './orphans'
 import * as sessions from './sessions'
 import * as git from './git'
+import { openCheckpointStore } from './checkpoints'
+import { createTerminalHost, type TerminalEvent, type PreviewResult } from './terminalHost'
+import { chunkText, type SnapshotScope } from './terminalState'
 import { commandLabel, type Isolation, type Project, type Session, type SessionView } from '../shared/types'
 
 const PROTOCOL_VERSION = 2
@@ -21,6 +24,18 @@ const MAX_LIVE_RUNS = 32
 
 /** Silme onayı daemon ömrüne bağlıdır ve 60 sn sonra düşer. */
 const CONFIRMATION_TTL_MS = 60_000
+
+/** Aynı anda önizleme istenebilecek kart sayısı (spec §4). */
+const MAX_PREVIEW_IDS = 24
+
+/** WS sınırları (spec §4). Chunk metni, JSON zarfı ve replay toplamı ayrıdır. */
+const WS_CHUNK_TEXT_BYTES = 32 * 1024
+const WS_ENVELOPE_BYTES = 256 * 1024
+const WS_REPLAY_MAX_BYTES = 8 * 1024 * 1024
+const WS_INPUT_TEXT_BYTES = 64 * 1024
+const WS_INPUT_WIRE_BYTES = 512 * 1024
+/** Yavaş izleyici üreticiyi bekletmez; kuyruğu şişen izleyici ayrılır. */
+const WS_VIEWER_QUEUE_BYTES = 1024 * 1024
 
 const ISOLATIONS: Isolation[] = ['worktree', 'shared']
 
@@ -160,6 +175,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
   const daemonId = crypto.randomBytes(16).toString('hex')
   const token = store.token()
+  // Ekran modeli ayrı bir iş parçacığında yaşar; HTTP/Git kontrol işleri onun
+  // ayrıştırma yüküyle bloke olmaz (spec §4).
+  const host = createTerminalHost({ checkpoints: openCheckpointStore(options.dataDir) })
   const sessionLocks = createExclusiveLocks()
   const gitQueues = createSerialQueues()
   const createLedger = createRequestLedger<Session>()
@@ -198,8 +216,25 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     return store.get().sessions.find((s) => s.id === id)
   }
 
+  /** Yeni Run için sıralı ekran modelini açar; PTY doğmadan önce hazırdır. */
+  function openTerminal(sessionId: string, runId: string): void {
+    host.open({
+      sessionId,
+      runId,
+      cols: sessions.DEFAULT_COLS,
+      rows: sessions.DEFAULT_ROWS,
+      // Sorgu cevabının tek sahibi daemon'daki terminaldir; bu yazım kullanıcı
+      // girdisi değildir ve aktiviteyi ilerletmez.
+      onReply: (data) => sessions.isLive(sessionId, runId) && sessions.respond(sessionId, data),
+      onPause: () => sessions.isLive(sessionId, runId) && sessions.pause(sessionId),
+      onResume: () => sessions.isLive(sessionId, runId) && sessions.resume(sessionId),
+    })
+  }
+
   /** Bir Run'ın gözlenen çıkışını kalıcı kayda yazar. */
   function recordExit(sessionId: string, exit: sessions.RunExit): void {
+    // Çıkışta işlenmiş son çıktı checkpoint'e yazılır; sonra model bırakılır.
+    const terminalClosed = host.close(exit.runId)
     const commit = store
       .commit((draft) => {
         const session = draft.sessions.find((s) => s.id === sessionId)
@@ -213,9 +248,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       .catch(() => {
         // Disk hatası serviceError olarak görünür; PTY bu yüzden öldürülmez.
       })
-    pendingExitCommits.set(sessionId, commit)
-    void commit.then(() => {
-      if (pendingExitCommits.get(sessionId) === commit) pendingExitCommits.delete(sessionId)
+    const completed = Promise.all([commit, terminalClosed]).then(() => undefined)
+    pendingExitCommits.set(sessionId, completed)
+    void completed.then(() => {
+      if (pendingExitCommits.get(sessionId) === completed) pendingExitCommits.delete(sessionId)
     })
   }
 
@@ -260,8 +296,35 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
   }
 
-  app.get('/api/state', (_req, res) => {
+  /**
+   * Kart önizlemesi: canlı Run'da sıralı ekran modelinden, canlı olmayanda son
+   * checkpoint'ten çıkar. Ekran modeli hazır değilse "hazırlanıyor" denir;
+   * uydurma düz çıktı üretilmez.
+   */
+  async function previewFor(session: Session): Promise<PreviewResult> {
+    if (session.runId === null) {
+      return { state: 'unavailable', reason: 'Bu oturumda henüz Run çalışmadı' }
+    }
+    if (sessions.isLive(session.id, session.runId)) return host.preview(session.runId)
+    return host.historyPreview(session.id, session.runId)
+  }
+
+  app.get('/api/state', async (req, res) => {
     const state = store.get()
+    const raw = typeof req.query.previewIds === 'string' ? req.query.previewIds : ''
+    const requested = raw.split(',').map((id) => id.trim()).filter((id) => id !== '')
+    if (requested.length > MAX_PREVIEW_IDS) {
+      return jsonError(res, 400, 'validation', `Bir istekte en çok ${MAX_PREVIEW_IDS} kart önizlemesi istenebilir`)
+    }
+
+    const previews: Record<string, PreviewResult> = {}
+    for (const id of requested) {
+      const session = state.sessions.find((s) => s.id === id)
+      previews[id] = session
+        ? await previewFor(session)
+        : { state: 'unavailable', reason: 'Oturum kaydı yok' }
+    }
+
     res.json({
       protocolVersion: PROTOCOL_VERSION,
       daemonId,
@@ -270,6 +333,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       projects: state.projects,
       // Kalıcı lifecycle canlılık tahminiyle ezilmez; kayıt tek doğrudur.
       sessions: state.sessions.map(sessionView),
+      previews,
+      terminals: Object.fromEntries(state.sessions.filter((s) => s.runId).map((s) => [s.id, {
+        failure: host.failure(s.runId!), checkpoint: host.checkpointStatus(s.runId!),
+      }])),
       serviceError: store.serviceError(),
     })
   })
@@ -404,15 +471,18 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         }
 
         const runId = crypto.randomBytes(16).toString('hex')
+        openTerminal(sid, runId)
         try {
           sessions.spawn({
             sessionId: sid,
             runId,
             command: program,
             cwd,
+            onData: (chunk) => host.feed(runId, chunk),
             onExit: (exit) => recordExit(sid, exit),
           })
         } catch (err) {
+          await host.close(runId)
           const detail: Record<string, unknown> = { cwd }
           if (isolation === 'worktree' && baseCommit) {
             detail.worktree = (await rollbackWorktree(project, cwd, baseCommit)) === 'removed' ? 'kaldırıldı' : 'korundu'
@@ -530,15 +600,18 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           const command = intent && intent.mode === 'command' ? intent.command : current.command
 
           const runId = crypto.randomBytes(16).toString('hex')
+          openTerminal(current.id, runId)
           try {
             sessions.spawn({
               sessionId: current.id,
               runId,
               command,
               cwd: current.cwd,
+              onData: (chunk) => host.feed(runId, chunk),
               onExit: (exit) => recordExit(current.id, exit),
             })
           } catch (err) {
+            await host.close(runId)
             throw new HttpError(500, 'spawn_failed', `Yeniden başlatılamadı: ${(err as Error).message}`)
           }
 
@@ -699,6 +772,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           { cwd: session.cwd, degraded: true },
         )
       }
+      // Session silindi: ona ait terminal checkpoint'leri de kalkar.
+      host.removeSession(session.id)
       res.json({ ok: true, branchKept: session.branch })
     } finally {
       held.release()
@@ -750,7 +825,15 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   }
 
   const server = http.createServer(app)
-  const wss = new WebSocketServer({ server, path: '/ws' })
+  // Frame tavanı sunucuda uygulanır; aşan istemci frame'i kabul edilmez.
+  const wss = new WebSocketServer({
+    server, path: '/ws', maxPayload: WS_INPUT_WIRE_BYTES,
+    verifyClient: ({ req }: { req: http.IncomingMessage }) => {
+      const url = new URL(req.url ?? '', 'http://localhost')
+      return originOk(req.headers.origin) && url.searchParams.get('token') === token
+    },
+  })
+  const controls = new Map<string, { owner: object | null; generation: number; viewers: Map<object, () => void> }>()
   let listening = false
 
   // HTTP sunucusunun hatası ws tarafına da yansır. Burada tutulmazsa 'error'
@@ -761,6 +844,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     console.error(`[agentdeck] ws sunucu hatası: ${err.message}`)
   })
 
+  /**
+   * Terminal protokolü (spec §4). Replay tek parça gönderilmez: replay-start,
+   * sıralı replay-chunk'lar ve replay-end. İstemci reset'i yalnız
+   * replay-start'ta yapar; input replay-end'den önce açılmaz.
+   */
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url ?? '', 'http://localhost')
     if (!originOk(req.headers.origin) || url.searchParams.get('token') !== token) {
@@ -768,42 +856,268 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       return
     }
 
+    /** Yavaş izleyici üreticiyi bekletmez; kuyruğu şişerse ayrılır. */
+    function sendJson(payload: unknown): boolean {
+      if (ws.readyState !== ws.OPEN) return false
+      if (ws.bufferedAmount > WS_VIEWER_QUEUE_BYTES) {
+        ws.close(1013, 'izleyici yetişemiyor')
+        return false
+      }
+      ws.send(JSON.stringify(payload))
+      return true
+    }
+
+    /** Chunk metni 32 KiB, JSON zarfı 256 KiB; kaçış genişlemesi hesaba katılır. */
+    function wireChunks(text: string): string[] {
+      let budget = WS_CHUNK_TEXT_BYTES
+      while (budget > 1024) {
+        const parts = chunkText(text, budget)
+        const envelope = (part: string) =>
+          Buffer.byteLength(JSON.stringify({ type: 'replay-chunk', snapshotId: 'x'.repeat(32), index: 0, text: part }))
+        if (parts.every((part) => envelope(part) <= WS_ENVELOPE_BYTES)) return parts
+        budget = Math.floor(budget / 2)
+      }
+      return chunkText(text, 1024)
+    }
+
+    async function sendReplay(input: {
+      sessionId: string
+      runId: string
+      text: string
+      scope: SnapshotScope
+      sequence: number
+      cols: number
+      rows: number
+      formatVersion: number
+      mode: 'live' | 'inspect'
+    }): Promise<boolean> {
+      const totalBytes = Buffer.byteLength(input.text)
+      if (totalBytes > WS_REPLAY_MAX_BYTES) {
+        sendJson({ type: 'terminal-error', message: `Terminal görüntüsü ${WS_REPLAY_MAX_BYTES} bayt tavanını aştı` })
+        return false
+      }
+      const snapshotId = crypto.randomBytes(16).toString('hex')
+      const chunks = wireChunks(input.text)
+      if (
+        !sendJson({
+          type: 'replay-start',
+          snapshotId,
+          daemonId,
+          sessionId: input.sessionId,
+          runId: input.runId,
+          sequence: input.sequence,
+          cols: input.cols,
+          rows: input.rows,
+          formatVersion: input.formatVersion,
+          scope: input.scope,
+          mode: input.mode,
+          totalBytes,
+        })
+      ) {
+        return false
+      }
+      for (let index = 0; index < chunks.length; index++) {
+        if (ws.readyState !== ws.OPEN) return false
+        const sent = await new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => { ws.close(1013, 'izleyici yetişemiyor'); resolve(false) }, 10000)
+          ws.send(JSON.stringify({ type: 'replay-chunk', snapshotId, index, text: chunks[index] }), (err) => {
+            clearTimeout(timer)
+            resolve(!err)
+          })
+        })
+        if (!sent) return false
+      }
+      return sendJson({ type: 'replay-end', snapshotId, chunkCount: chunks.length })
+    }
+
     const sessionId = url.searchParams.get('session')
-    if (!sessionId || !findSession(sessionId) || !sessions.isLive(sessionId)) {
-      ws.send(JSON.stringify({ type: 'exit', code: -1 }))
-      ws.close()
+    const session = sessionId ? findSession(sessionId) : undefined
+    if (!session || !sessionId) {
+      sendJson({ type: 'error', code: 'not_found', message: 'Oturum kaydı yok' })
+      ws.close(1008, 'oturum yok')
       return
     }
 
-    // NOT: sözleşmenin replay-start/chunk/end protokolü, snapshot'ı, güvenli
-    // kesimi ve terminal control lease'i §8/3'ün işidir. Buradaki yol prototip
-    // ham tamponudur ve doğru ekran temsili olarak sunulmaz.
-    ws.send(JSON.stringify({ type: 'data', data: sessions.buffer(sessionId) }))
+    const requestedRun = url.searchParams.get('run')
+    const liveRunId = sessions.currentRunId(sessionId)
+    const live = liveRunId !== null && (requestedRun === null || requestedRun === liveRunId)
 
-    const unsubscribe = sessions.subscribe(
-      sessionId,
-      (data) => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: 'data', data })),
-      (exit) => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: 'exit', code: exit.exitCode })),
-    )
+    if (!live) {
+      // Salt okunur inceleme: istenen Run kimliğiyle yetkilendirilir ve yalnız
+      // saklanmış görüntüyü açar. Sahte ekran kurulmaz.
+      const runId = requestedRun ?? session.runId
+      if (runId === null) {
+        sendJson({ type: 'history-missing', message: 'Bu oturumda henüz Run çalışmadı' })
+        ws.close(1000, 'geçmiş yok')
+        return
+      }
+      void host
+        .history(sessionId, runId)
+        .then(async (stored) => {
+          if (stored.state === 'missing') {
+            sendJson({ type: 'history-missing', message: 'Bu Run için saklanmış terminal görüntüsü yok' })
+          } else if (stored.state === 'unreadable') {
+            sendJson({ type: 'history-unreadable', message: `Saklanmış görüntü okunamadı: ${stored.reason}` })
+          } else {
+            const checkpoint = stored.checkpoint
+            await sendReplay({
+              sessionId,
+              runId,
+              text: checkpoint.text,
+              scope: checkpoint.scope,
+              sequence: checkpoint.sequence,
+              cols: checkpoint.cols,
+              rows: checkpoint.rows,
+              formatVersion: checkpoint.formatVersion,
+              mode: 'inspect',
+            })
+            sendJson({
+              type: 'run-ended',
+              runId,
+              exitCode: runId === session.runId ? session.exitCode : null,
+              capturedAt: checkpoint.capturedAt,
+            })
+          }
+          ws.close(1000, 'inceleme bitti')
+        })
+        .catch((err: Error) => {
+          sendJson({ type: 'history-unreadable', message: err.message })
+          ws.close(1011, 'geçmiş okunamadı')
+        })
+      return
+    }
+
+    const runId = liveRunId as string
+    let control = controls.get(runId)
+    if (!control) {
+      control = { owner: ws, generation: 1, viewers: new Map() }
+      controls.set(runId, control)
+    }
+    const lease = control
+    const notifyControl = () => sendJson({ type: 'control', owned: lease.owner === ws, generation: lease.generation })
+    lease.viewers.set(ws, notifyControl)
+    let inputOpen = false
+    let replaying = false
+    const attachment = host.attach(runId, (event: TerminalEvent) => {
+      switch (event.type) {
+        case 'output':
+          sendJson({ type: 'output', sequence: event.sequence, text: event.text })
+          return
+        case 'resize':
+          sendJson({ type: 'resize', sequence: event.sequence, cols: event.cols, rows: event.rows })
+          return
+        case 'failure':
+          // Temsil hatasında input kapanır; PTY öldürülmez, stop erişilebilir kalır.
+          inputOpen = false
+          sendJson({ type: 'terminal-error', message: event.failure.message })
+          return
+        case 'overflow':
+          ws.close(1013, 'izleyici yetişemiyor')
+          return
+        case 'ended':
+          inputOpen = false
+          sendJson({ type: 'run-ended', runId, exitCode: findSession(sessionId)?.exitCode ?? null })
+          return
+      }
+    })
+    if (!attachment) {
+      sendJson({ type: 'error', code: 'not_live', message: 'Canlı Run yok' })
+      ws.close(1000, 'canlı Run yok')
+      return
+    }
+
+    /** Katman isteği: varsayılan yalnız ekran, scrollback açık istekle gelir. */
+    async function replayLayer(scope: SnapshotScope): Promise<void> {
+      if (replaying) return
+      replaying = true
+      inputOpen = false
+      try {
+        const replay = await attachment!.snapshot(scope)
+        const ok = await sendReplay({
+          sessionId: sessionId as string,
+          runId,
+          text: replay.snapshot.text,
+          scope: replay.snapshot.scope,
+          sequence: replay.sequence,
+          cols: replay.snapshot.cols,
+          rows: replay.snapshot.rows,
+          formatVersion: replay.snapshot.formatVersion,
+          mode: 'live',
+        })
+        attachment!.resume()
+        if (ok && sessions.isLive(sessionId as string, runId) && !host.failure(runId)) inputOpen = true
+        notifyControl()
+      } catch (err) {
+        inputOpen = false
+        sendJson({ type: 'terminal-error', message: (err as Error).message })
+      } finally {
+        replaying = false
+      }
+    }
+
+    const requestedScope: SnapshotScope = url.searchParams.get('scope') === 'scrollback' ? 'scrollback' : 'screen'
+    void replayLayer(requestedScope)
 
     ws.on('message', (raw) => {
-      let msg: { type: string; data?: string; cols?: number; rows?: number }
+      let msg: { type?: string; data?: unknown; cols?: unknown; rows?: unknown; generation?: unknown }
       try {
-        msg = JSON.parse(raw.toString())
+        const parsed: unknown = JSON.parse(raw.toString())
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
+        msg = parsed as typeof msg
       } catch {
         return
       }
+
+      if (msg.type === 'take-control' && inputOpen && sessions.isLive(sessionId as string, runId)) {
+        lease.owner = ws
+        lease.generation += 1
+        for (const notify of lease.viewers.values()) notify()
+        return
+      }
+
       if (msg.type === 'input' && typeof msg.data === 'string') {
-        sessions.write(sessionId, msg.data)
-      } else if (msg.type === 'resize' && msg.cols && msg.rows) {
-        // cols 2-300, rows 1-120 (spec §4).
-        const cols = Math.min(300, Math.max(2, Math.floor(msg.cols)))
-        const rows = Math.min(120, Math.max(1, Math.floor(msg.rows)))
-        sessions.resize(sessionId, cols, rows)
+        if (!inputOpen || lease.owner !== ws || msg.generation !== lease.generation || !sessions.isLive(sessionId as string, runId)) return
+        if (Buffer.byteLength(msg.data) > WS_INPUT_TEXT_BYTES) {
+          sendJson({ type: 'error', code: 'input_too_large', message: 'Girdi parçası 64 KiB tavanını aşıyor' })
+          return
+        }
+        sessions.write(sessionId as string, msg.data)
+        return
+      }
+
+      if (msg.type === 'resize' && typeof msg.cols === 'number' && Number.isFinite(msg.cols) && typeof msg.rows === 'number' && Number.isFinite(msg.rows)) {
+        if (!inputOpen || lease.owner !== ws || msg.generation !== lease.generation || !sessions.isLive(sessionId as string, runId)) return
+        // Önce sıralı ekran modeline, sonra PTY'ye uygulanır (spec §4).
+        void host.resize(runId, msg.cols, msg.rows).then((applied) => {
+          if (applied && sessions.isLive(sessionId as string, runId)) sessions.resize(sessionId as string, applied.cols, applied.rows)
+        })
+        return
+      }
+
+      if (msg.type === 'request-scrollback') {
+        void replayLayer('scrollback')
       }
     })
 
-    ws.on('close', unsubscribe)
+    let pongTimer: NodeJS.Timeout | null = null
+    const pingTimer = setInterval(() => {
+      ws.ping()
+      pongTimer = setTimeout(() => ws.terminate(), 10000)
+    }, 15000)
+    ws.on('pong', () => { if (pongTimer) clearTimeout(pongTimer) })
+    ws.on('error', () => ws.close())
+    ws.on('close', () => {
+      clearInterval(pingTimer)
+      if (pongTimer) clearTimeout(pongTimer)
+      attachment.close()
+      lease.viewers.delete(ws)
+      if (lease.owner === ws) {
+        lease.owner = null
+        lease.generation += 1
+        for (const notify of lease.viewers.values()) notify()
+      }
+      if (lease.viewers.size === 0) controls.delete(runId)
+    })
   })
 
   let port: number
@@ -844,6 +1158,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       await new Promise<void>((resolve) => wss.close(() => resolve()))
       await new Promise<void>((resolve) => server.close(() => resolve()))
       await sessions.stopAll()
+      // İşlenmiş son çıktı checkpoint'e yazılır, sonra worker kapanır.
+      await host.shutdown()
       // Socket en son bırakılır.
       await lock.release()
     },

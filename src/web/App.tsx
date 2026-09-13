@@ -23,9 +23,10 @@ export function App() {
   const [dialogProject, setDialogProject] = useState<Project | null>(null)
   const [pendingDelete, setPendingDelete] = useState<api.DeletePreview | null>(null)
   const [orphans, setOrphans] = useState<api.OrphanScanResult | null>(null)
+  const [stateHealthy, setStateHealthy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = () => api.getState().then(setState).catch((e) => setError(e.message))
+  const refresh = () => api.getState().then((next) => { setState(next); setStateHealthy(true) }).catch((e) => { setStateHealthy(false); setError(e.message) })
 
   // Yetim keşfi salt okunurdur ve poll edilmez: açılışta ve istenince okunur.
   const refreshOrphans = () => api.getOrphanWorktrees().then(setOrphans).catch(() => setOrphans(null))
@@ -33,8 +34,14 @@ export function App() {
   useEffect(() => {
     refresh()
     refreshOrphans()
-    const timer = setInterval(refresh, 2000)
-    return () => clearInterval(timer)
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async () => {
+      await refresh()
+      if (!disposed) timer = setTimeout(poll, 2000)
+    }
+    timer = setTimeout(poll, 2000)
+    return () => { disposed = true; clearTimeout(timer) }
   }, [])
 
   const active = state.sessions.find((s) => s.id === activeId) ?? null
@@ -155,18 +162,20 @@ export function App() {
             {error && <div className="error">{error}</div>}
             {state.serviceError && <div className="error">{state.serviceError}</div>}
 
-            <div className="body">
-              {/* Tüm terminaller mount'ta kalır; sadece aktif olan görünür.
-                  Oturumlar arası geçişte state ve scroll korunur. */}
-              <div className="terminals" style={{ display: tab === 'terminal' ? 'block' : 'none' }}>
-                {state.sessions.map((session) => (
-                  <TerminalPane
-                    key={session.id}
-                    session={session}
-                    active={session.id === activeId && tab === 'terminal'}
-                  />
-                ))}
+            {state.terminals?.[active.id]?.checkpoint.lastError && (
+              <div className="error">Terminal geçmişi kaydedilemedi: {state.terminals[active.id].checkpoint.lastError}</div>
+            )}
+            {state.terminals?.[active.id]?.checkpoint.lastSuccessAt && (
+              <div className="muted" style={{ padding: '4px 12px', fontSize: 12 }}>
+                Son terminal kaydı: {new Date(state.terminals[active.id].checkpoint.lastSuccessAt!).toLocaleTimeString()}
               </div>
+            )}
+            <div className="body">
+              {tab === 'terminal' && (
+                <div className="terminals">
+                  <TerminalPane key={`${state.daemonId}:${active.id}:${active.runId}`} session={active} daemonId={state.daemonId} stateHealthy={stateHealthy} />
+                </div>
+              )}
               {tab === 'diff' && <DiffView sessionId={active.id} />}
             </div>
           </>

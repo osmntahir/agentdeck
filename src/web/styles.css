@@ -154,7 +154,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 
 .body { flex: 1; min-height: 0; position: relative; }
 .terminals { height: 100%; }
-.term-host { height: 100%; padding: 6px 0 6px 8px; background: #0e1116; }
+.term-host { flex: 1; min-height: 0; overflow: auto; padding: 6px 0 6px 8px; background: #0e1116; }
 
 .empty {
   flex: 1;
@@ -220,3 +220,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .radio input { width: auto; margin-top: 2px; }
 .radio strong { color: var(--accent); font-weight: 600; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.terminal-pane { height: 100%; display: flex; flex-direction: column; }
+.terminal-status { display: flex; align-items: center; gap: 12px; padding: 6px 10px; font-size: 12px; }
+.terminal-status span { flex: 1; }

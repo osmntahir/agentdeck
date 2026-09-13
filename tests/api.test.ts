@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import http from 'node:http'
 import { execFileSync, spawn } from 'node:child_process'
+import WebSocket from 'ws'
 import { startDaemon, type Daemon } from '../src/server/daemon'
 import { acquireDaemonLock } from '../src/server/lock'
 import { StateError } from '../src/server/store'
@@ -773,3 +774,284 @@ test(
     })
   },
 )
+
+// --- Terminal temsili ve replay protokolü (spec §4) -------------------------
+
+interface WsMessage {
+  type: string
+  [key: string]: unknown
+}
+
+/** Test istemcisi: mesajları sırayla biriktirir, koşul sağlanınca uyanır. */
+function connectWs(daemon: Daemon, query: string) {
+  const socket = new WebSocket(`${daemon.url.replace('http', 'ws')}/ws?${query}`)
+  const opened = new Promise<void>((resolve, reject) => {
+    socket.once('open', resolve)
+    socket.once('error', reject)
+  })
+  const messages: WsMessage[] = []
+  const closes: { code: number }[] = []
+  socket.on('message', (raw) => messages.push(JSON.parse(raw.toString()) as WsMessage))
+  socket.on('close', (code) => closes.push({ code }))
+  return {
+    messages,
+    closes,
+    async waitFor(predicate: (m: WsMessage) => boolean, budgetMs = 10000): Promise<WsMessage> {
+      const deadline = Date.now() + budgetMs
+      for (;;) {
+        const found = messages.find(predicate)
+        if (found) return found
+        if (Date.now() > deadline) {
+          throw new Error(`beklenen mesaj gelmedi; gelenler: ${messages.map((m) => m.type).join(',')}`)
+        }
+        await new Promise((r) => setTimeout(r, 25))
+      }
+    },
+    send(payload: unknown) {
+      const control = messages.filter((m) => m.type === 'control').at(-1)
+      socket.send(JSON.stringify({ generation: control?.generation, ...(payload as object) }))
+    },
+    open: () => opened,
+    /** İstemcinin ekrana yazdığı toplam girdi: replay parçaları + sonraki çıktı. */
+    screenInput(): string {
+      let text = ''
+      for (const msg of messages) {
+        if (msg.type === 'replay-chunk' || msg.type === 'output') text += String(msg.text)
+      }
+      return text
+    },
+    close() {
+      socket.close()
+    },
+  }
+}
+
+test('canlı attach replay-start/chunk/end sırasını izler ve sonra input açılır', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      createBody(projectId, { command: 'printf AGENTDECK_EKRAN; sleep 300' }),
+    )
+    assert.equal(created.status, 200)
+
+    const ws = connectWs(daemon, `session=${created.body.id}&token=${daemon.token}`)
+    await ws.open()
+    const start = await ws.waitFor((m) => m.type === 'replay-start')
+    assert.equal(start.mode, 'live')
+    assert.equal(start.scope, 'screen')
+    assert.equal(start.daemonId, daemon.daemonId)
+    assert.equal(start.runId, created.body.runId)
+    assert.equal(typeof start.sequence, 'number')
+    assert.equal(typeof start.formatVersion, 'number')
+
+    const end = await ws.waitFor((m) => m.type === 'replay-end')
+    assert.equal(end.snapshotId, start.snapshotId)
+
+    const beforeEnd = ws.messages.slice(0, ws.messages.indexOf(end))
+    assert.equal(beforeEnd[0].type, 'replay-start')
+    assert.equal(
+      beforeEnd.every((m) => m.type === 'replay-start' || m.type === 'replay-chunk'),
+      true,
+      'replay bitmeden canlı çıktı gönderilmez',
+    )
+    const indexes = beforeEnd.filter((m) => m.type === 'replay-chunk').map((m) => m.index)
+    assert.deepEqual(indexes, indexes.map((_, i) => i), 'parçalar sırayla numaralanır')
+    assert.equal(end.chunkCount, indexes.length)
+
+    // Ekran modeli program çıktısını taşır.
+    await ws.waitFor(() => ws.screenInput().includes('AGENTDECK_EKRAN'))
+
+    // Replay bittikten sonra girdi kabul edilir.
+    ws.send({ type: 'input', data: 'echo AGENTDECK_GIRDI\n' })
+    await ws.waitFor(() => ws.screenInput().includes('AGENTDECK_GIRDI'))
+    ws.close()
+  })
+})
+
+test('istemci akışında terminal sorgusu bulunmaz', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      // Program imleç konumu sorar: cevabı daemon üretir, tarayıcı görmez.
+      createBody(projectId, { command: 'printf "\\033[6nAGENTDECK_SORGU"; sleep 300' }),
+    )
+    const ws = connectWs(daemon, `session=${created.body.id}&token=${daemon.token}`)
+    await ws.open()
+    await ws.waitFor(() => ws.screenInput().includes('AGENTDECK_SORGU'))
+    assert.equal(ws.screenInput().includes('\x1b[6n'), false, 'sorgu dizisi istemciye sızdı')
+    ws.close()
+  })
+})
+
+test('scrollback katmanı yalnız açık istekle gönderilir', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      createBody(projectId, { command: 'for i in $(seq 1 300); do echo "satır $i"; done; sleep 300' }),
+    )
+    const ws = connectWs(daemon, `session=${created.body.id}&token=${daemon.token}`)
+    await ws.open()
+    const first = await ws.waitFor((m) => m.type === 'replay-start')
+    assert.equal(first.scope, 'screen')
+
+    ws.send({ type: 'request-scrollback' })
+    const second = await ws.waitFor((m) => m.type === 'replay-start' && m.scope === 'scrollback')
+    assert.notEqual(second.snapshotId, first.snapshotId, 'ikinci katman yeni bir snapshot tır')
+    assert.ok((second.totalBytes as number) > (first.totalBytes as number))
+    ws.close()
+  })
+})
+
+test('canlı olmayan Run salt okunur incelenir; girdi kabul edilmez', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      createBody(projectId, { command: 'printf AGENTDECK_GECMIS; sleep 300' }),
+    )
+    const runId = created.body.runId as string
+
+    // Çıktının ekran modeline inmesini bekle, sonra durdur.
+    const livews = connectWs(daemon, `session=${created.body.id}&token=${daemon.token}`)
+    await livews.open()
+    await livews.waitFor(() => livews.screenInput().includes('AGENTDECK_GECMIS'))
+    livews.close()
+
+    const stopped = await api.post(`/api/sessions/${created.body.id}/stop`, { expectedRunId: runId })
+    assert.equal(stopped.status, 200)
+
+    // Checkpoint çıkışta yazılır; hazır olana kadar denenir.
+    let history = connectWs(daemon, `session=${created.body.id}&run=${runId}&token=${daemon.token}`)
+    await waitFor(async () => {
+      await history.open()
+      try {
+        await history.waitFor((m) => m.type === 'replay-start', 1500)
+        return true
+      } catch {
+        history = connectWs(daemon, `session=${created.body.id}&run=${runId}&token=${daemon.token}`)
+        return false
+      }
+    })
+
+    const start = await history.waitFor((m) => m.type === 'replay-start')
+    assert.equal(start.mode, 'inspect')
+    await history.waitFor((m) => m.type === 'replay-end')
+    const ended = await history.waitFor((m) => m.type === 'run-ended')
+    assert.equal(ended.runId, runId)
+    assert.ok(history.screenInput().includes('AGENTDECK_GECMIS'), 'saklanan görüntü geri gelmedi')
+
+    // Salt okunur bağlantı girdi kabul etmez (bağlantı zaten kapanır).
+    history.send({ type: 'input', data: 'echo SIZINTI\n' })
+    history.close()
+  })
+})
+
+test('bilinmeyen Run için uydurma ekran değil "geçmiş yok" döner', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const ws = connectWs(daemon, `session=${created.body.id}&run=bilinmeyenrun&token=${daemon.token}`)
+    await ws.open()
+    const msg = await ws.waitFor((m) => m.type === 'history-missing')
+    assert.match(String(msg.message), /yok/)
+    ws.close()
+  })
+})
+
+test('kart önizlemesi ekran modelinden çıkar ve sınırı aşan istek reddedilir', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      createBody(projectId, { command: 'printf "AGENTDECK_KART\\n"; sleep 300' }),
+    )
+    const id = created.body.id
+
+    await waitFor(async () => {
+      const state = await api.get<StateResponse & { previews: Record<string, { state: string; preview?: { text: string } }> }>(
+        `/api/state?previewIds=${id}`,
+      )
+      return state.body.previews[id]?.state === 'ready' && !!state.body.previews[id].preview?.text.includes('AGENTDECK_KART')
+    })
+
+    const unknown = await api.get<{ previews: Record<string, { state: string; reason: string }> }>(
+      '/api/state?previewIds=olmayan-oturum',
+    )
+    assert.equal(unknown.body.previews['olmayan-oturum'].state, 'unavailable')
+
+    const tooMany = await api.get<{ code: string }>(
+      `/api/state?previewIds=${Array.from({ length: 25 }, (_, i) => `s${i}`).join(',')}`,
+    )
+    assert.equal(tooMany.status, 400)
+    assert.equal(tooMany.body.code, 'validation')
+  })
+})
+
+test('oturum silinince terminal checkpoint dosyaları da kalkar', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ api, dataDir, projectId }) => {
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      createBody(projectId, { command: 'printf AGENTDECK_SIL; sleep 300' }),
+    )
+    const id = created.body.id
+    const sessionDir = path.join(dataDir, 'terminal', id)
+    await waitFor(async () => fs.existsSync(sessionDir))
+
+    const preview = await api.post<{ confirmationToken: string }>(`/api/sessions/${id}/delete-preview`)
+    const removed = await api.del(`/api/sessions/${id}`, { confirmationToken: preview.body.confirmationToken })
+    assert.equal(removed.status, 200)
+    assert.equal(fs.existsSync(sessionDir), false, 'oturuma ait terminal kayıtları kalmamalı')
+  })
+})
+
+test('ikinci izleyici salt okunur; açık kontrol devri eski generation girdisini reddeder', { timeout: 15000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const query = `session=${created.body.id}&run=${created.body.runId}&token=${daemon.token}`
+    const a = connectWs(daemon, query)
+    const b = connectWs(daemon, query)
+    try {
+      const owner = await a.waitFor((m) => m.type === 'control')
+      const viewer = await b.waitFor((m) => m.type === 'control')
+      assert.equal(owner.owned, true)
+      assert.equal(viewer.owned, false)
+      b.send({ type: 'input', data: 'VIEWER_BLOCKED' })
+      b.send({ type: 'take-control' })
+      const taken = await b.waitFor((m) => m.type === 'control' && m.owned === true)
+      a.send({ type: 'input', generation: owner.generation, data: 'OLD_BLOCKED' })
+      b.send({ type: 'input', generation: taken.generation, data: 'OWNER_ACCEPTED' })
+      await b.waitFor(() => b.screenInput().includes('OWNER_ACCEPTED'))
+      assert.equal(b.screenInput().includes('VIEWER_BLOCKED'), false)
+      assert.equal(b.screenInput().includes('OLD_BLOCKED'), false)
+    } finally { a.close(); b.close() }
+  })
+})
+
+test('önceki Run bağlantısı yeniden başlatılan Run a girdi gönderemez', { timeout: 15000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const old = connectWs(daemon, `session=${created.body.id}&token=${daemon.token}`)
+    let current: ReturnType<typeof connectWs> | undefined
+    try {
+      await old.waitFor((m) => m.type === 'control')
+      await api.post(`/api/sessions/${created.body.id}/restart`, { requestId: 'replace', expectedRunId: created.body.runId })
+      current = connectWs(daemon, `session=${created.body.id}&token=${daemon.token}`)
+      await current.waitFor((m) => m.type === 'control')
+      old.send({ type: 'input', data: 'OLD_RUN_INPUT' })
+      current.send({ type: 'input', data: 'NEW_RUN_INPUT' })
+      await current.waitFor(() => current!.screenInput().includes('NEW_RUN_INPUT'))
+      assert.equal(current.screenInput().includes('OLD_RUN_INPUT'), false)
+    } finally { old.close(); current?.close() }
+  })
+})
+
+test('null WebSocket mesajı daemon u düşürmez', { timeout: 15000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const socket = new WebSocket(`${daemon.url.replace('http', 'ws')}/ws?session=${created.body.id}&token=${daemon.token}`)
+    try {
+      await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject) })
+      socket.send('null')
+      socket.send('[]')
+      await new Promise((r) => setTimeout(r, 30))
+      assert.equal((await api.get('/api/state')).status, 200)
+    } finally { socket.close() }
+  })
+})
