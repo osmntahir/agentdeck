@@ -46,7 +46,7 @@ Worktree oturumu oluşturulurken açılan, kullanıcıya ait Git branch'i. Klas�
 _Avoid_: HEAD, hareketli ana branch
 
 **Isolation**:
-Session'ın proje çalışma kopyasıyla ilişkisi: worktree kendi kopyası; shared ortak proje köküdür.
+Session'ın proje çalışma kopyasıyla ilişkisi: worktree kendi kopyası (klasör projesinde her Alt depo için ayrı kopya taşıyan kapsayıcı dizin); shared ortak proje köküdür.
 
 **Lifecycle**:
 Yönetilen PTY'nin durumu: live, exited veya orphaned. Activity ve çalışma kopyası sağlığı ayrı kavramlardır.

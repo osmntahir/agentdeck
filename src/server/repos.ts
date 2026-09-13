@@ -1,58 +1,60 @@
-import fs from 'node:fs'
+import fs from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import path from 'node:path'
 
 /**
  * Klasör projesinin altındaki Git depolarını bulur. Keşif salt okunurdur,
  * symlink izlenmez ve bulunan deponun içine inilmez. Bütçe aşıldığında veya
- * bir dizin okunamadığında liste eksik kalır ve bu açıkça bildirilir.
+ * bir dizin okunamadığında liste eksik kalır ve bu açıkça bildirilir. Okuma
+ * async'tir; tarama daemon'ın PTY ve WS işlerini bloklamaz.
  */
-export interface NestedRepoScan {
+export interface SubRepoScan {
   /** Köke göre göreli yollar; kök depoysa tek değer "." olur. */
   repos: string[]
   truncated: boolean
 }
 
-export interface NestedRepoLimits {
-  maxDepth?: number
+export interface SubRepoLimits {
   maxRepos?: number
   maxEntries?: number
-  deadlineMs?: number
 }
+
+const MAX_DEPTH = 4
+const DEADLINE_MS = 2000
 
 /** Depo barındırması beklenmeyen, taramayı şişiren klasörler. */
 const SKIPPED = new Set(['node_modules'])
 
-function hasGitEntry(dir: string): boolean {
+async function hasGitEntry(dir: string): Promise<boolean> {
   try {
-    fs.lstatSync(path.join(dir, '.git'))
+    await fs.lstat(path.join(dir, '.git'))
     return true
   } catch {
     return false
   }
 }
 
-export function findNestedRepos(root: string, limits: NestedRepoLimits = {}): NestedRepoScan {
-  const maxDepth = limits.maxDepth ?? 4
+export async function findSubRepos(root: string, limits: SubRepoLimits = {}): Promise<SubRepoScan> {
   const maxRepos = limits.maxRepos ?? 30
   const maxEntries = limits.maxEntries ?? 20_000
-  const deadline = Date.now() + (limits.deadlineMs ?? 2000)
+  const deadline = Date.now() + DEADLINE_MS
 
   const repos: string[] = []
   let examined = 0
   let truncated = false
 
-  const walk = (rel: string, depth: number): void => {
+  const walk = async (rel: string, depth: number): Promise<void> => {
     const dir = path.join(root, rel)
-    if (hasGitEntry(dir)) {
+    if (await hasGitEntry(dir)) {
       if (repos.length >= maxRepos) truncated = true
       else repos.push(rel === '' ? '.' : rel)
       return
     }
-    if (depth === maxDepth) return
+    if (depth === MAX_DEPTH) return
 
-    let children: fs.Dirent[]
+    let children: Dirent[]
     try {
-      children = fs.readdirSync(dir, { withFileTypes: true })
+      children = await fs.readdir(dir, { withFileTypes: true })
     } catch {
       truncated = true
       return
@@ -67,10 +69,10 @@ export function findNestedRepos(root: string, limits: NestedRepoLimits = {}): Ne
       }
       // Dirent lstat anlamındadır: symlink dizin sayılmaz, izlenmez.
       if (!child.isDirectory() || child.name.startsWith('.') || SKIPPED.has(child.name)) continue
-      walk(rel === '' ? child.name : `${rel}/${child.name}`, depth + 1)
+      await walk(rel === '' ? child.name : `${rel}/${child.name}`, depth + 1)
     }
   }
 
-  walk('', 0)
+  await walk('', 0)
   return { repos: repos.sort(), truncated }
 }

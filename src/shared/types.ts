@@ -25,7 +25,7 @@ export type LastLaunch =
   | { mode: 'resume'; cli: string; conversationId: string }
   | { mode: 'picker'; cli: string }
 
-/** İzole klasör oturumunda bir alt deponun worktree'si; path proje köküne ve cwd'ye göredir. */
+/** İzole oturumda bir worktree hedefi; path proje köküne ve cwd'ye göredir. Kayıtta yalnız klasör oturumu tutar. */
 export interface SessionWorktree {
   path: string
   /** O deponun worktree açılışındaki commit'i. */

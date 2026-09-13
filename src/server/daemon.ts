@@ -9,7 +9,7 @@ import { acquireDaemonLock, type DaemonLock } from './lock'
 import { createExclusiveLocks, createSerialQueues } from './locks'
 import { createRequestLedger, DedupConflictError } from './dedup'
 import { scanOrphanWorktrees } from './orphans'
-import { findNestedRepos } from './repos'
+import { findSubRepos } from './repos'
 import * as sessions from './sessions'
 import * as git from './git'
 import { isCheckpointId, openCheckpointStore } from './checkpoints'
@@ -189,6 +189,21 @@ function pruneEmptyDirs(cwd: string, rels: string[]): void {
   }
 }
 
+/** Yalnız ENOENT "yok" demektir; başka hata okunamazlıktır ve "yok" sayılmaz. */
+function isMissing(target: string): boolean {
+  try {
+    fs.lstatSync(target)
+    return false
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT'
+  }
+}
+
+/** İzole oturumun cwd'ye göre worktree yolları: Git projesinde kök, klasör projesinde her alt depo. */
+function worktreePaths(session: Session): string[] {
+  return session.worktrees.length > 0 ? session.worktrees.map((w) => w.path) : ['.']
+}
+
 export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   // Sözleşme: state'e dokunmadan önce tek yazar kilidi alınır.
   const lock: DaemonLock = await acquireDaemonLock(options.dataDir)
@@ -304,6 +319,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     return { verified: true }
   }
 
+  /** Aynı common Git dizinindeki worktree mutasyonları sıralanır. */
+  async function inRepoQueue<T>(repo: string, fn: () => Promise<T>): Promise<T> {
+    return gitQueues.run(await git.commonGitDir(repo), fn)
+  }
+
   /**
    * Create sırasında açtığımız worktree'leri yalnız kendi kaynağımız olduğu,
    * beklenen OID'de durduğu ve içeriği hiç değişmediği doğrulanırsa kaldırır.
@@ -326,8 +346,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         continue
       }
       try {
-        const key = await git.commonGitDir(repo)
-        await gitQueues.run(key, () => git.removeWorktree(repo, worktree))
+        await inRepoQueue(repo, () => git.removeWorktree(repo, worktree))
       } catch {
         outcome = 'preserved'
       }
@@ -341,7 +360,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
    * Eksik tarama veya commit'siz depo varsa hiçbir worktree açılmaz.
    */
   async function folderWorktreeTargets(project: Project): Promise<SessionWorktree[]> {
-    const scan = findNestedRepos(project.path)
+    const scan = await findSubRepos(project.path)
     if (scan.truncated) {
       throw new HttpError(
         409,
@@ -365,24 +384,42 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         `Commit'i olmayan depo var: ${missing.join(', ')}. İlk commit sonrası tekrar deneyin veya ortak klasörü seçin.`,
       )
     }
+    // Aynı branch bir Git dizininde iki kez açılamaz (ör. biri diğerinin linked worktree'si).
+    const gitDirs = await Promise.all(scan.repos.map((rel) => git.commonGitDir(path.join(project.path, rel))))
+    const sharing = scan.repos.filter((_, i) => gitDirs.indexOf(gitDirs[i]) !== gitDirs.lastIndexOf(gitDirs[i]))
+    if (sharing.length > 0) {
+      throw new HttpError(
+        400,
+        'shared_git_dir',
+        `Aynı Git dizinini paylaşan depolar var: ${sharing.join(', ')}. Aynı branch iki kez açılamayacağı için izole oturum açılmadı; ortak klasörü seçin.`,
+      )
+    }
     return scan.repos.map((rel, i) => ({ path: rel, baseCommit: heads[i] as string }))
   }
 
   /**
    * Silme onayının bağlandığı Git durumu. Ortak oturumda dosyalar korunduğu
-   * için boştur; klasör oturumunda her worktree'nin durumu yoluyla birlikte
-   * toplanır. Biri okunamazsa null döner; "temiz" sonucu çıkarılmaz.
+   * için boştur; izole oturumda her worktree'nin durumu yoluyla birlikte
+   * toplanır. Önceki kısmi silmede veya yerel Git ile kalkmış worktree
+   * okunamaz değil yoktur ve özete böyle girer. Durumu okunamayan worktree
+   * varsa null döner; "temiz" sonucu çıkarılmaz.
    */
-  async function deletionStatus(session: Session): Promise<string[] | null> {
-    if (session.isolation === 'shared') return []
-    if (session.worktrees.length === 0) return git.porcelainStatus(session.cwd)
-    const entries: string[] = []
-    for (const worktree of session.worktrees) {
-      const status = await git.porcelainStatus(path.join(session.cwd, worktree.path))
+  async function deletionFingerprint(session: Session): Promise<{ digest: string; changedEntries: number } | null> {
+    if (session.isolation === 'shared') return { digest: digestOf([]), changedEntries: 0 }
+    const parts: string[] = []
+    let changedEntries = 0
+    for (const rel of worktreePaths(session)) {
+      const dir = path.join(session.cwd, rel)
+      if (isMissing(dir)) {
+        parts.push(`${rel}: (yok)`)
+        continue
+      }
+      const status = await git.porcelainStatus(dir)
       if (status === null) return null
-      entries.push(...status.map((entry) => `${worktree.path}: ${entry}`))
+      changedEntries += status.length
+      parts.push(...status.map((entry) => `${rel}: ${entry}`))
     }
-    return entries
+    return { digest: digestOf(parts), changedEntries }
   }
 
   /** Hedefleri sırayla açar; biri başarısızsa açılmış olanlar geri alınır. */
@@ -392,8 +429,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       for (const target of targets) {
         const repo = path.join(project.path, target.path)
         const worktreePath = path.join(cwd, target.path)
-        const key = await git.commonGitDir(repo)
-        await gitQueues.run(key, async () => {
+        await inRepoQueue(repo, async () => {
           fs.mkdirSync(path.dirname(worktreePath), { recursive: true })
           await git.addWorktree(repo, worktreePath, branch, target.baseCommit)
         })
@@ -404,6 +440,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         opened.length > 0
           ? { worktree: (await rollbackWorktrees(project, cwd, opened)) === 'removed' ? 'kaldırıldı' : 'korundu' }
           : undefined
+      // Başarısız hedef için açılmış ara klasörlerden boş kalanlar da kaldırılır.
+      pruneEmptyDirs(cwd, targets.map((t) => t.path))
       throw new HttpError(500, 'worktree_failed', `Worktree açılamadı: ${(err as Error).message}`, details)
     }
   }
@@ -767,8 +805,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (dirIdentity === null) {
       return jsonError(res, 409, 'cwd_missing', `Çalışma dizini okunamıyor: ${session.cwd}`, { cwd: session.cwd })
     }
-    const status = await deletionStatus(session)
-    if (status === null) {
+    const fingerprint = await deletionFingerprint(session)
+    if (fingerprint === null) {
       return jsonError(res, 409, 'status_unreadable', 'Çalışma kopyasının durumu okunamadı; onay üretilmedi', {
         cwd: session.cwd,
       })
@@ -780,7 +818,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       runId: session.runId,
       cwd: session.cwd,
       dirIdentity,
-      statusDigest: digestOf(status),
+      statusDigest: fingerprint.digest,
       expiresAt: Date.now() + CONFIRMATION_TTL_MS,
     })
 
@@ -790,7 +828,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       cwd: session.cwd,
       branch: session.branch,
       isolation: session.isolation,
-      changedEntries: status.length,
+      changedEntries: fingerprint.changedEntries,
       // Sözleşmenin içerik fingerprint'i ve ignored dosya bütçesi §8/4'te
       // eklenir. Ortak klasörde dosyalar korunur; Git durumu gerekmez.
       fingerprintScope: session.isolation === 'shared' ? 'dir-identity' : 'dir-identity+git-status',
@@ -840,13 +878,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       // Ortak klasörde dosyalar silinmez; yalnız dizin kimliği doğrulanır.
       // Worktree kaldırılacaksa Git durumu da tekrar okunur.
       const dirIdentity = dirIdentityOf(session.cwd)
-      const status = await deletionStatus(session)
-      if (dirIdentity === null || status === null) {
+      const fingerprint = await deletionFingerprint(session)
+      if (dirIdentity === null || fingerprint === null) {
         return jsonError(res, 409, 'confirmation_stale', 'Çalışma kopyası artık okunamıyor; silme yapılmadı', {
           cwd: session.cwd,
         })
       }
-      if (dirIdentity !== confirmation.dirIdentity || digestOf(status) !== confirmation.statusDigest) {
+      if (dirIdentity !== confirmation.dirIdentity || fingerprint.digest !== confirmation.statusDigest) {
         confirmations.delete(confirmationToken)
         return jsonError(res, 409, 'confirmation_stale', 'Klasör içeriği onaydan sonra değişti; silme yapılmadı', {
           cwd: session.cwd,
@@ -858,17 +896,19 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         if (!project) {
           return jsonError(res, 409, 'project_missing', 'Projenin kaydı yok; worktree güvenle kaldırılamaz')
         }
-        const rels = session.worktrees.length > 0 ? session.worktrees.map((w) => w.path) : ['.']
+        const rels = worktreePaths(session)
         const removed: string[] = []
         for (const rel of rels) {
           const repo = path.join(project.path, rel)
+          const worktree = path.join(session.cwd, rel)
           try {
-            const key = await git.commonGitDir(repo)
-            await gitQueues.run(key, () => git.removeWorktree(repo, path.join(session.cwd, rel)))
+            // Önceki kısmi silmede veya yerel Git ile kalkmış worktree için iş yoktur.
+            if (!isMissing(worktree)) await inRepoQueue(repo, () => git.removeWorktree(repo, worktree))
             removed.push(rel)
           } catch (err) {
             // Sözleşme: rmSync fallback yok. Kaldırılanlar kayıttan düşer; kalan
             // worktree'ler, dosyaları ve kayıt korunur.
+            let recordUpdated = true
             if (removed.length > 0) {
               await store
                 .commit((draft) => {
@@ -876,7 +916,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
                   if (target) target.worktrees = target.worktrees.filter((w) => !removed.includes(w.path))
                 })
                 .catch(() => {
-                  // Disk hatası serviceError olarak görünür.
+                  // Kaldırılan yollar kayıtta kalsa da yeniden denemede "yok" olarak atlanır.
+                  recordUpdated = false
                 })
             }
             return jsonError(
@@ -885,10 +926,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
               'worktree_remove_failed',
               removed.length === 0
                 ? `Worktree kaldırılamadı; hiçbir dosya silinmedi: ${(err as Error).message}`
-                : `${rel} worktree'si kaldırılamadı; ${removed.join(', ')} kaldırıldı, kalanlar korundu: ${(err as Error).message}`,
+                : `${rel} worktree'si kaldırılamadı; ${removed.join(', ')} kaldırıldı, kalanlar korundu${recordUpdated ? '' : ' (kayıt güncellenemedi)'}: ${(err as Error).message}`,
               {
                 cwd: session.cwd,
                 removed,
+                degraded: !recordUpdated,
                 recovery: 'Klasörü yerel araçla inceleyip git worktree remove ile tekrar deneyin',
               },
             )
@@ -956,14 +998,16 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     // depolar ayrı ayrı incelenir. Depo yoksa temiz diff gibi gösterilmez.
     const scan =
       project?.kind === 'folder'
-        ? findNestedRepos(session.cwd)
+        ? await findSubRepos(session.cwd)
         : { repos: (await git.repoRoot(session.cwd)) ? ['.'] : [], truncated: false }
     if (scan.repos.length === 0) {
       return jsonError(
         res, 409, 'git_required',
-        project?.kind === 'folder'
-          ? 'Bu klasörde ve alt klasörlerinde Git deposu bulunamadı; diff gösterilemiyor.'
-          : 'Bu klasörde Git diff kullanılamıyor.',
+        project?.kind !== 'folder'
+          ? 'Bu klasörde Git diff kullanılamıyor.'
+          : scan.truncated
+            ? 'Alt klasör taraması sınıra ulaştı ve depo bulunamadı; liste eksik olabilir.'
+            : 'Bu klasörde ve alt klasörlerinde Git deposu bulunamadı; diff gösterilemiyor.',
         { truncated: scan.truncated },
       )
     }

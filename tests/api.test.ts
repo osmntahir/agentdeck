@@ -725,6 +725,67 @@ test('klasör projesinde izole oturum silinince tüm worktree\'ler kalkar, branc
   })
 })
 
+test('klasör oturumunda bir worktree kaldırılamazsa kaldırılanlar kayıttan düşer; oturum sonra silinebilir', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api }) => {
+    const folder = tempDir()
+    try {
+      initRepo(path.join(folder, 'a'))
+      const lockedRepo = initRepo(path.join(folder, 'b'))
+      const added = await api.post<Project>('/api/projects', { path: folder })
+      const created = await api.post<SessionView>('/api/sessions', createBody(added.body.id))
+      assert.equal(created.status, 200, JSON.stringify(created.body))
+      const session = created.body
+      const lockedWorktree = path.join(session.cwd, 'b')
+      // Kilitli worktree git tarafından kaldırılamaz (tek --force yetmez).
+      execFileSync('git', ['worktree', 'lock', lockedWorktree], { cwd: lockedRepo, stdio: 'pipe' })
+
+      const preview = await api.post<{ confirmationToken: string }>(`/api/sessions/${session.id}/delete-preview`)
+      const failed = await api.del<{ code: string; details: { removed: string[] } }>(`/api/sessions/${session.id}`, {
+        confirmationToken: preview.body.confirmationToken,
+      })
+      assert.equal(failed.status, 500)
+      assert.equal(failed.body.code, 'worktree_remove_failed')
+      assert.deepEqual(failed.body.details.removed, ['a'])
+      const state = await api.get<StateResponse>('/api/state')
+      assert.deepEqual(state.body.sessions[0].worktrees.map((w) => w.path), ['b'], 'kalan worktree kayıtta durur')
+
+      // Kullanıcı kalanı yerel Git ile kaldırır: kayıttaki yol artık yoktur, okunamaz değildir.
+      execFileSync('git', ['worktree', 'unlock', lockedWorktree], { cwd: lockedRepo, stdio: 'pipe' })
+      execFileSync('git', ['worktree', 'remove', lockedWorktree], { cwd: lockedRepo, stdio: 'pipe' })
+      const retry = await api.post<{ confirmationToken: string; changedEntries: number }>(
+        `/api/sessions/${session.id}/delete-preview`,
+      )
+      assert.equal(retry.status, 200, JSON.stringify(retry.body))
+      assert.equal(retry.body.changedEntries, 0)
+      const deleted = await api.del(`/api/sessions/${session.id}`, { confirmationToken: retry.body.confirmationToken })
+      assert.equal(deleted.status, 200, JSON.stringify(deleted.body))
+      assert.equal(fs.existsSync(session.cwd), false)
+    } finally {
+      removeDir(folder)
+    }
+  })
+})
+
+test('aynı Git dizinini paylaşan alt depolarda izole oturum açıklamayla reddedilir', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api }) => {
+    const folder = tempDir()
+    try {
+      const web = initRepo(path.join(folder, 'web'))
+      execFileSync('git', ['worktree', 'add', '-b', 'kopya', path.join(folder, 'web-kopya')], { cwd: web, stdio: 'pipe' })
+
+      const added = await api.post<Project>('/api/projects', { path: folder })
+      const res = await api.post<{ code: string; message: string }>('/api/sessions', createBody(added.body.id))
+      assert.equal(res.status, 400, JSON.stringify(res.body))
+      assert.equal(res.body.code, 'shared_git_dir')
+      assert.match(res.body.message, /web, web-kopya/)
+      const worktrees = execFileSync('git', ['worktree', 'list'], { cwd: web, encoding: 'utf8' })
+      assert.equal(worktrees.trim().split('\n').length, 2, 'yeni worktree açılmaz')
+    } finally {
+      removeDir(folder)
+    }
+  })
+})
+
 test('klasördeki bir depoda commit yoksa izole oturum hiç worktree açmadan reddedilir', { timeout: 30000 }, async () => {
   await withDaemon(async ({ api }) => {
     const folder = tempDir()
