@@ -383,12 +383,20 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     // Kayıt hâlâ live diyorsa süreç grubunun gittiği bu anda gözlenmiştir.
     const session = findSession(sessionId)
     if (session && session.lifecycle === 'live') {
-      await store.commit((draft) => {
-        const target = draft.sessions.find((s) => s.id === sessionId)
-        if (!target || target.lifecycle !== 'live') return
-        target.lifecycle = 'exited'
-        target.endedAt = Date.now()
-      })
+      try {
+        await store.commit((draft) => {
+          const target = draft.sessions.find((s) => s.id === sessionId)
+          if (!target || target.lifecycle !== 'live') return
+          target.lifecycle = 'exited'
+          target.endedAt = Date.now()
+        })
+      } catch (err) {
+        throw new HttpError(
+          503,
+          'persistence',
+          `Durdurma kaydedilemedi: ${(err as Error).message}`,
+        )
+      }
     }
     return { verified: true }
   }
@@ -787,6 +795,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         )
       }
       res.json(sessionView(findSession(session.id) as Session))
+    } catch (err) {
+      sendError(res, err)
     } finally {
       held.release()
     }
@@ -1785,21 +1795,28 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     )
   }
 
+  let closed: Promise<void> | null = null
   return {
     port,
     token,
     daemonId,
     url: `http://127.0.0.1:${port}`,
-    async close() {
-      shuttingDown = true
-      for (const client of wss.clients) client.close(1001, 'kapanıyor')
-      await new Promise<void>((resolve) => wss.close(() => resolve()))
-      await new Promise<void>((resolve) => server.close(() => resolve()))
-      await sessions.stopAll()
-      // İşlenmiş son çıktı checkpoint'e yazılır, sonra worker kapanır.
-      await host.shutdown()
-      // Socket en son bırakılır.
-      await lock.release()
+    close() {
+      if (closed) return closed
+      closed = (async () => {
+        shuttingDown = true
+        for (const client of wss.clients) client.close(1001, 'kapanıyor')
+        await new Promise<void>((resolve) => wss.close(() => resolve()))
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+        await sessions.stopAll()
+        // Çıkış kayıtlarının diske inmesi; SIGTERM sonrası live kalırsa sonraki açılış orphaned olur.
+        await Promise.all([...pendingExitCommits.values()])
+        // İşlenmiş son çıktı checkpoint'e yazılır, sonra worker kapanır.
+        await host.shutdown()
+        // Socket en son bırakılır.
+        await lock.release()
+      })()
+      return closed
     },
   }
 }

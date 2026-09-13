@@ -1,6 +1,6 @@
 # Terminal temsili: uygulama sınırları
 
-Durum: uygulandı; gerçek tarayıcı/CLI ürün kabulü açık — 13 Eylül 2026.
+Durum: accepted — 13 Eylül 2026. Gerçek tarayıcı/CLI ürün kabulü G4'te açık.
 
 ## Kapsam
 
@@ -51,12 +51,16 @@ WebSocket/API ve tarayıcı protokol tüketicisi. Eksik parça, sıra boşluğu,
 kimlik/format, son write callback'inden önce input, kontrol devri, eski Run,
 worker kaybı ve kapanış/flush yarışı kapsanır.
 
-Bu turda bağlı tarayıcı bulunamadığı için gerçek tarayıcı smoke testi yapılmadı.
 Piksel/font, mouse/paste/IME, >1 MiB renkli replay'in gerçek tarayıcı tüketim
-hızı, 4–8 gerçek CLI ve 32 PTY ürün yük kabulü açıktır. G1'in önceki sentetik
-ölçümleri bu yeni runtime için otomatik ürün kabulü sayılmaz. G3/G4 kutuları
-bu nedenle topluca kapatılmaz.
+hızı ve 4–8 gerçek CLI kabulü G4'te açıktır. G1'in önceki sentetik ölçümleri
+bu runtime için otomatik ürün kabulü sayılmaz.
 
-Son doğrulama (13 Eylül): `npm test` 158/158; `npm run typecheck` ve `npm run build` başarılı. Derlenmiş worker + gerçek WS + ortak istemci tüketicisi üzerinden input, scrollback ve stop smoke testi geçti. Bu headless entegrasyon kanıtıdır, tarayıcı render kabulü değildir.
+Çöküşte iki Run checkpoint'inin ayakta kalması, yarım tmp'nin Run sayılmaması
+ve eksik/okunamayan geçmişin ayrı mesajı [ADR 0013](0013-durability-slice-implementation.md)
+ile ölçüldü.
+
+Son doğrulama (13 Eylül): `npm test`; `npm run typecheck` ve `npm run build`.
+Derlenmiş arayüzde Chromium duman testi ve headless WS entegrasyonu vardır;
+bu tarayıcı render kabulü değildir.
 
 İnceleme düzeltmeleri (13 Eylül): başarısız spawn/commit'in önceki Run checkpoint'ini budaması, durum yoklamasının açık Run'ın checkpoint durumunu düşürebilmesi, 1 MiB'yi aşan geçerli replay'in istemcide kesilmesi ve biçimsiz runId'nin "okunamadı" etiketi düzeltildi; her biri önce kırmızı görülen regresyon testiyle kapsandı. `npm test` 166/166, `npm run typecheck` başarılı.

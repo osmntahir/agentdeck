@@ -259,6 +259,37 @@ test('commit başarısızsa yayımlanan state ve disk korunur', async () => {
   }
 })
 
+test('ENOSPC yazımında yayımlanan state korunur ve serviceError görünür', async () => {
+  const dir = tempDir()
+  const original = fs.writeFileSync
+  try {
+    const store = openStore(dir)
+    await store.commit((draft) => {
+      draft.projects.push({ kind: 'git', id: 'p1', name: 'x', path: '/tmp/x', createdAt: 1 })
+    })
+    fs.writeFileSync = ((target: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (String(target).endsWith('state.json.tmp')) {
+        const err = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException
+        err.code = 'ENOSPC'
+        throw err
+      }
+      return (original as (...args: unknown[]) => void)(target, ...rest)
+    }) as typeof fs.writeFileSync
+    await assert.rejects(
+      store.commit((draft) => {
+        draft.projects.push({ kind: 'git', id: 'p2', name: 'y', path: '/tmp/y', createdAt: 2 })
+      }),
+    )
+    assert.equal(store.get().projects.length, 1, 'disk doluyken mutation yayımlanmaz')
+    assert.match(store.serviceError() ?? '', /Kalıcı kayıt yazılamadı/)
+    const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')) as PersistedState
+    assert.equal(onDisk.projects.length, 1)
+  } finally {
+    fs.writeFileSync = original
+    removeDir(dir)
+  }
+})
+
 test('eşzamanlı commit çağrıları sıralanır ve hiçbiri kaybolmaz', async () => {
   const dir = tempDir()
   try {

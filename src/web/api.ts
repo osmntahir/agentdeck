@@ -7,6 +7,7 @@ import type {
   StateResponse,
   StoredRun,
 } from '../shared/types'
+import { createMutationIds } from '../shared/mutationIds'
 
 // Token URL'den bir kez alınır, sonra adres çubuğundan temizlenir.
 const fromUrl = new URLSearchParams(location.search).get('token')
@@ -48,9 +49,16 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
-/** Kaybolan bir cevabın ikinci Run açmaması için her mutation kendi kimliğini taşır. */
-const newRequestId = (): string =>
-  typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+/** Kayıp create/launch cevabı aynı daemon'da ikinci Run açmasın. Daemon değişince kimlik yenilenir. */
+const mutationIds = createMutationIds()
+let boundDaemonId = ''
+
+async function mutatingCall<T>(slot: string, url: string, payload: unknown, body: object): Promise<T> {
+  const requestId = mutationIds.id(slot, boundDaemonId, payload)
+  const result = await call<T>(url, { method: 'POST', body: JSON.stringify({ ...body, requestId }) })
+  mutationIds.complete(slot, requestId)
+  return result
+}
 
 function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
   const timeout = AbortSignal.timeout(ms)
@@ -66,10 +74,13 @@ function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
   return combined.signal
 }
 
-export const getState = (previewIds: string[] = [], signal?: AbortSignal) =>
-  call<StateResponse>(`/api/state?previewIds=${encodeURIComponent(previewIds.join(','))}`, {
+export const getState = async (previewIds: string[] = [], signal?: AbortSignal) => {
+  const state = await call<StateResponse>(`/api/state?previewIds=${encodeURIComponent(previewIds.join(','))}`, {
     signal: withTimeout(signal, 5000),
   })
+  boundDaemonId = state.daemonId
+  return state
+}
 
 export const addProject = (path: string) =>
   call<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ path }) })
@@ -105,11 +116,7 @@ export const createSession = (input: {
   name: string
   command: string | null
   isolation: Isolation
-}) =>
-  call<SessionView>('/api/sessions', {
-    method: 'POST',
-    body: JSON.stringify({ ...input, requestId: newRequestId() }),
-  })
+}) => mutatingCall<SessionView>('create', '/api/sessions', input, input)
 
 export const stopSession = (id: string, expectedRunId: string | null) =>
   call<SessionView>(`/api/sessions/${id}/stop`, {
@@ -118,17 +125,21 @@ export const stopSession = (id: string, expectedRunId: string | null) =>
   })
 
 export const restartSession = (id: string, expectedRunId: string | null) =>
-  call<SessionView>(`/api/sessions/${id}/restart`, {
-    method: 'POST',
-    body: JSON.stringify({ requestId: newRequestId(), expectedRunId }),
-  })
+  mutatingCall<SessionView>(
+    'restart',
+    `/api/sessions/${id}/restart`,
+    { id, expectedRunId },
+    { expectedRunId },
+  )
 
 /** Mevcut çalışma kopyasında komutu aynen çalıştırır; başlangıç Command'ı değişmez. */
 export const launchSession = (id: string, expectedRunId: string | null, command: string | null) =>
-  call<SessionView>(`/api/sessions/${id}/launch`, {
-    method: 'POST',
-    body: JSON.stringify({ requestId: newRequestId(), expectedRunId, mode: 'command', command }),
-  })
+  mutatingCall<SessionView>(
+    'launch',
+    `/api/sessions/${id}/launch`,
+    { id, expectedRunId, command },
+    { expectedRunId, mode: 'command', command },
+  )
 
 export interface RunsResult {
   currentRunId: string | null

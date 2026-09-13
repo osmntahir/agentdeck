@@ -4,13 +4,14 @@ Revizyon: 2.2 — 12 Eylül 2026. **Durum: tasarım kararları kapandı ve termi
 
 Bu belge güncel normatif sözleşmedir; ADR'ler gerekçeyi, araştırmalar tarihli kanıtı taşır. Eski GitHub resolution yorumları tarihçedir; çelişen önceki hükümler bu revizyonla yürürlükten kalkar. İki incelemedeki 15 bulgunun karşılığı [revizyon kaydında](../reviews/2026-09-12-decision-reconciliation.md); terminal kararlarının ölçüm kanıtı [doğrulama notunda](../research/terminal-state-validation.md).
 
-**Uygulama durumu:** §8/1, §8/3 terminal dilimi, §8/4 çalışma sonucu dilimi ve §8/5 tarama/odak/poll
-entegrasyonu (environment.json dahil) ürün koduna girdi. Sınırlar
+**Uygulama durumu:** §8/1, §8/3 terminal dilimi, §8/4 çalışma sonucu dilimi, §8/5 tarama/odak/poll
+entegrasyonu (environment.json dahil) ve §8/6 dayanıklılık ürün koduna girdi. Sınırlar
 [ADR 0007](../adr/0007-slice-1-implementation-boundaries.md),
 [ADR 0008](../adr/0008-terminal-slice-implementation.md),
-[ADR 0011](../adr/0011-work-result-slice-implementation.md) ve
-[ADR 0012](../adr/0012-scan-focus-poll-implementation.md) içinde. Gerçek tarayıcı/CLI
-ürün kabulü, §8/2 insan kabulü ve §8/6 kabulleri açık; sözleşmenin bütünü uygulanmış değildir.
+[ADR 0011](../adr/0011-work-result-slice-implementation.md),
+[ADR 0012](../adr/0012-scan-focus-poll-implementation.md) ve
+[ADR 0013](../adr/0013-durability-slice-implementation.md) içinde. Gerçek tarayıcı/CLI
+ürün kabulü ve §8/2 insan kabulü açık; sözleşmenin bütünü uygulanmış değildir.
 
 ## 1. Hedef ve kapsam
 
@@ -180,7 +181,7 @@ State schemaVersion:2. V0 eski agent/status kaydı veya schemaVersion:1 yalnız 
 3. Headless terminal/snapshot/preview/encoding ve kontrol yanıtları. **Uygulandı:** terminal-state worker’ı, güvenli kesim, sorgu ayıklama, iki katmanlı replay, checkpoint ve odak istemcisi. Gerçek tarayıcı/CLI kabulü açık ([ADR 0008](../adr/0008-terminal-slice-implementation.md)).
 4. Çalışma diff'i/baseCommit, aynı cwd'de açık launch, arşiv ve branch bulma; sınırlı/safe delete. **Uygulandı** (13 Eylül 2026); launch yalnız command modunu açar, yönetilen kimlik G2'ye bağlı kalır ([ADR 0011](../adr/0011-work-result-slice-implementation.md)).
 5. Grid/odak/klavye/poll entegrasyonu; 4–8 gerçek oturum, sonra 32 sentetik PTY/256 kayıt. **Ürün kodu uygulandı** (13 Eylül 2026); 4–8 gerçek oturum ve 32 sentetik kabulü açık ([ADR 0012](../adr/0012-scan-focus-poll-implementation.md)).
-6. Çöküş/disk-full/bozuk state/eski yedek/timeout/çoklu istemci/tekrar istek/Unicode/ANSI/çok büyük dosya ve dış Git yarış kabulü; README ile gerçek davranış hizası.
+6. Çöküş/disk-full/bozuk state/eski yedek/timeout/çoklu istemci/tekrar istek/Unicode/ANSI/çok büyük dosya ve dış Git yarış. **Ürün kodu uygulandı** (13 Eylül 2026); SIGKILL'e dirençli gerçek süreç ve tarayıcı yük kabulü açık ([ADR 0013](../adr/0013-durability-slice-implementation.md)).
 
 Kabul senaryoları [doğrulama kapıları](agentdeck-v0-validation-gates.md) içinde numaralıdır. G1 kapandı: sekans kapsamı, sorgu sahipliği, iki katmanlı snapshot, 32 terminal kaynak maliyeti ve gerçek tarayıcı buffer eşitliği ölçüldü. G2'nin insan onayı gerektiren maddeleri açık; bunlar geçmeden hiçbir CLI için yönetilen kimlik açılmaz. G3/G4 ürün kabulüdür ve yapılmadı.
 

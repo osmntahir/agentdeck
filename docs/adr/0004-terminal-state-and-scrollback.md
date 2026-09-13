@@ -1,6 +1,6 @@
 # Terminal state görüntünün kaynağıdır
 
-Durum: accepted design — 2026-09-12; ürün kabulü bekleniyor. Eski `0002-scrollback-session-record.md` kararının yerine geçer: ham halka replay ve ANSI silerek preview üretme hükümleri yürürlükten kalktı.
+Durum: accepted — 2026-09-13. Ürün kodu [ADR 0008](0008-terminal-slice-implementation.md) ve [ADR 0013](0013-durability-slice-implementation.md) ile girdi; IME/piksel ve 4–8 gerçek CLI kabulü G4'te. Eski `0002-scrollback-session-record.md` kararının yerine geçer: ham halka replay ve ANSI silerek preview üretme hükümleri yürürlükten kalktı.
 
 Her canlı Run, daemon tarafında sıralı UTF-8 çıktıyla beslenen headless xterm durumuna sahiptir. İstemci odakta tek xterm açar; attach, aynı boyutlarda terminal snapshot'ı ve sıralı devam akışı alır. Preview aynı ekran modelinin görünür satırlarından çıkar. Tam terminal emülasyonu yeniden yazılmaz. V0'da ayrı bir ham çıktı halkası **yoktur**: ikinci bir görüntü kaynağı tutmak iki doğruluk kaynağı ve iki bütçe demektir. Ekranın tek kaynağı terminal state, kalıcılığın tek biçimi Run kimlikli checkpoint'tir.
 

@@ -7,3 +7,5 @@ Stop, exit, archive ve restart worktree'yi kaldırmaz. Açılış yalnız orphan
 Kullanıcı Session silmesini açıkça onayladığında süreç grubu doğrulanır, worktree kaldırılır, sonra kayıt kaldırılır. İşlem fiziksel transaction değildir; kısmi başarı ve kalan kayıt görünürdür. Shared dosyalara dokunulmaz. V0 Session silme branch silmez; uygulamadan branch silme ertelendi. Böylece değişen branch tipine karşı zorunlu olmayan yıkıcı bir yarış V0'dan çıkarılır.
 
 Ignored dosyalar dahil silinecek çalışma kopyasının kapsamı, maliyet sınırları ve onay fingerprint'i [spec](../specs/agentdeck-v0.md#6-saklama-ve-güvenli-temizlik) içinde. Arşivlemek varsayılan işi bitirme yoludur; silme ikincil ve yıkıcıdır.
+
+Güncelleme (13 Eylül 2026): create rollback'inin kirli kopyayı koruması [ADR 0013](0013-durability-slice-implementation.md) ile ölçüldü.

@@ -1942,3 +1942,223 @@ test('arşiv durdurması sürerken silme reddedilir ve çalışma kopyası korun
     assert.equal(fs.existsSync(path.join(session.cwd, 'ready')), true)
   })
 })
+
+test('PTY doğup kayıt yazılamazsa kirli worktree korunur', { timeout: 30000, skip: isRoot ? 'root izinleri kontrolü atlar' : false }, async () => {
+  await withDaemon(async ({ api, dataDir, repo, projectId }) => {
+    const hook = path.join(repo, '.git/hooks/post-checkout')
+    fs.writeFileSync(hook, '#!/bin/sh\nprintf dirty > KEEP\n')
+    fs.chmodSync(hook, 0o755)
+
+    fs.chmodSync(dataDir, 0o500)
+    let created: Reply<{ code: string; details: { worktree: string; cwd: string } }>
+    try {
+      created = await api.post('/api/sessions', createBody(projectId))
+    } finally {
+      fs.chmodSync(dataDir, 0o755)
+    }
+
+    assert.equal(created.status, 503)
+    assert.equal(created.body.code, 'persistence')
+    assert.equal(created.body.details.worktree, 'korundu')
+    assert.equal(fs.existsSync(created.body.details.cwd), true)
+    assert.equal(fs.existsSync(path.join(created.body.details.cwd, 'KEEP')), true)
+
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions.length, 0, 'yazılamayan oturum kayda girmez')
+  })
+})
+
+test('disk hatası canlı PTY yi öldürmez; yeni kayıt 503 döner', { timeout: 30000, skip: isRoot ? 'root izinleri kontrolü atlar' : false }, async () => {
+  await withDaemon(async ({ api, daemon, dataDir, projectId }) => {
+    const first = await api.post<SessionView>('/api/sessions', createBody(projectId, { command: 'sleep 300' }))
+    assert.equal(first.status, 200)
+    const ws = connectWs(daemon, `session=${first.body.id}&token=${daemon.token}`)
+    try {
+      await ws.waitFor((m) => m.type === 'control' && m.owned === true)
+      fs.chmodSync(dataDir, 0o500)
+      let second: Reply<{ code: string }>
+      try {
+        second = await api.post('/api/sessions', createBody(projectId, { name: 'ikinci' }))
+      } finally {
+        fs.chmodSync(dataDir, 0o755)
+      }
+      assert.equal(second.status, 503)
+      assert.equal(second.body.code, 'persistence')
+
+      const state = await api.get<StateResponse>('/api/state')
+      assert.equal(state.body.sessions.length, 1)
+      assert.equal(state.body.sessions[0].lifecycle, 'live')
+      assert.ok(state.body.serviceError)
+
+      ws.send({ type: 'input', data: 'echo SURDU\n' })
+      await ws.waitFor(() => ws.screenInput().includes('SURDU'))
+    } finally {
+      ws.close()
+    }
+  })
+})
+
+test('durdurma kaydı yazılamazsa süreç durur, çıkış uydurulmaz', { timeout: 30000, skip: isRoot ? 'root izinleri kontrolü atlar' : false }, async () => {
+  await withDaemon(async ({ api, dataDir, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId, { command: 'sleep 300' }))
+    assert.equal(created.status, 200)
+    fs.chmodSync(dataDir, 0o500)
+    let stopped: Reply<{ code: string }>
+    try {
+      stopped = await api.post(`/api/sessions/${created.body.id}/stop`, { expectedRunId: created.body.runId })
+    } finally {
+      fs.chmodSync(dataDir, 0o755)
+    }
+    assert.equal(stopped.status, 503)
+    assert.equal(stopped.body.code, 'persistence')
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions[0].lifecycle, 'live', 'çıkış diske inmedi')
+    assert.equal(state.body.sessions[0].remainingProcessGroup, false)
+    assert.ok(state.body.serviceError)
+  })
+})
+
+test('yalnız WS kopuşu oturumu orphaned yapmaz', { timeout: 15000 }, async () => {
+  await withDaemon(async ({ daemon, api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    const ws = connectWs(daemon, `session=${created.body.id}&token=${daemon.token}`)
+    await ws.waitFor((m) => m.type === 'control')
+    ws.close()
+    const state = await api.get<StateResponse>('/api/state')
+    assert.equal(state.body.sessions[0].lifecycle, 'live')
+  })
+})
+
+test('SIGTERM çıkışı kaydeder; kilit bırakılır ve ikinci close zararsızdır', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ daemon, api, dataDir, projectId }) => {
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      createBody(projectId, { command: 'printf KAPANDI; sleep 300' }),
+    )
+    const ws = connectWs(daemon, `session=${created.body.id}&token=${daemon.token}`)
+    await ws.waitFor(() => ws.screenInput().includes('KAPANDI'))
+    ws.close()
+    await daemon.close()
+    await daemon.close()
+
+    const again = await startDaemon({ dataDir, port: 0 })
+    try {
+      const api2 = client(again)
+      const state = await api2.get<StateResponse>('/api/state')
+      assert.equal(state.body.sessions[0].lifecycle, 'exited', 'düzgün kapanış live bırakmaz')
+      const inspect = connectWs(again, `session=${created.body.id}&run=${created.body.runId}&token=${again.token}`)
+      await inspect.open()
+      const start = await inspect.waitFor((m) => m.type === 'replay-start' || m.type === 'history-missing')
+      assert.equal(start.type, 'replay-start', 'SIGTERM son checkpoint i yazmalı')
+      await inspect.waitFor((m) => m.type === 'replay-end')
+      assert.ok(inspect.screenInput().includes('KAPANDI'))
+      inspect.close()
+    } finally {
+      await again.close()
+    }
+  })
+})
+
+test('yeni daemon aynı requestId ile ikinci oturum açabilir; istemci kimliği yenilemek zorundadır', { timeout: 40000 }, async () => {
+  await withDaemon(async ({ daemon, api, dataDir, projectId }) => {
+    const body = createBody(projectId, { name: 'ilk-defter' })
+    const first = await api.post<SessionView>('/api/sessions', body)
+    assert.equal(first.status, 200)
+    await daemon.close()
+
+    const again = await startDaemon({ dataDir, port: 0 })
+    try {
+      const api2 = client(again)
+      const second = await api2.post<SessionView>('/api/sessions', body)
+      assert.equal(second.status, 200, JSON.stringify(second.body))
+      assert.notEqual(second.body.id, first.body.id)
+      const state = await api2.get<StateResponse>('/api/state')
+      assert.equal(state.body.sessions.length, 2)
+    } finally {
+      await again.close()
+    }
+  })
+})
+
+test('çöküşte iki Run checkpoint i ayakta kalır ve orphaned oturumdan okunur', { timeout: 60000 }, async () => {
+  const dataDir = tempDir()
+  const repo = initRepo()
+  const child = spawn(process.execPath, ['--import', 'tsx', 'tests/fixtures/hold-daemon.ts', dataDir], {
+    cwd: process.cwd(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  try {
+    const info = await new Promise<{ url: string; token: string }>((resolve, reject) => {
+      let buf = ''
+      const timer = setTimeout(() => reject(new Error('çocuk daemon hazır olmadı')), 40000)
+      child.stdout?.setEncoding('utf8')
+      child.stdout?.on('data', (chunk: string) => {
+        buf += chunk
+        const line = buf.split('\n').find((row) => row.startsWith('{'))
+        if (!line) return
+        clearTimeout(timer)
+        resolve(JSON.parse(line) as { url: string; token: string })
+      })
+      child.once('error', reject)
+      child.once('exit', (code) => reject(new Error(`çocuk daemon çıktı: ${code}`)))
+    })
+    const fake = { url: info.url, token: info.token } as Daemon
+    const api = client(fake)
+    const added = await api.post<{ id: string }>('/api/projects', { path: repo })
+    assert.equal(added.status, 200, JSON.stringify(added.body))
+    const created = await api.post<SessionView>(
+      '/api/sessions',
+      createBody(added.body.id, { command: 'printf ILK_CRASH; sleep 300' }),
+    )
+    assert.equal(created.status, 200, JSON.stringify(created.body))
+    const firstRun = created.body.runId as string
+    const settle = async (marker: string) => {
+      const ws = connectWs(fake, `session=${created.body.id}&token=${fake.token}`)
+      await ws.open()
+      await ws.waitFor(() => ws.screenInput().includes(marker))
+      ws.close()
+    }
+    await settle('ILK_CRASH')
+    const second = await api.post<SessionView>(`/api/sessions/${created.body.id}/launch`, {
+      requestId: 'crash-2',
+      expectedRunId: firstRun,
+      mode: 'command',
+      command: 'printf IKINCI_CRASH; sleep 300',
+    })
+    assert.equal(second.status, 200, JSON.stringify(second.body))
+    await settle('IKINCI_CRASH')
+    const sessionDir = path.join(dataDir, 'terminal', created.body.id)
+    await waitFor(async () => {
+      const files = fs.existsSync(sessionDir) ? fs.readdirSync(sessionDir).filter((f) => f.endsWith('.json')) : []
+      return files.length >= 2
+    })
+
+    child.kill('SIGKILL')
+    await new Promise<void>((resolve) => child.on('exit', () => resolve()))
+
+    const daemon = await startDaemon({ dataDir, port: 0 })
+    try {
+      const api2 = client(daemon)
+      const state = await api2.get<StateResponse>('/api/state')
+      assert.equal(state.body.sessions[0].lifecycle, 'orphaned')
+      for (const [runId, marker] of [
+        [firstRun, 'ILK_CRASH'],
+        [second.body.runId as string, 'IKINCI_CRASH'],
+      ] as const) {
+        const inspect = connectWs(daemon, `session=${created.body.id}&run=${runId}&token=${daemon.token}`)
+        await inspect.open()
+        await inspect.waitFor((m) => m.type === 'replay-start')
+        await inspect.waitFor((m) => m.type === 'replay-end')
+        assert.ok(inspect.screenInput().includes(marker), `${marker} checkpoint yok`)
+        inspect.close()
+      }
+    } finally {
+      await daemon.close()
+    }
+  } finally {
+    child.kill('SIGKILL')
+    removeDir(dataDir)
+    removeDir(repo)
+  }
+})
+

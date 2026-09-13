@@ -51,6 +51,27 @@ test('büyük paste Unicode kod noktalarını bölmeden 64 KiB parçalara ayrıl
   }
 })
 
+test('eksik ve okunamayan geçmiş ayrı mesajla girdi kapatır', async () => {
+  for (const [type, message] of [
+    ['history-missing', 'Bu Run için saklanmış terminal görüntüsü yok'],
+    ['history-unreadable', 'Saklanmış görüntü okunamadı: kayıt ayrıştırılamadı'],
+  ] as const) {
+    let failed = false
+    let status = ''
+    const stream = new TerminalStream(
+      { reset() {}, resize() {}, write(_t, cb) { cb() } },
+      identity,
+      (next) => { status = next.message },
+      () => { failed = true },
+    )
+    await stream.receive(JSON.stringify({ type, message }))
+    assert.equal(failed, true)
+    assert.equal(stream.status.ready, false)
+    assert.equal(status, message)
+    stream.dispose()
+  }
+})
+
 test('1 MiB tan büyük replay yavaş yazımda istemci tarafında düşürülmez', async () => {
   const pending: (() => void)[] = []
   let failed = false

@@ -144,6 +144,23 @@ test('yazılamayan checkpoint hata olarak bildirilir ve yarım dosya bırakmaz',
   }
 })
 
+test('çöküşten kalan tmp dosyası Run kaydı veya bozuk geçmiş sayılmaz', async () => {
+  const dir = tempDir()
+  try {
+    const store = openCheckpointStore(dir)
+    await store.write(input('s1', 'r1', 'sağlam'))
+    await store.write(input('s1', 'r2', 'ikinci'))
+    fs.writeFileSync(`${store.fileFor('s1', 'r2')}.crash.tmp`, '{ yarım')
+    assert.equal((await store.read('s1', 'r1')).state, 'ready')
+    assert.equal((await store.read('s1', 'r2')).state, 'ready')
+    assert.deepEqual(store.list('s1').map((run) => run.runId).sort(), ['r1', 'r2'])
+    const leftovers = fs.readdirSync(path.dirname(store.fileFor('s1', 'r1'))).filter((f) => f.endsWith('.tmp'))
+    assert.equal(leftovers.length, 1, 'tmp durur ama okunmaz')
+  } finally {
+    removeDir(dir)
+  }
+})
+
 test('yazım tek başına eski kayıtları budamaz', async () => {
   const dir = tempDir()
   try {

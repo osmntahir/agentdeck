@@ -1,6 +1,6 @@
 # agentdeck
 
-> Bu README mevcut runtime’ı anlatır. §8/1, §8/3 terminal dilimi, §8/4 çalışma sonucu dilimi ve §8/5 tarama/odak/poll entegrasyonu uygulandı; sınırlar [ADR 0007](docs/adr/0007-slice-1-implementation-boundaries.md), [ADR 0008](docs/adr/0008-terminal-slice-implementation.md), [ADR 0011](docs/adr/0011-work-result-slice-implementation.md) ve [ADR 0012](docs/adr/0012-scan-focus-poll-implementation.md) içinde. Gerçek CLI/tarayıcı ürün kabulü ve yönetilen konuşma devamı henüz tamamlanmadı.
+> Bu README mevcut runtime’ı anlatır. §8/1, §8/3 terminal dilimi, §8/4 çalışma sonucu dilimi, §8/5 tarama/odak/poll entegrasyonu ve §8/6 dayanıklılık uygulandı; sınırlar [ADR 0007](docs/adr/0007-slice-1-implementation-boundaries.md), [ADR 0008](docs/adr/0008-terminal-slice-implementation.md), [ADR 0011](docs/adr/0011-work-result-slice-implementation.md), [ADR 0012](docs/adr/0012-scan-focus-poll-implementation.md) ve [ADR 0013](docs/adr/0013-durability-slice-implementation.md) içinde. Gerçek CLI/tarayıcı ürün kabulü ve yönetilen konuşma devamı henüz tamamlanmadı.
 
 Paralel AI ajan oturumlarını izole git worktree'lerde yöneten yerel çalışma tezgâhı.
 
@@ -39,7 +39,12 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Oturumlar arası geçiş** — tek oturum görünümünde yalnız odaktaki terminal açılır; ekran daemon'daki
   headless modelden kurulur. Scrollback açık “Terminal geçmişini yükle” eylemiyle gelir.
 - **Kalıcı terminal görüntüsü** — son iki Run checkpoint'i tutulur; canlı olmayan
-  güncel Run salt okunur açılır. Eksik ve bozuk geçmiş ayrı bildirilir.
+  güncel Run salt okunur açılır. Eksik ve bozuk geçmiş ayrı bildirilir. Daemon
+  çöküşünde her iki görüntü de kalır; yarım yazım Run sayılmaz.
+- **Disk ve kapanış** — kayıt yazılamazsa canlı PTY ölmez, yeni kalıcı iş 503
+  döner. SIGTERM süreçleri durdurur ve çıkışı kaydeder; yalnız soket kopuşu
+  oturumu yetim bırakmaz. Kayıp create/launch cevabı aynı daemon'da ikinci Run
+  açmaz.
 - **Tek kontrol sahibi** — diğer istemciler salt okunur izler; “Kontrolü al”
   ile kullanıcı girdi ve boyutlandırma sahipliğini devralır. Sahibi olmayan
   kontrolü açık terminal kendiliğinden alır; sahipten alınması yine açık eylemdir.

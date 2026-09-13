@@ -58,8 +58,8 @@ Ortam: Node 22.19.0, Linux, gerçek node-pty ve gerçek `git`. Kanıt: depodaki 
     - Ölçülen (13 Eylül ek): `api.test.ts` "arşiv durdurması sürerken silme reddedilir ve çalışma kopyası korunur" (409 `operation_in_progress`, ajan dosyası kalır, arşiv tamamlanır).
     - Açık: SIGKILL'e dirençli gerçek bir süreç grubu çekirdekte kurulamadığı için timeout yolu yalnız sahte grupla ölçüldü; gerçek uninterruptible süreçle ölçülmedi.
 - [ ] Spawn başarılı/state commit başarısız ve rollback başarısız; disk-full/izin hatası; crash sırasında iki Run checkpoint'i. Kaynaklar korunur, kısmi sonuç/gerçek exit doğru görünür.
-    - Ölçülen: `api.test.ts`: "PTY doğup kayıt yazılamazsa yalnız kendi grubu durdurulur ve kendi worktree i geri alınır" (izin hatası, 503 `persistence`, değişmemiş kendi kaynağı kaldırıldı, yarım worktree kaydı kalmadı, oturum kayda girmedi). `store.test.ts`: "commit başarısızsa yayımlanan state ve disk korunur", "commit copy-on-write: yayımlanan state ancak rename sonrası değişir", "eşzamanlı commit çağrıları sıralanır ve hiçbiri kaybolmaz".
-    - Açık: rollback'in de başarısız olduğu yol, gerçek disk-full, ve crash sırasında iki Run checkpoint’i. Normal checkpoint saklama/okuma artık otomatik testlidir.
+    - Ölçülen: `api.test.ts` izin hatasında worktree kaldırma, kirli worktree `korundu`, canlı PTY'nin disk hatasında yaşaması, durdurma kaydı yazılamazsa çıkışın uydurulmaması, SIGKILL sonrası iki checkpoint, SIGTERM çıkış kaydı. `store.test.ts` ENOSPC stub'ı. `checkpoints.test.ts` yarım tmp'nin Run sayılmaması.
+    - Açık: gerçek disk-full aygıtı; yazım ortasında çöküş; `git worktree remove` hatasının ayrı fixture'ı.
 - [x] **İki daemon aynı data/farklı port veya symlink alias ile başlayamaz; SIGKILL sonrası kilit bırakılır; port/protokol uyuşmazlığında yabancı süreç öldürülmez.** `lock.test.ts`: "aynı veri dizini için ikinci yazar reddedilir", "symlink alias aynı kilide çözülür", "kilit bırakıldıktan sonra yeniden alınabilir", "farklı veri dizinleri birbirini engellemez". `api.test.ts`: "aynı veri dizini için ikinci daemon açılmaz", "SIGKILL edilen daemon kilidi bırakır" (kilidi ayrı süreçte tutup `SIGKILL` ile öldürerek), "porttaki yabancı servis öldürülmez" (yabancı HTTP servisi portu tutarken daemon açılmıyor, yabancı servis yaşamaya devam ediyor, kilit sızmıyor).
 - [x] **Commit edilmiş ve edilmemiş değişiklikler baseCommit görünümünde bulunur; staged/unstaged birbirini geri aldığında status kirli kalır. Shared attribution yok; base bilinmiyorsa uydurulmaz.** `api.test.ts`: ""Bu çalışma" base commit ten toplam farkı, "Commit edilmemiş" yalnız HEAD e göre farkı gösterir" (commit edilmiş iş toplam görünümde var, HEAD görünümünde yok; takip edilmeyen dosya ikisinde de), "staged ve unstaged birbirini geri alsa da status kirli kalır; ortak kopyada toplam görünüm uydurulmaz" (net patch boş, status `MM`; ortak oturumun varsayılanı commit edilmemiş görünüm, toplam görünüm `baseCommit:null` ve açıklamayla kapalı), "diff patch sınırında kesildiğini söyler; Git hatası temiz diff sayılmaz". Arayüz ortak kopyada değişikliğin oturuma atfedilmediğini söyler ([ADR 0011](../adr/0011-work-result-slice-implementation.md)).
 - [x] **Archive/unarchive dosyalara dokunmaz; 256 kayıt sınırı arşivleri gizlice silmez; Session silindikten sonra branch proje görünümünde bulunur.** `api.test.ts`: "arşiv canlı işi açık istek olmadan durdurmaz; arşiv ve arşivden çıkarma dosyalara dokunmaz" (cwd, branch, baseCommit ve ajan dosyası korunur; arşivdeki oturum yeniden başlatılamaz), "kayıt sınırı dolduğunda create durur ve hiçbir kayıt kesilmez", "korunan branch ler proje görünümünde tip OID siyle bulunur; kayıt yoksa görev bilgisi uydurulmaz" (silinen oturumun branch'i commit'lenmiş iş tipinde, `sessionId:null`).
@@ -67,7 +67,7 @@ Ortam: Node 22.19.0, Linux, gerçek node-pty ve gerçek `git`. Kanıt: depodaki 
 - [x] **Delete onayı sonrası içerik/Run/dizin değişimi 409; stop sonrası yeniden kontrol; worktree lock/izin hatasında rmSync fallback yok; shared dosyaları korunur.** `api.test.ts`: "onaysız silme reddedilir, onay sonrası içerik değişirse silme durur" (409 `confirmation_stale`, klasör duruyor), "onaydan sonra yeni Run başladıysa silme durur" (runId bağı), "onay başka bir dizine dönen yolda geçersizdir" (dizin kimliği bağı), "worktree kaldırılamazsa rmSync fallback yok; kayıt ve dosyalar korunur" (kilitli worktree ile 500 `worktree_remove_failed`, ajan dosyası ve kayıt yerinde), "ortak çalışma kopyasında silme dosyalara dokunmaz", "branch silme alanı reddedilir" (gövde ve query için 400 `unsupported_field`). Dosya durumu onaydan sonra **ve** doğrulanmış stop'tan sonra yeniden okunuyor.
 - [x] **Proje silme kısmi sonuçta kalan Project/Session'ları listeler; branch silme alanı reddedilir; external Git farkı stale gösterilir.** `api.test.ts`: "oturumu olan proje gizlice cascade silinmez" (onaysız 409 `project_has_sessions`), "proje silme tüm oturumları tek onaya bağlar; onaydan sonra içerik veya oturum kümesi değişirse hiçbir şey silinmez", "proje silme bütçeyi oturum sayısıyla aşmaz; kısmi sonuçta proje ve kalan oturumlar listelenir" (kilitli worktree ile 500 `project_delete_partial`, `removedSessionIds`/`remainingSessionIds`, proje kalır) ve "branch silme alanı reddedilir". `git.test.ts`: "diff okuma sırasında HEAD değişirse stale işaretlenir" (yavaş clean filter altında boş commit; sonraki sessiz okuma `stale:false`).
 - [ ] Yarım/okunamayan checkpoint ayrı hata verir; legacy history doğru snapshot diye gösterilmez. Terminal yüklemesi/serialize bütçesi aşılırsa açık hata.
-    - Otomatik kanıt: `checkpoints.test.ts` eksik/bozuk/sürüm ve kimlik uyuşmazlığını; `terminalHost.test.ts` worker kaybı ve son flush’ı; `api.test.ts` salt okunur inspection ve dosya temizliğini doğrular. Gerçek tarayıcı/yük kabulü hâlâ açıktır.
+    - Otomatik kanıt: `checkpoints.test.ts` eksik/bozuk/sürüm ve kimlik uyuşmazlığını ve çöküş tmp'sini; `terminalHost.test.ts` worker kaybı ve son flush’ı; `terminalStream.test.ts` `history-missing` / `history-unreadable` ayrımını; `api.test.ts` salt okunur inspection, biçimsiz runId ve dosya temizliğini doğrular. Gerçek tarayıcı/yük kabulü hâlâ açıktır.
 
 ## G4 — Bütünleşik kullanıcı akışı (ürün kabulü)
 
@@ -75,17 +75,21 @@ Ortam: Node 22.19.0, Linux, gerçek node-pty ve gerçek `git`. Kanıt: depodaki 
 - [ ] %200 zoom, dar pencere/drawer, focus geri dönüşü, ekran okuyucu durum duyuruları; polling/reconnect focus çalmaz.
 - [ ] 4–8 gerçek oturumda doğru işi bulma, hata fark etme, same-worktree fresh, arşivden bulma; kullanıcı gözlemi kaydedilir.
 - [ ] Ağ/401/403/5xx/WS-only kopuş ayrı; stale snapshot sahte orphaned üretmez. Eşit revision activity/preview yenilemesi işlenir.
+    - Ölçülen: `statePoll.test.ts` 401/403/5xx/ağ ayrımı; `api.test.ts` "yalnız WS kopuşu oturumu orphaned yapmaz"; eşit revision `statePoll.ts` içinde işlenir.
+    - Açık: gerçek tarayıcıda kopuş ve stale snapshot kullanıcı kabulü.
 - [ ] Kayıp create/launch cevabı ve yeni daemon: otomatik ikinci Run yok; requestId payload çakışması doğru reddedilir. Viewer lease devralma ve replay sırasında input kontrolü doğru.
+    - Ölçülen: `mutationIds.test.ts` aynı daemon/payload kimliği hatırlar, daemon değişince yeniler; `api.test.ts` "aynı requestId ikinci bir Run doğurmaz", "yeni daemon aynı requestId ile ikinci oturum açabilir"; lease ve replay girdi testleri mevcut.
+    - Açık: kayıp cevabın gerçek tarayıcıda elle yeniden denemesi.
 
 ## Devir kuralı
 
 G1 kapandı (12 Eylül 2026). G2 destek kapsamı netleşmesi Wayfinder haritasının kalan açık frontier'ıdır. G3/G4 uygulama kabulüdür; plan haritasının işi ürün kodunu tamamlamak değildir. G1/G2 tamamlandıktan sonra harita kapatılabilir; G3/G4 geçmeden sürüm hazır denmez.
 
-Uygulama durumu (13 Eylül 2026): spec §8/1, §8/3, §8/4 ve §8/5 ürün koduna girdi ([ADR 0012](../adr/0012-scan-focus-poll-implementation.md)). G4'ün klavye/poll maddeleri ürün tarafında bağlandı ama insan kabulü yapılmadı. Testlerin geçmesi ürünün doğrulandığı anlamına gelmez.
+Uygulama durumu (13 Eylül 2026): spec §8/1, §8/3, §8/4, §8/5 ve §8/6 ürün koduna girdi ([ADR 0013](../adr/0013-durability-slice-implementation.md)). G4'ün klavye/poll maddeleri ürün tarafında bağlandı ama insan kabulü yapılmadı. Testlerin geçmesi ürünün doğrulandığı anlamına gelmez.
 
 ## Sıradaki iş ve açık kararlar
 
-Son durum (13 Eylül 2026): §8/1, §8/3, §8/4 ve §8/5 ürün koduna girdi ([ADR 0012](../adr/0012-scan-focus-poll-implementation.md)). `npm test` 220/220, typecheck başarılı. Kart panosu `/api/state` önizlemesine bağlıdır; tarama gizliyken 24 kartlık GET istenmez. Derlenmiş arayüzde F6/Escape/kart duman testi yapıldı. G2 insan kabulü, G3 kalan 3 madde, G4 ve §8/6'nın disk-full/çöküş kabulleri açıktır.
+Son durum (13 Eylül 2026): §8/1, §8/3, §8/4, §8/5 ve §8/6 ürün koduna girdi ([ADR 0013](../adr/0013-durability-slice-implementation.md)). G2 insan kabulü, G3 kalan 3 madde ve G4 açıktır. ADR 0001–0013 kodla kapanabilecek maddeleri sistemde.
 
 Sıradaki işler:
 
@@ -93,7 +97,7 @@ Sıradaki işler:
 2. **§8/3 kabulü.** Gerçek tarayıcıda ekran/scrollback, >1 MiB renkli replay, paste/mouse/IME ve kopuş doğrulanmalı; 4–8 gerçek CLI ile sonra 32 PTY yükü ölçülmeli. Motor/host/checkpoint/API/protokol tüketicisi otomatik testleri ürün kabulünün yerine geçmez.
 3. **§8/4 kabulü.** Ürün kodu uygulandı ([ADR 0011](../adr/0011-work-result-slice-implementation.md)). Gerçek kullanıcı kabulü G4'te.
 4. **§8/5 kabulü.** Ürün kodu uygulandı ([ADR 0012](../adr/0012-scan-focus-poll-implementation.md)). Grid klavye döşemesi ve dar ekran çekmecesi kabuk fixture'larıyla Chromium'da doğrulandı; IME / ekran okuyucu / %200 zoom ve 4–8 gerçek oturum G4'te.
-5. **§8/6 — dayanıklılık.** Çöküş, disk-full, bozuk state, timeout ve çoklu istemci; README ile gerçek davranış hizası. Dış Git yarışında diff `stale` işareti otomatik testlidir (`git.test.ts`).
+5. **§8/6 kabulü.** Ürün kodu uygulandı ([ADR 0013](../adr/0013-durability-slice-implementation.md)). SIGKILL'e dirençli gerçek süreç ve tarayıcı yük kabulü açık.
 
 `src/web/prototype/grid/` mock varyantları tarihçedir; ürün panosu `createdAt,id` sırasını ve idle-hata rozeti yasağını tutar.
 
@@ -110,7 +114,7 @@ koruması `gridLayoutGuard.ts` olarak paylaşılan sınıra alındı.
 
 Kanıt:
 
-- `npm test`: 220/220; `npm run typecheck` ve `npm run build` başarılı.
+- `npm test`: 236/236; `npm run typecheck` ve `npm run build` başarılı.
 - `PLAYWRIGHT_MODULE=/tmp/agentdeck-browser-qa/node_modules/playwright node docs/research/adr-runtime-probe.cjs --capacity`:
   derlenmiş gerçek daemon, izole Chromium, geçici proje, iki kabuk ile grid ve
   çekmece davranışları; UUID Enter'ın komut başlatmaması; panel kapatmanın canlı
@@ -123,5 +127,13 @@ Kanıt:
   F6'nın gizli hedefe gitmesi düzeltildi; tekrar incelemede engelleyici bulgu yok.
 
 G2 trust/auth ve yönetilen kimlik desteği, 4–8 gerçek ajanla kullanıcı akışı,
-IME/ekran okuyucu/%200 zoom ve kalan dayanıklılık/yük kabulü açık kalır. Bu
+IME/ekran okuyucu/%200 zoom ve tarayıcı yük kabulü açık kalır. Bu
 kanıtlar G3/G4'ün çok koşullu kutularını topluca kapatmaz.
+
+## ADR 0013 dayanıklılık doğrulaması — 13 Eylül 2026
+
+§8/6 ürün koduna girdi. Rollback koruması, ENOSPC, durdurma kaydı yazılamaması,
+SIGTERM çıkış kaydı, WS-only kopuş, kayıp cevap kimliği ve çöküşte iki
+checkpoint ölçüldü. ADR 0004 ve 0008 kabul durumu uygulama ile hizalandı.
+
+Kanıt: `npm test`, `npm run typecheck`. G2/G4 insan kabulü açık.
