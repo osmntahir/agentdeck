@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import type { Isolation, LastLaunch, Lifecycle, PersistedState, Project, Session } from '../shared/types'
+import type { Isolation, LastLaunch, Lifecycle, PersistedState, Project, Session, SessionWorktree } from '../shared/types'
 
 export const SCHEMA_VERSION = 2
 
@@ -95,6 +95,19 @@ function lastLaunch(raw: unknown): LastLaunch | null {
   }
 }
 
+function worktrees(raw: unknown): SessionWorktree[] {
+  // Alan eklenmeden önceki kayıtlarda alt depo worktree'si yoktur.
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) corrupt('session.worktrees')
+  return raw.map((entry) => {
+    if (!isObject(entry)) corrupt('session.worktrees kaydı')
+    const rel = str(entry.path, 'session.worktrees.path')
+    // Yol silme sırasında cwd ve proje köküne eklenir; dışarı taşamaz.
+    if (path.isAbsolute(rel) || rel.split(/[\\/]/).includes('..')) corrupt(`session.worktrees.path=${rel}`)
+    return { path: rel, baseCommit: str(entry.baseCommit, 'session.worktrees.baseCommit') }
+  })
+}
+
 function session(raw: unknown): Session {
   if (!isObject(raw)) corrupt('session kaydı')
   const lifecycle = str(raw.lifecycle, 'session.lifecycle')
@@ -111,6 +124,7 @@ function session(raw: unknown): Session {
     cwd: str(raw.cwd, 'session.cwd'),
     branch: nullableStr(raw.branch, 'session.branch'),
     baseCommit: nullableStr(raw.baseCommit, 'session.baseCommit'),
+    worktrees: worktrees(raw.worktrees),
     lifecycle: lifecycle as Lifecycle,
     exitCode: nullableNum(raw.exitCode, 'session.exitCode'),
     exitSignal: nullableNum(raw.exitSignal, 'session.exitSignal'),
@@ -149,6 +163,7 @@ function migrateLegacySession(raw: unknown): Session {
     branch: nullableStr(raw.branch ?? null, 'legacy session.branch'),
     // Eski şema başlangıç commit'ini tutmuyordu; hareketli HEAD ikame edilmez.
     baseCommit: null,
+    worktrees: [],
     // Eski "running" kaydı yönetilebilir bir PTY bırakmaz.
     lifecycle: status === 'running' ? 'orphaned' : 'exited',
     exitCode: nullableNum(raw.exitCode ?? null, 'legacy session.exitCode'),

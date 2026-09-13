@@ -20,7 +20,7 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Dosya koruma** — silme yalnız taze bir onayla yapılır, branch hiçbir
   koşulda silinmez, `git worktree remove` başarısızsa zorla silme yoluna
   düşülmez. Kayıtsız çalışma kopyaları yalnız listelenir, temizlenmez.
-- **Yerel klasör projeleri** — Git deposu olmayan klasörler de eklenebilir; bu projelerde oturumlar ortak klasörde çalışır. Git başlatılmaz, dosyalar taşınmaz. Worktree ve diff Git projelerine aittir.
+- **Yerel klasör projeleri** — Git deposu olmayan klasörler de eklenebilir; Git başlatılmaz, dosyalar taşınmaz. Ortak oturum doğrudan klasörde çalışır. Klasörün altındaki Git depoları (en çok 4 seviye, 30 depo) ayrı ayrı ele alınır: izole oturum her depo için aynı branch adıyla ayrı worktree açar, depo dışındaki dosyaları kopyalamaz.
 - **Klasör seçici** — masaüstünde “Proje ekle → Klasör seç…” sistem penceresini açar. Tarayıcıda tam klasör yolu yazılır.
 - **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması ve yaşam döngüsü filtreleri. Görünen sonuçların ilk 24 oturumu için önizleme alınır; karttan tek terminale geçilir.
 - **Oturumlar arası geçiş** — yalnız odaktaki terminal açılır; ekran daemon'daki
@@ -30,7 +30,8 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Tek kontrol sahibi** — diğer istemciler salt okunur izler; “Kontrolü al”
   ile kullanıcı girdi ve boyutlandırma sahipliğini devralır.
 - **Diff görünümü** — oturumun worktree'sindeki değişiklikler, ajanın yeni
-  yazdığı takip edilmeyen dosyalar dahil.
+  yazdığı takip edilmeyen dosyalar dahil. Klasör projelerinde her alt depo ayrı
+  bölüm olarak gösterilir.
 - **Ortak mod** — izolasyon istemediğin işler için ana çalışma kopyasında
   oturum açabilirsin.
 
@@ -128,6 +129,7 @@ src/
     dedup.ts           requestId defteri (10 dk / 1024 kayıt)
     env.ts             Run ortamı izin listesi
     orphans.ts         salt okunur yetim çalışma kopyası keşfi
+    repos.ts           klasör projesindeki alt Git depolarının sınırlı keşfi
     git.ts             worktree, HEAD OID, status ve diff işlemleri
   web/
     App.tsx            düzen, oturum seçimi, sekmeler
@@ -167,6 +169,9 @@ Bilinçli olarak MVP dışında bırakılanlar:
   oturumlar tek tek silinir. Arşivleme henüz yok.
 - Silme onayı dizin kimliği ve Git durumuna bağlıdır; ignored dosyaları da
   kapsayan içerik fingerprint'i ve bütçeleri §8/4'te gelir. Ortak oturumlarda yalnız dizin kimliği doğrulanır; proje dosyaları silinmez.
+- Klasör projesinde alt depo taraması eksik kalırsa veya bir depoda commit yoksa
+  izole oturum hiç worktree açmadan reddedilir. Silmede bir worktree
+  kaldırılamazsa kaldırılanlar kayıttan düşer, kalanlar ve dosyaları korunur.
 - Electron'un `chrome-sandbox` yardımcısı npm kurulumunda root'a ait olmadığı
   için pencere `--no-sandbox` ile açılır. Yüklenen tek içerik kendi localhost
   daemon'umuz, `contextIsolation` açık ve `nodeIntegration` kapalı. Kalıcı

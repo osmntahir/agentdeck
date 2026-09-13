@@ -9,12 +9,20 @@ import { acquireDaemonLock, type DaemonLock } from './lock'
 import { createExclusiveLocks, createSerialQueues } from './locks'
 import { createRequestLedger, DedupConflictError } from './dedup'
 import { scanOrphanWorktrees } from './orphans'
+import { findNestedRepos } from './repos'
 import * as sessions from './sessions'
 import * as git from './git'
 import { isCheckpointId, openCheckpointStore } from './checkpoints'
 import { createTerminalHost, type TerminalEvent, type PreviewResult } from './terminalHost'
 import { chunkText, type SnapshotScope } from './terminalState'
-import { commandLabel, type Isolation, type Project, type Session, type SessionView } from '../shared/types'
+import {
+  commandLabel,
+  type Isolation,
+  type Project,
+  type Session,
+  type SessionView,
+  type SessionWorktree,
+} from '../shared/types'
 
 const PROTOCOL_VERSION = 2
 
@@ -162,6 +170,25 @@ function dirIdentityOf(dir: string): string | null {
   }
 }
 
+/**
+ * Worktree'ler kalktıktan sonra kapsayıcı klasörlerden yalnız boş olanları
+ * kaldırır. Recursive silme yoktur; içerik kalmışsa klasör korunur.
+ */
+function pruneEmptyDirs(cwd: string, rels: string[]): void {
+  const dirs = new Set<string>()
+  for (const rel of rels) {
+    for (let dir = path.dirname(rel); dir !== '.'; dir = path.dirname(dir)) dirs.add(dir)
+  }
+  const deepestFirst = [...dirs].sort((a, b) => b.split('/').length - a.split('/').length)
+  for (const dir of [...deepestFirst.map((d) => path.join(cwd, d)), cwd]) {
+    try {
+      fs.rmdirSync(dir)
+    } catch {
+      // Boş değil veya zaten yok: dokunulmaz.
+    }
+  }
+}
+
 export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   // Sözleşme: state'e dokunmadan önce tek yazar kilidi alınır.
   const lock: DaemonLock = await acquireDaemonLock(options.dataDir)
@@ -278,21 +305,106 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   }
 
   /**
-   * Create sırasında açtığımız worktree'yi yalnız kendi kaynağımız olduğu,
+   * Create sırasında açtığımız worktree'leri yalnız kendi kaynağımız olduğu,
    * beklenen OID'de durduğu ve içeriği hiç değişmediği doğrulanırsa kaldırır.
    * Aksi halde kaynağı korur ve bunu bildirir.
    */
-  async function rollbackWorktree(project: Project, cwd: string, expectedBase: string): Promise<'removed' | 'preserved'> {
+  async function rollbackWorktrees(
+    project: Project,
+    cwd: string,
+    targets: SessionWorktree[],
+  ): Promise<'removed' | 'preserved'> {
     const managedRoot = path.resolve(store.worktreeRoot)
     if (!path.resolve(cwd).startsWith(managedRoot + path.sep)) return 'preserved'
-    const [head, status] = await Promise.all([git.headOid(cwd), git.porcelainStatus(cwd)])
-    if (head !== expectedBase || status === null || status.length > 0) return 'preserved'
+    let outcome: 'removed' | 'preserved' = 'removed'
+    for (const target of targets) {
+      const repo = path.join(project.path, target.path)
+      const worktree = path.join(cwd, target.path)
+      const [head, status] = await Promise.all([git.headOid(worktree), git.porcelainStatus(worktree)])
+      if (head !== target.baseCommit || status === null || status.length > 0) {
+        outcome = 'preserved'
+        continue
+      }
+      try {
+        const key = await git.commonGitDir(repo)
+        await gitQueues.run(key, () => git.removeWorktree(repo, worktree))
+      } catch {
+        outcome = 'preserved'
+      }
+    }
+    pruneEmptyDirs(cwd, targets.map((t) => t.path))
+    return outcome
+  }
+
+  /**
+   * Klasör projesinde izole oturumun hedefleri: alt klasörlerdeki her depo.
+   * Eksik tarama veya commit'siz depo varsa hiçbir worktree açılmaz.
+   */
+  async function folderWorktreeTargets(project: Project): Promise<SessionWorktree[]> {
+    const scan = findNestedRepos(project.path)
+    if (scan.truncated) {
+      throw new HttpError(
+        409,
+        'scan_incomplete',
+        'Alt klasör taraması sınıra ulaştı; tüm depolar bulunamadığı için izole oturum açılmadı. Ortak klasörü seçin.',
+      )
+    }
+    if (scan.repos.length === 0) {
+      throw new HttpError(
+        400,
+        'git_required',
+        'Bu klasörde ve alt klasörlerinde Git deposu yok. Oturumu ortak klasörde başlatın.',
+      )
+    }
+    const heads = await Promise.all(scan.repos.map((rel) => git.headOid(path.join(project.path, rel))))
+    const missing = scan.repos.filter((_, i) => heads[i] === null)
+    if (missing.length > 0) {
+      throw new HttpError(
+        400,
+        'head_missing',
+        `Commit'i olmayan depo var: ${missing.join(', ')}. İlk commit sonrası tekrar deneyin veya ortak klasörü seçin.`,
+      )
+    }
+    return scan.repos.map((rel, i) => ({ path: rel, baseCommit: heads[i] as string }))
+  }
+
+  /**
+   * Silme onayının bağlandığı Git durumu. Ortak oturumda dosyalar korunduğu
+   * için boştur; klasör oturumunda her worktree'nin durumu yoluyla birlikte
+   * toplanır. Biri okunamazsa null döner; "temiz" sonucu çıkarılmaz.
+   */
+  async function deletionStatus(session: Session): Promise<string[] | null> {
+    if (session.isolation === 'shared') return []
+    if (session.worktrees.length === 0) return git.porcelainStatus(session.cwd)
+    const entries: string[] = []
+    for (const worktree of session.worktrees) {
+      const status = await git.porcelainStatus(path.join(session.cwd, worktree.path))
+      if (status === null) return null
+      entries.push(...status.map((entry) => `${worktree.path}: ${entry}`))
+    }
+    return entries
+  }
+
+  /** Hedefleri sırayla açar; biri başarısızsa açılmış olanlar geri alınır. */
+  async function openWorktrees(project: Project, cwd: string, branch: string, targets: SessionWorktree[]): Promise<void> {
+    const opened: SessionWorktree[] = []
     try {
-      const key = await git.commonGitDir(project.path)
-      await gitQueues.run(key, () => git.removeWorktree(project.path, cwd))
-      return 'removed'
-    } catch {
-      return 'preserved'
+      for (const target of targets) {
+        const repo = path.join(project.path, target.path)
+        const worktreePath = path.join(cwd, target.path)
+        const key = await git.commonGitDir(repo)
+        await gitQueues.run(key, async () => {
+          fs.mkdirSync(path.dirname(worktreePath), { recursive: true })
+          await git.addWorktree(repo, worktreePath, branch, target.baseCommit)
+        })
+        opened.push(target)
+      }
+    } catch (err) {
+      const details =
+        opened.length > 0
+          ? { worktree: (await rollbackWorktrees(project, cwd, opened)) === 'removed' ? 'kaldırıldı' : 'korundu' }
+          : undefined
+      throw new HttpError(500, 'worktree_failed', `Worktree açılamadı: ${(err as Error).message}`, details)
     }
   }
 
@@ -445,37 +557,28 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         let cwd = project.path
         let branch: string | null = null
         let baseCommit: string | null = null
+        // Git projesinde kökün kendisi, klasör projesinde her alt depo aynı
+        // göreli yolda worktree olur.
+        let targets: SessionWorktree[] = []
 
         if (isolation === 'worktree') {
           if (project.kind === 'folder') {
-            throw new HttpError(
-              400,
-              'git_required',
-              'Bu proje yerel bir klasör. Oturumu ortak klasörde başlatın; worktree için Git deposu gerekir.',
-            )
+            targets = await folderWorktreeTargets(project)
+          } else {
+            const base = await git.headOid(project.path)
+            if (!base) {
+              throw new HttpError(
+                400,
+                'head_missing',
+                'Projede commit yok: worktree oturumu açılamaz. İlk commit sonrası tekrar deneyin veya ortak çalışma kopyasını seçin.',
+              )
+            }
+            baseCommit = base
+            targets = [{ path: '.', baseCommit: base }]
           }
-          const base = await git.headOid(project.path)
-          if (!base) {
-            throw new HttpError(
-              400,
-              'head_missing',
-              'Projede commit yok: worktree oturumu açılamaz. İlk commit sonrası tekrar deneyin veya ortak çalışma kopyasını seçin.',
-            )
-          }
-          baseCommit = base
           branch = `agentdeck/${slugify(name)}-${sid}`
           cwd = path.join(store.worktreeRoot, project.id, sid)
-          const key = await git.commonGitDir(project.path)
-          const worktreeBranch = branch
-          const worktreePath = cwd
-          try {
-            await gitQueues.run(key, async () => {
-              fs.mkdirSync(path.dirname(worktreePath), { recursive: true })
-              await git.addWorktree(project.path, worktreePath, worktreeBranch, base)
-            })
-          } catch (err) {
-            throw new HttpError(500, 'worktree_failed', `Worktree açılamadı: ${(err as Error).message}`)
-          }
+          await openWorktrees(project, cwd, branch, targets)
         }
 
         const runId = crypto.randomBytes(16).toString('hex')
@@ -493,8 +596,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           // Kayda girmemiş Run'ın görüntüsü atılır; önceki kayıtlara dokunulmaz.
           await host.discard(sid, runId)
           const detail: Record<string, unknown> = { cwd }
-          if (isolation === 'worktree' && baseCommit) {
-            detail.worktree = (await rollbackWorktree(project, cwd, baseCommit)) === 'removed' ? 'kaldırıldı' : 'korundu'
+          if (isolation === 'worktree') {
+            detail.worktree = (await rollbackWorktrees(project, cwd, targets)) === 'removed' ? 'kaldırıldı' : 'korundu'
           }
           throw new HttpError(500, 'spawn_failed', `Oturum başlatılamadı: ${(err as Error).message}`, detail)
         }
@@ -509,6 +612,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           cwd,
           branch,
           baseCommit,
+          worktrees: project.kind === 'folder' ? targets : [],
           lifecycle: 'live',
           exitCode: null,
           exitSignal: null,
@@ -528,8 +632,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           await sessions.stop(sid)
           await host.discard(sid, runId)
           const detail: Record<string, unknown> = { cwd }
-          if (isolation === 'worktree' && baseCommit) {
-            detail.worktree = (await rollbackWorktree(project, cwd, baseCommit)) === 'removed' ? 'kaldırıldı' : 'korundu'
+          if (isolation === 'worktree') {
+            detail.worktree = (await rollbackWorktrees(project, cwd, targets)) === 'removed' ? 'kaldırıldı' : 'korundu'
           }
           throw new HttpError(503, 'persistence', `Oturum kaydedilemedi: ${(err as Error).message}`, detail)
         }
@@ -663,7 +767,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (dirIdentity === null) {
       return jsonError(res, 409, 'cwd_missing', `Çalışma dizini okunamıyor: ${session.cwd}`, { cwd: session.cwd })
     }
-    const status = session.isolation === 'shared' ? [] : await git.porcelainStatus(session.cwd)
+    const status = await deletionStatus(session)
     if (status === null) {
       return jsonError(res, 409, 'status_unreadable', 'Çalışma kopyasının durumu okunamadı; onay üretilmedi', {
         cwd: session.cwd,
@@ -736,7 +840,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       // Ortak klasörde dosyalar silinmez; yalnız dizin kimliği doğrulanır.
       // Worktree kaldırılacaksa Git durumu da tekrar okunur.
       const dirIdentity = dirIdentityOf(session.cwd)
-      const status = session.isolation === 'shared' ? [] : await git.porcelainStatus(session.cwd)
+      const status = await deletionStatus(session)
       if (dirIdentity === null || status === null) {
         return jsonError(res, 409, 'confirmation_stale', 'Çalışma kopyası artık okunamıyor; silme yapılmadı', {
           cwd: session.cwd,
@@ -754,22 +858,43 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         if (!project) {
           return jsonError(res, 409, 'project_missing', 'Projenin kaydı yok; worktree güvenle kaldırılamaz')
         }
-        try {
-          const key = await git.commonGitDir(project.path)
-          await gitQueues.run(key, () => git.removeWorktree(project.path, session.cwd))
-        } catch (err) {
-          // Sözleşme: rmSync fallback yok. Kayıt ve dosyalar korunur.
-          return jsonError(
-            res,
-            500,
-            'worktree_remove_failed',
-            `Worktree kaldırılamadı; hiçbir dosya silinmedi: ${(err as Error).message}`,
-            {
-              cwd: session.cwd,
-              recovery: 'Klasörü yerel araçla inceleyip git worktree remove ile tekrar deneyin',
-            },
-          )
+        const rels = session.worktrees.length > 0 ? session.worktrees.map((w) => w.path) : ['.']
+        const removed: string[] = []
+        for (const rel of rels) {
+          const repo = path.join(project.path, rel)
+          try {
+            const key = await git.commonGitDir(repo)
+            await gitQueues.run(key, () => git.removeWorktree(repo, path.join(session.cwd, rel)))
+            removed.push(rel)
+          } catch (err) {
+            // Sözleşme: rmSync fallback yok. Kaldırılanlar kayıttan düşer; kalan
+            // worktree'ler, dosyaları ve kayıt korunur.
+            if (removed.length > 0) {
+              await store
+                .commit((draft) => {
+                  const target = draft.sessions.find((s) => s.id === session.id)
+                  if (target) target.worktrees = target.worktrees.filter((w) => !removed.includes(w.path))
+                })
+                .catch(() => {
+                  // Disk hatası serviceError olarak görünür.
+                })
+            }
+            return jsonError(
+              res,
+              500,
+              'worktree_remove_failed',
+              removed.length === 0
+                ? `Worktree kaldırılamadı; hiçbir dosya silinmedi: ${(err as Error).message}`
+                : `${rel} worktree'si kaldırılamadı; ${removed.join(', ')} kaldırıldı, kalanlar korundu: ${(err as Error).message}`,
+              {
+                cwd: session.cwd,
+                removed,
+                recovery: 'Klasörü yerel araçla inceleyip git worktree remove ile tekrar deneyin',
+              },
+            )
+          }
         }
+        pruneEmptyDirs(session.cwd, rels)
       }
 
       confirmations.delete(confirmationToken)
@@ -827,14 +952,29 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       return jsonError(res, 409, 'cwd_missing', `Çalışma dizini yok: ${session.cwd}`)
     }
     const project = store.get().projects.find((p) => p.id === session.projectId)
-    if (project?.kind === 'folder' || !(await git.repoRoot(session.cwd))) {
+    // Git projesinde çalışma dizini tek depodur; klasör projesinde alt klasörlerdeki
+    // depolar ayrı ayrı incelenir. Depo yoksa temiz diff gibi gösterilmez.
+    const scan =
+      project?.kind === 'folder'
+        ? findNestedRepos(session.cwd)
+        : { repos: (await git.repoRoot(session.cwd)) ? ['.'] : [], truncated: false }
+    if (scan.repos.length === 0) {
       return jsonError(
         res, 409, 'git_required',
-        'Bu klasörde Git diff kullanılamıyor. Dosyalar doğrudan proje klasöründe düzenlenir.',
+        project?.kind === 'folder'
+          ? 'Bu klasörde ve alt klasörlerinde Git deposu bulunamadı; diff gösterilemiyor.'
+          : 'Bu klasörde Git diff kullanılamıyor.',
+        { truncated: scan.truncated },
       )
     }
-    const [{ diff, status }, branch] = await Promise.all([git.diff(session.cwd), git.currentBranch(session.cwd)])
-    res.json({ diff, status, branch })
+    const repos = []
+    // Her depo birkaç git süreci açar; depolar sırayla okunur.
+    for (const rel of scan.repos) {
+      const dir = path.join(session.cwd, rel)
+      const [{ diff, status }, branch] = await Promise.all([git.diff(dir), git.currentBranch(dir)])
+      repos.push({ path: rel, branch, diff, status })
+    }
+    res.json({ repos, truncated: scan.truncated })
   })
 
   if (options.serveWeb) {

@@ -25,6 +25,13 @@ export type LastLaunch =
   | { mode: 'resume'; cli: string; conversationId: string }
   | { mode: 'picker'; cli: string }
 
+/** İzole klasör oturumunda bir alt deponun worktree'si; path proje köküne ve cwd'ye göredir. */
+export interface SessionWorktree {
+  path: string
+  /** O deponun worktree açılışındaki commit'i. */
+  baseCommit: string
+}
+
 export interface Session {
   id: string
   projectId: string
@@ -33,9 +40,12 @@ export interface Session {
   command: string | null
   isolation: Isolation
   cwd: string
+  /** Worktree oturumunun branch'i; klasör oturumunda her alt depoda aynı addır. */
   branch: string | null
   /** Çalışmanın başlangıç commit'i. Bilinmiyorsa null; uydurulmaz. */
   baseCommit: string | null
+  /** Klasör projesindeki izole oturumun alt depo worktree'leri; diğer oturumlarda boş. */
+  worktrees: SessionWorktree[]
   lifecycle: Lifecycle
   exitCode: number | null
   exitSignal: number | null
@@ -80,10 +90,19 @@ export interface StateResponse {
   }>
 }
 
-export interface DiffResult {
+/** Tek bir Git deposunun commit edilmemiş değişikliği; path çalışma dizinine göredir. */
+export interface RepoDiff {
+  path: string
+  branch: string
   diff: string
   status: string
-  branch: string
+}
+
+export interface DiffResult {
+  /** Git projesinde tek değer "."; klasör projesinde alt klasörlerdeki depolar. */
+  repos: RepoDiff[]
+  /** Alt depo taraması sınırda kesildi; liste eksik. */
+  truncated: boolean
 }
 
 export interface ApiError {

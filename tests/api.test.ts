@@ -8,7 +8,7 @@ import WebSocket from 'ws'
 import { startDaemon, type Daemon } from '../src/server/daemon'
 import { acquireDaemonLock } from '../src/server/lock'
 import { StateError } from '../src/server/store'
-import type { Project, SessionView, StateResponse } from '../src/shared/types'
+import type { DiffResult, Project, SessionView, StateResponse } from '../src/shared/types'
 import { tempDir, removeDir, isRoot } from './helpers'
 
 interface Reply<T = any> {
@@ -35,8 +35,8 @@ function client(daemon: Daemon) {
   }
 }
 
-function initRepo(): string {
-  const dir = tempDir()
+function initRepo(dir = tempDir()): string {
+  fs.mkdirSync(dir, { recursive: true })
   const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' })
   git('init', '-b', 'main')
   git('config', 'user.email', 'test@agentdeck.local')
@@ -605,6 +605,157 @@ test('yerel klasör projesi ortak oturum açar; silme kullanıcı dosyalarını 
       assert.equal((await api.del(`/api/projects/${added.body.id}`)).status, 200)
       assert.equal(fs.existsSync(file), true)
     } finally { removeDir(plain) }
+  })
+})
+
+test('klasör projesinde diff alt klasörlerdeki her Git deposunu ayrı gösterir', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api }) => {
+    const folder = tempDir()
+    try {
+      const web = initRepo(path.join(folder, 'web'))
+      initRepo(path.join(folder, 'org', 'api'))
+      fs.mkdirSync(path.join(folder, 'notlar'))
+      fs.writeFileSync(path.join(web, 'README.md'), '# değişti\n')
+      fs.writeFileSync(path.join(web, 'yeni.txt'), 'yeni dosya\n')
+
+      const added = await api.post<Project>('/api/projects', { path: folder })
+      assert.equal(added.body.kind, 'folder')
+      const created = await api.post<SessionView>('/api/sessions', createBody(added.body.id, { isolation: 'shared' }))
+      assert.equal(created.status, 200)
+
+      const res = await api.get<DiffResult>(`/api/sessions/${created.body.id}/diff`)
+      assert.equal(res.status, 200, JSON.stringify(res.body))
+      assert.equal(res.body.truncated, false)
+      assert.deepEqual(res.body.repos.map((r) => [r.path, r.branch]), [['org/api', 'main'], ['web', 'main']])
+      const [clean, changed] = res.body.repos
+      assert.equal(clean.diff, '')
+      assert.equal(clean.status, '')
+      assert.match(changed.diff, /\+# değişti/)
+      assert.match(changed.diff, /\+yeni dosya/)
+    } finally {
+      removeDir(folder)
+    }
+  })
+})
+
+test('klasör projesinde izole oturum her alt depo için aynı branch ile worktree açar', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api }) => {
+    const folder = tempDir()
+    const git = (dir: string, ...args: string[]) =>
+      execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim()
+    try {
+      const web = initRepo(path.join(folder, 'web'))
+      const service = initRepo(path.join(folder, 'org', 'api'))
+      fs.mkdirSync(path.join(folder, 'notlar'))
+      fs.writeFileSync(path.join(folder, 'notlar', 'plan.txt'), 'kopyalanmaz')
+
+      const added = await api.post<Project>('/api/projects', { path: folder })
+      const created = await api.post<SessionView>('/api/sessions', createBody(added.body.id, { isolation: 'worktree' }))
+      assert.equal(created.status, 200, JSON.stringify(created.body))
+      const session = created.body
+      assert.notEqual(session.cwd, added.body.path)
+      assert.equal(session.baseCommit, null, 'tek bir başlangıç commit\'i yok; depo başına tutulur')
+      assert.match(session.branch ?? '', /^agentdeck\//)
+      assert.deepEqual(session.worktrees, [
+        { path: 'org/api', baseCommit: git(service, 'rev-parse', 'HEAD') },
+        { path: 'web', baseCommit: git(web, 'rev-parse', 'HEAD') },
+      ])
+      for (const rel of ['org/api', 'web']) {
+        assert.equal(git(path.join(session.cwd, rel), 'rev-parse', '--abbrev-ref', 'HEAD'), session.branch)
+      }
+      assert.equal(fs.existsSync(path.join(session.cwd, 'notlar')), false, 'depo dışı dosyalar kopyalanmaz')
+
+      fs.writeFileSync(path.join(session.cwd, 'web', 'README.md'), '# izole\n')
+      assert.equal(fs.readFileSync(path.join(web, 'README.md'), 'utf8'), '# test\n', 'kaynak depoya dokunulmaz')
+      const diff = await api.get<DiffResult>(`/api/sessions/${session.id}/diff`)
+      assert.equal(diff.status, 200, JSON.stringify(diff.body))
+      assert.deepEqual(diff.body.repos.map((r) => [r.path, r.branch]), [
+        ['org/api', session.branch],
+        ['web', session.branch],
+      ])
+      assert.match(diff.body.repos[1].diff, /\+# izole/)
+    } finally {
+      removeDir(folder)
+    }
+  })
+})
+
+test('klasör projesinde izole oturum silinince tüm worktree\'ler kalkar, branch\'ler kalır', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api }) => {
+    const folder = tempDir()
+    const git = (dir: string, ...args: string[]) =>
+      execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim()
+    try {
+      const web = initRepo(path.join(folder, 'web'))
+      const service = initRepo(path.join(folder, 'org', 'api'))
+      const added = await api.post<Project>('/api/projects', { path: folder })
+      const created = await api.post<SessionView>('/api/sessions', createBody(added.body.id))
+      assert.equal(created.status, 200, JSON.stringify(created.body))
+      const session = created.body
+      fs.writeFileSync(path.join(session.cwd, 'web', 'README.md'), '# izole\n')
+      fs.writeFileSync(path.join(session.cwd, 'org', 'api', 'yeni.txt'), 'yeni\n')
+
+      type Preview = { confirmationToken: string; changedEntries: number; fingerprintScope: string }
+      const first = await api.post<Preview>(`/api/sessions/${session.id}/delete-preview`)
+      assert.equal(first.status, 200, JSON.stringify(first.body))
+      assert.equal(first.body.changedEntries, 2, 'değişiklikler tüm worktree\'lerden toplanır')
+      assert.equal(first.body.fingerprintScope, 'dir-identity+git-status')
+
+      fs.writeFileSync(path.join(session.cwd, 'org', 'api', 'README.md'), '# sonradan\n')
+      const stale = await api.del<{ code: string }>(`/api/sessions/${session.id}`, {
+        confirmationToken: first.body.confirmationToken,
+      })
+      assert.equal(stale.status, 409)
+      assert.equal(stale.body.code, 'confirmation_stale')
+      assert.equal(fs.existsSync(path.join(session.cwd, 'web', 'README.md')), true, 'eskimiş onayla hiçbir worktree kalkmaz')
+
+      const fresh = await api.post<Preview>(`/api/sessions/${session.id}/delete-preview`)
+      assert.equal(fresh.body.changedEntries, 3)
+      const deleted = await api.del(`/api/sessions/${session.id}`, { confirmationToken: fresh.body.confirmationToken })
+      assert.equal(deleted.status, 200, JSON.stringify(deleted.body))
+      assert.equal(fs.existsSync(session.cwd), false, 'boş kalan kapsayıcı klasör kaldırılır')
+      for (const repo of [web, service]) {
+        assert.equal(git(repo, 'branch', '--list', session.branch as string), session.branch, 'branch korunur')
+        assert.equal(git(repo, 'worktree', 'list').split('\n').length, 1)
+      }
+      assert.equal(fs.readFileSync(path.join(web, 'README.md'), 'utf8'), '# test\n', 'kaynak depoya dokunulmaz')
+    } finally {
+      removeDir(folder)
+    }
+  })
+})
+
+test('klasördeki bir depoda commit yoksa izole oturum hiç worktree açmadan reddedilir', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api }) => {
+    const folder = tempDir()
+    try {
+      const web = initRepo(path.join(folder, 'web'))
+      fs.mkdirSync(path.join(folder, 'bos'))
+      execFileSync('git', ['init', '-b', 'main'], { cwd: path.join(folder, 'bos'), stdio: 'pipe' })
+
+      const added = await api.post<Project>('/api/projects', { path: folder })
+      const res = await api.post<{ code: string; message: string }>('/api/sessions', createBody(added.body.id))
+      assert.equal(res.status, 400)
+      assert.equal(res.body.code, 'head_missing')
+      assert.match(res.body.message, /bos/)
+      const worktrees = execFileSync('git', ['worktree', 'list'], { cwd: web, encoding: 'utf8' })
+      assert.equal(worktrees.trim().split('\n').length, 1, 'diğer depoda da worktree açılmaz')
+    } finally {
+      removeDir(folder)
+    }
+  })
+})
+
+test('Git projesinde diff tek depo olarak "." yolunda döner', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId))
+    assert.equal(created.status, 200)
+    fs.writeFileSync(path.join(created.body.cwd, 'README.md'), '# worktree\n')
+
+    const res = await api.get<DiffResult>(`/api/sessions/${created.body.id}/diff`)
+    assert.equal(res.status, 200, JSON.stringify(res.body))
+    assert.deepEqual(res.body.repos.map((r) => [r.path, r.branch]), [['.', created.body.branch]])
+    assert.match(res.body.repos[0].diff, /\+# worktree/)
   })
 })
 

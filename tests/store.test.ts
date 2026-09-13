@@ -16,6 +16,7 @@ function session(over: Partial<Session> = {}): Session {
     cwd: '/tmp/agentdeck-x/p1/a1',
     branch: 'agentdeck/is-a1',
     baseCommit: 'f'.repeat(40),
+    worktrees: [],
     lifecycle: 'live',
     exitCode: null,
     exitSignal: null,

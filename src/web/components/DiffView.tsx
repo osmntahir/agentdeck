@@ -15,26 +15,47 @@ export function DiffView({ sessionId }: { sessionId: string }) {
   if (error) return <div className="pad muted">{error}</div>
   if (!data) return <div className="pad muted">yükleniyor…</div>
 
-  const lines = data.diff.split('\n')
+  // Git projesinde tek depo vardır ve eski görünüm korunur.
+  const single = data.repos.length === 1 && data.repos[0].path === '.'
+  const changed = data.repos.filter((repo) => repo.status !== '').length
 
   return (
     <div className="diff-view">
       <div className="diff-bar">
-        <span className="branch">{data.branch}</span>
+        {single ? (
+          <span className="branch">{data.repos[0].branch}</span>
+        ) : (
+          <span className="muted">
+            {data.repos.length} depo · {changed} değişiklikli
+          </span>
+        )}
         <button onClick={load}>yenile</button>
       </div>
-      {data.status && <pre className="diff-status">{data.status}</pre>}
-      {data.diff ? (
-        <pre className="diff-body">
-          {lines.map((line, i) => (
-            <div key={i} className={lineClass(line)}>
-              {line || ' '}
-            </div>
-          ))}
-        </pre>
-      ) : (
-        <div className="pad muted">Değişiklik yok.</div>
+      {data.truncated && (
+        <div className="pad muted">Alt klasör taraması sınıra ulaştı; bazı depolar listede yok.</div>
       )}
+      {data.repos.map((repo) => (
+        <section key={repo.path} className="diff-repo">
+          {!single && (
+            <header className="diff-repo-head">
+              <strong>{repo.path}</strong>
+              <span className="branch">{repo.branch}</span>
+            </header>
+          )}
+          {repo.status && <pre className="diff-status">{repo.status}</pre>}
+          {repo.diff ? (
+            <pre className="diff-body">
+              {repo.diff.split('\n').map((line, i) => (
+                <div key={i} className={lineClass(line)}>
+                  {line || ' '}
+                </div>
+              ))}
+            </pre>
+          ) : (
+            <div className="pad muted">Değişiklik yok.</div>
+          )}
+        </section>
+      ))}
     </div>
   )
 }

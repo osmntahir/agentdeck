@@ -5,7 +5,11 @@ Yerel, proje odaklı ajan ve terminal çalışma tezgâhı. Kullanıcı paralel 
 ## Language
 
 **Project**:
-Arayüze eklenmiş yerel klasör; Session kayıtlarının kapsayıcısıdır. Git projesi bir çalışma kopyası köküdür ve worktree izolasyonu sunar; klasör projesinde oturumlar doğrudan ortak klasörde çalışır.
+Arayüze eklenmiş yerel klasör; Session kayıtlarının kapsayıcısıdır. Git projesi bir çalışma kopyası köküdür. Klasör projesi Git deposu olmayan bir klasördür; ortak oturumlar doğrudan klasörde çalışır, diff ve izolasyon altındaki Alt depolar üzerinden yapılır.
+
+**Alt depo**:
+Klasör projesinin alt klasörlerinde bulunan Git deposu. Keşif sınırlıdır: en çok 4 seviye ve 30 depo taranır; `node_modules`, gizli klasörler ve symlink atlanır; bulunan deponun içine inilmez. Sınır aşılırsa liste eksik bildirilir, "başka depo yok" sonucu çıkarılmaz.
+_Avoid_: submodule, iç içe proje
 
 **Session**:
 Bir çalışma kaydı ve ona bağlı ardışık Run'lar. Süreç sonlandığında çalışma kaydı yaşayabilir.
@@ -31,14 +35,14 @@ Ajan CLI'ındaki bir konuşmanın kimliği. Session veya Run kimliği değildir;
 _Avoid_: Session id, resume id
 
 **Worktree**:
-İzole bir Session'ın Git çalışma kopyası. Çalışan süreçten bağımsız olarak kullanıcı işini taşır.
+İzole bir Session'ın Git çalışma kopyası. Çalışan süreçten bağımsız olarak kullanıcı işini taşır. Klasör projesindeki izole Session her Alt depo için, kapsayıcı çalışma dizininde aynı göreli yolda bir worktree taşır; depo dışındaki dosyalar kopyalanmaz.
 _Avoid_: Güvenlik sandbox'ı, session branch
 
 **Session branch**:
-Worktree oturumu oluşturulurken açılan, kullanıcıya ait Git branch'i. Session kaldırılması branch'i kaldırmaz.
+Worktree oturumu oluşturulurken açılan, kullanıcıya ait Git branch'i. Klasör oturumunda her Alt depoda aynı addır. Session kaldırılması branch'i kaldırmaz.
 
 **Base commit**:
-Çalışmanın başlangıcında seçilen commit; kayıtta `baseCommit` alanıdır. Çalışmanın toplam değişikliğini incelerken kullanılan sabit referanstır. Bilinmiyorsa uydurulmaz.
+Çalışmanın başlangıcında seçilen commit; kayıtta `baseCommit` alanıdır. Çalışmanın toplam değişikliğini incelerken kullanılan sabit referanstır. Bilinmiyorsa uydurulmaz. Klasör oturumunda tek bir base commit yoktur; her Alt depo worktree'si kendi commit'ini `worktrees` kaydında tutar.
 _Avoid_: HEAD, hareketli ana branch
 
 **Isolation**:

@@ -320,6 +320,18 @@ select:focus {
   font-family: ui-monospace, monospace;
   font-size: 12px;
 }
+.diff-repo + .diff-repo {
+  border-top: 1px solid var(--line);
+}
+.diff-repo-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
 .dl {
   padding: 0 14px;
   white-space: pre-wrap;

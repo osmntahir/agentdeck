@@ -63,15 +63,12 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
 
         <div className="radio-group">
           <label className="radio">
-            <input
-              type="radio"
-              disabled={project.kind === 'folder'}
-              checked={isolation === 'worktree'}
-              onChange={() => setIsolation('worktree')}
-            />
+            <input type="radio" checked={isolation === 'worktree'} onChange={() => setIsolation('worktree')} />
             <span>
               <strong>İzole</strong> —{' '}
-              {project.kind === 'folder' ? 'Git deposu gerektirir' : "kendi worktree'si ve branch'i"}
+              {project.kind === 'folder'
+                ? "alt klasörlerdeki her Git deposu için worktree ve branch"
+                : "kendi worktree'si ve branch'i"}
             </span>
           </label>
           <label className="radio">
@@ -84,8 +81,9 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
 
         {project.kind === 'folder' && (
           <p className="dialog-note muted">
-            Bu proje Git deposu değil. Oturumlar aynı klasörde çalışır; dosyalar birbirinden izole edilmez ve
-            Git diff kullanılamaz.
+            Bu proje Git deposu değil. Ortak oturum doğrudan klasörde çalışır. İzole oturum yalnız alt
+            klasörlerdeki Git depolarını kopyalar; depo dışındaki dosyalar izole kopyada bulunmaz. Diff her
+            depoyu ayrı gösterir.
           </p>
         )}
         {/* Yeni klasörde CLI'lar güven veya giriş onayı isteyebilir; bunu
