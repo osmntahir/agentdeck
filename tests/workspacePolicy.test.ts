@@ -20,3 +20,12 @@ test('yarım kalan CLI aynı kayıtta seçici veya açık konuşma kimliğiyle d
 test('bilerek biten, arşivli, bozuk dizin ve serbest program otomatik başlamaz', () => {
   for (const over of [{ lifecycle: 'exited' as const }, { lifecycle: 'live' as const }, { archivedAt: 1 }, { degraded: 'missing' }, { command: 'npm run deploy' }, { command: 'claude --dangerously-skip-permissions' }]) assert.equal(recoveryLaunch(session(over)), null)
 })
+
+test('bitmiş oturumda saklanmış exact resume hedefi bir kez otomatik açılır', () => {
+  const target = { mode: 'resume' as const, cli: 'grok', conversationId: '12345678-1234-1234-1234-123456789abc' }
+  assert.deepEqual(
+    recoveryLaunch(session({ lifecycle: 'exited', lastLaunch: target })),
+    { command: 'grok --resume 12345678-1234-1234-1234-123456789abc', mode: 'command' },
+  )
+  assert.equal(recoveryLaunch(session({ lifecycle: 'exited', lastLaunch: target, autoResumeAttempted: true })), null)
+})

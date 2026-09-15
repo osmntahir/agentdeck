@@ -1,3 +1,4 @@
+import { ProgramIcon } from './AgentMark'
 import { useEffect, useRef, useState } from 'react'
 import type { Isolation, Project } from '../../shared/types'
 import { PRESETS } from '../../shared/types'
@@ -75,13 +76,13 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
 
         <label>
           Program
-          <select value={presetIndex} onChange={(e) => setPresetIndex(Number(e.target.value))}>
+          <span className="program-choice"><ProgramIcon command={PRESETS[presetIndex].command} /><select aria-label="Program" value={presetIndex} onChange={(e) => setPresetIndex(Number(e.target.value))}>
             {PRESETS.map((preset, index) => (
               <option key={preset.label} value={index}>
                 {preset.label}
               </option>
             ))}
-          </select>
+          </select></span>
         </label>
 
         <div className="radio-group">

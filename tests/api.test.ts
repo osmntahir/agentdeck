@@ -6,6 +6,7 @@ import http from 'node:http'
 import { execFileSync, spawn } from 'node:child_process'
 import WebSocket from 'ws'
 import { startDaemon, type Daemon } from '../src/server/daemon'
+import { openCheckpointStore } from '../src/server/checkpoints'
 import { acquireDaemonLock } from '../src/server/lock'
 import { StateError } from '../src/server/store'
 import type { DiffResult, Project, SessionView, StateResponse } from '../src/shared/types'
@@ -2178,6 +2179,161 @@ test('çöküşte iki Run checkpoint i ayakta kalır ve orphaned oturumdan okunu
   }
 })
 
+test('daemon yeniden açılınca yarım kalan uygun oturumu bir kez CLI seçicisiyle geri açar', { timeout: 40000 }, async () => {
+  const dataDir = tempDir()
+  const repo = initRepo()
+  const home = tempDir()
+  const environmentFile = path.join(home, 'environment.json')
+  fs.writeFileSync(environmentFile, JSON.stringify({ HOME: home }), { mode: 0o600 })
+  fs.writeFileSync(path.join(home, '.bash_profile'), `claude() { printf '%s\n' "$*" >> "$HOME/launches"; sleep 300; }\n`)
+  const resumable = {
+    id: 'resume-me', projectId: 'p1', name: 'yarım Claude', command: 'claude', isolation: 'shared', cwd: repo,
+    branch: null, baseCommit: null, worktrees: [], lifecycle: 'live', exitCode: null, exitSignal: null,
+    createdAt: 1, endedAt: null, runId: 'before-crash', archivedAt: null, lastLaunch: { mode: 'command', command: 'claude' },
+  }
+  const missing = {
+    ...resumable, id: 'missing-cwd', name: 'eksik klasör', cwd: path.join(dataDir, 'yok'), runId: 'missing-before-crash',
+  }
+  const deliberatelyExited = {
+    ...resumable, id: 'finished', name: 'biten iş', lifecycle: 'exited', exitCode: 0, endedAt: 2, runId: 'finished-run',
+  }
+  fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({
+    schemaVersion: 2,
+    projects: [{ id: 'p1', name: 'p', path: repo, createdAt: 1 }],
+    sessions: [resumable, missing, deliberatelyExited],
+  }, null, 2))
+
+  const daemon = await startDaemon({ dataDir, port: 0, environmentFile })
+  try {
+    const api = client(daemon)
+    await waitFor(async () => fs.existsSync(path.join(home, 'launches')))
+    assert.deepEqual(fs.readFileSync(path.join(home, 'launches'), 'utf8').trim().split('\n'), ['--resume'])
+
+    const state = (await api.get<StateResponse>('/api/state')).body
+    const restored = state.sessions.find((session) => session.id === resumable.id)
+    const notRestored = state.sessions.find((session) => session.id === missing.id)
+    const exited = state.sessions.find((session) => session.id === deliberatelyExited.id)
+    assert.equal(restored?.lifecycle, 'live')
+    assert.notEqual(restored?.runId, resumable.runId, 'geri açma yeni bir Run üretir')
+    assert.deepEqual(restored?.lastLaunch, { mode: 'picker', cli: 'claude' })
+    assert.equal(notRestored?.lifecycle, 'orphaned', 'açılamayan cwd ölü kalır')
+    assert.equal(exited?.lifecycle, 'exited', 'bilerek bitmiş Run geri açılmaz')
+  } finally {
+    await daemon.close()
+  }
+
+  const again = await startDaemon({ dataDir, port: 0, environmentFile })
+  try {
+    const state = (await client(again).get<StateResponse>('/api/state')).body
+    assert.equal(state.sessions.find((session) => session.id === missing.id)?.lifecycle, 'orphaned')
+    assert.deepEqual(fs.readFileSync(path.join(home, 'launches'), 'utf8').trim().split('\n'), ['--resume'], 'başarısız aday ikinci kez otomatik denenmez')
+  } finally {
+    await again.close()
+    removeDir(dataDir)
+    removeDir(repo)
+    removeDir(home)
+  }
+})
+
+test('exited terminal checkpoint footer ından exact resume komutuyla geri açılır', { timeout: 40000 }, async () => {
+  const dataDir = tempDir()
+  const repo = initRepo()
+  const home = tempDir()
+  const environmentFile = path.join(home, 'environment.json')
+  const claudeConversation = '12345678-1234-1234-1234-123456789abc'
+  const agyConversation = 'abcdef12-3456-7890-abcd-ef1234567890'
+  fs.writeFileSync(environmentFile, JSON.stringify({ HOME: home }), { mode: 0o600 })
+  fs.writeFileSync(path.join(home, '.bash_profile'), [
+    'claude() { printf "claude:%s\n" "$*" >> "$HOME/launches"; sleep 300; }',
+    'agy() { printf "agy:%s\n" "$*" >> "$HOME/launches"; sleep 300; }',
+  ].join('\n'))
+
+  const claude = {
+    id: 'claude-session', projectId: 'p1', name: 'Claude', command: 'claude', isolation: 'shared', cwd: repo,
+    branch: null, baseCommit: null, worktrees: [], lifecycle: 'exited', exitCode: 0, exitSignal: null,
+    createdAt: 1, endedAt: 2, runId: 'claude-run', archivedAt: null, lastLaunch: { mode: 'command', command: 'claude' },
+  }
+  const agy = {
+    id: 'agy-session', projectId: 'p1', name: 'Antigravity', command: 'agy', isolation: 'shared', cwd: repo,
+    branch: null, baseCommit: null, worktrees: [], lifecycle: 'exited', exitCode: 0, exitSignal: null,
+    createdAt: 1, endedAt: 2, runId: 'agy-run', archivedAt: null, lastLaunch: { mode: 'command', command: 'agy' },
+  }
+  fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({
+    schemaVersion: 2,
+    projects: [{ id: 'p1', name: 'p', path: repo, createdAt: 1 }],
+    sessions: [claude, agy],
+  }, null, 2))
+  const checkpoints = openCheckpointStore(dataDir)
+  await Promise.all([
+    checkpoints.write({
+      sessionId: claude.id, runId: claude.runId,
+      text: `Resume this session with:\nclaude --resume ${claudeConversation}`,
+      scope: 'screen', cols: 120, rows: 32, sequence: 1, capturedAt: 1,
+    }),
+    checkpoints.write({
+      sessionId: agy.id, runId: agy.runId,
+      text: `Resume with -c (or command below):\nagy --conversation=${agyConversation}`,
+      scope: 'screen', cols: 120, rows: 32, sequence: 1, capturedAt: 1,
+    }),
+  ])
+
+  let daemon: Daemon | null = null
+  let again: Daemon | null = null
+  try {
+    daemon = await startDaemon({ dataDir, port: 0, environmentFile })
+    await waitFor(async () => fs.existsSync(path.join(home, 'launches')))
+    assert.deepEqual(
+      fs.readFileSync(path.join(home, 'launches'), 'utf8').trim().split('\n').sort(),
+      [`agy:--conversation=${agyConversation}`, `claude:--resume ${claudeConversation}`],
+    )
+    const restored = (await client(daemon).get<StateResponse>('/api/state')).body.sessions
+    assert.deepEqual(restored.map((session) => session.lifecycle), ['live', 'live'])
+    assert.deepEqual(restored.map((session) => session.lastLaunch), [
+      { mode: 'resume', cli: 'claude', conversationId: claudeConversation },
+      { mode: 'resume', cli: 'agy', conversationId: agyConversation },
+    ])
+    await daemon.close()
+    daemon = null
+
+    again = await startDaemon({ dataDir, port: 0, environmentFile })
+    const afterSecondStart = (await client(again).get<StateResponse>('/api/state')).body.sessions
+    assert.deepEqual(afterSecondStart.map((session) => session.lifecycle), ['exited', 'exited'])
+    assert.deepEqual(
+      fs.readFileSync(path.join(home, 'launches'), 'utf8').trim().split('\n').sort(),
+      [`agy:--conversation=${agyConversation}`, `claude:--resume ${claudeConversation}`],
+      'aynı saklı hedef ikinci kez otomatik çalıştırılmaz',
+    )
+  } finally {
+    await daemon?.close()
+    await again?.close()
+    removeDir(dataDir)
+    removeDir(repo)
+    removeDir(home)
+  }
+})
+
+test('canlı terminal footer ı exact resume hedefini state e yazar', { timeout: 30000 }, async () => {
+  const home = tempDir()
+  const environmentFile = path.join(home, 'environment.json')
+  const conversation = '12345678-1234-1234-1234-123456789abc'
+  fs.writeFileSync(environmentFile, JSON.stringify({ HOME: home }), { mode: 0o600 })
+  fs.writeFileSync(path.join(home, '.bash_profile'), `claude() { printf 'Resume this session with:\nclaude --resume ${conversation}\n'; sleep 300; }\n`)
+  try {
+    await withDaemon(async ({ api, projectId }) => {
+      const created = await api.post<SessionView>('/api/sessions', createBody(projectId, { command: 'claude', isolation: 'shared' }))
+      assert.equal(created.status, 200, JSON.stringify(created.body))
+      await waitFor(async () => {
+        const session = (await api.get<StateResponse>('/api/state')).body.sessions[0]
+        return session?.lastLaunch?.mode === 'resume'
+      })
+      const session = (await api.get<StateResponse>('/api/state')).body.sessions[0]
+      assert.deepEqual(session?.lastLaunch, { mode: 'resume', cli: 'claude', conversationId: conversation })
+    }, { environmentFile })
+  } finally {
+    removeDir(home)
+  }
+})
+
 test('fresh ve picker lastLaunch niyetini kaydeder; UUID üretmez', { timeout: 40000 }, async () => {
   const home = tempDir()
   const environmentFile = path.join(home, 'environment.json')
@@ -2324,6 +2480,23 @@ test('silme durdurması sürerken arşiv 409 operation_in_progress', { timeout: 
     assert.equal(archive.body.code, 'operation_in_progress')
     const removed = await deletion
     assert.equal(removed.status, 200, JSON.stringify(removed.body))
+  })
+})
+
+test('terminal onay beklediğinde attention görünür ve kullanıcı işlemiyle kapanır', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId, { command: "printf 'Proceed? [y/N]\\n'; sleep 300" }))
+    assert.equal(created.status, 200, JSON.stringify(created.body))
+    await waitFor(async () => {
+      const session = (await api.get<StateResponse>('/api/state')).body.sessions[0]
+      return session?.attention?.kind === 'approval'
+    }, 5000)
+    const attentive = (await api.get<StateResponse>('/api/state')).body.sessions[0]
+    assert.deepEqual(attentive?.attention && { kind: attentive.attention.kind, message: attentive.attention.message }, { kind: 'approval', message: 'İzin veya onay bekliyor' })
+
+    const stopped = await api.post<SessionView>(`/api/sessions/${created.body.id}/stop`, { expectedRunId: created.body.runId })
+    assert.equal(stopped.status, 200, JSON.stringify(stopped.body))
+    assert.equal(stopped.body.attention, null, 'Run bitince stale attention kalmaz')
   })
 })
 

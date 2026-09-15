@@ -7,6 +7,13 @@ export type Lifecycle = 'live' | 'exited' | 'orphaned'
 /** Yalnız canlı Run için anlamlıdır; sessizlik kullanıcı beklediğini kanıtlamaz. */
 export type Activity = 'active' | 'idle'
 
+/** Terminal kullanıcının yanıtını veya onayını bekliyorsa daemon'ın türettiği durum. */
+export interface TerminalAttention {
+  kind: 'approval' | 'question'
+  message: string
+  detectedAt: number
+}
+
 export interface Project {
   kind: 'git' | 'folder'
   id: string
@@ -57,6 +64,8 @@ export interface Session {
   runId: string | null
   archivedAt: number | null
   lastLaunch: LastLaunch | null
+  /** Bu saklı resume hedefi daemon açılışında bir kez otomatik denenmiş mi? */
+  autoResumeAttempted?: boolean
 }
 
 /** Diske yazılan kayıt. Activity, health ve preview buraya girmez. */
@@ -70,6 +79,8 @@ export interface PersistedState {
 export interface SessionView extends Session {
   /** Çalışan alt süreçten gözlenen ajan; yalnız sunum, konuşma kimliği değildir. */
   foregroundAgent?: string | null
+  /** Doğrulanabilir bir terminal onayı/sorusu kullanıcı girdisi bekliyor. */
+  attention: TerminalAttention | null
   activity: Activity | null
   lastActivityAt: number | null
   /** Kalan süreç grubu: Run'ın lideri çıktı ama grubunda hâlâ süreç var. */

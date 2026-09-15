@@ -28,6 +28,7 @@ function session(over: Partial<SessionView> = {}): SessionView {
     lastActivityAt: null,
     remainingProcessGroup: false,
     degraded: null,
+    attention: null,
     ...over,
   }
 }

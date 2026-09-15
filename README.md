@@ -190,11 +190,15 @@ Bilinçli olarak MVP dışında bırakılanlar:
 
 ## Bilinen sınırlar
 
-- **Daemon ölürse PTY'ler de ölür.** Worktree, branch ve diff diskte kaldığı
-  için iş kaybolmaz; kaybedilen ajanın bellek içi bağlamıdır. Kayıt `orphaned`
-  olur — ölüm saati ve çıkış kodu bilinmediği için uydurulmaz — ve yeniden
-  çalıştırılabilir. Sürecin daemon'dan bağımsız yaşaması isteniyorsa oturum
-  sahipliği bir multiplexer'a (tmux) taşınmalıdır.
+- **Daemon ölürse PTY'ler de ölür.** Worktree, branch, diff ve terminal
+  görüntüsü diskte kalır. Daemon açılışında son checkpoint ve canlı çıktıdaki
+  doğrulanmış “Resume…” footer'ı taranır. Claude, Codex, Gemini, Grok,
+  OpenCode ve Antigravity açık bir konuşma kimliği verdiyse arşivsiz oturum
+  aynı çalışma kopyasında doğrudan o konuşmayla yeniden açılır; `live`
+  Run'lar için kimlik yoksa CLI seçicisi kullanılabilir. Genel komutlar ve
+  kimliği olmayan bitmiş oturumlar otomatik çalışmaz. Başlatılamayan bir hedef
+  bir kez denenir ve tekrar döngüsüne girmez. Sürecin daemon'dan bağımsız
+  yaşaması isteniyorsa oturum sahipliği bir multiplexer'a (tmux) taşınmalıdır.
 - **Terminal ürün kabulü açık.** Ekran/scrollback replay ve checkpoint uygulanmıştır;
   gerçek tarayıcı render, mouse/paste/IME ve yoğun çıktı kabulü yapılmadı.
   Oturum panosu önizleme API’sine bağlıdır. Proje ekleme, kabuk başlatma, terminal girdisi, diff, arama ve durdurma akışı gerçek Chromium üzerinde doğrulandı; arşiv, diff kapsamları, komut çalıştırma, önceki Run, branch paneli ve kademeli proje silme derlenmiş arayüzle Electron/Chromium duman testinden geçti. Ajan CLI’larının ürün kabulü ayrı kalır.

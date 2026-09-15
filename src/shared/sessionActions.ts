@@ -27,7 +27,8 @@ export function sessionWorkCli(session: Pick<Session, 'command' | 'lastLaunch'>)
     return launchCli(last.cli)
   }
   const command = repeatLaunchCommand(session) ?? null
-  return launchCli(command) ?? pickerCli(command) ?? explicitResumeOf(command)?.cli ?? null
+  const explicit = explicitResumeOf(command)
+  return launchCli(command) ?? pickerCli(command) ?? (explicit ? launchCli(explicit.cli) : null)
 }
 
 function hasConversationCandidate(session: Pick<Session, 'command' | 'lastLaunch'>): boolean {

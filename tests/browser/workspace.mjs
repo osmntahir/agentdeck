@@ -1,0 +1,175 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { chromium } from 'playwright'
+import { startDaemon } from '../../dist/server/daemon.js'
+
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentdeck-browser-'))
+const repo = path.join(root, 'project')
+fs.mkdirSync(repo)
+const git = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' }).toString().trim()
+git('init', '-b', 'main')
+fs.writeFileSync(path.join(repo, 'README.md'), '# Browser fixture\n')
+git('add', '.')
+git('-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'fixture')
+const daemon = await startDaemon({ dataDir: path.join(root, 'data'), port: 0, serveWeb: true })
+const executablePath = process.env.CHROME_BIN || (fs.existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : undefined)
+let browser
+try {
+  const post = async (route, body) => {
+    const response = await fetch(`${daemon.url}/api/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agentdeck-Token': daemon.token }, body: JSON.stringify({ requestId: crypto.randomUUID(), ...body }) })
+    const value = await response.json(); assert.equal(response.status, 200, JSON.stringify(value)); return value
+  }
+  const project = await post('projects', { path: repo })
+  const sessions = []
+  for (let i = 1; i <= 3; i++) sessions.push(await post('sessions', { projectId: project.id, name: `Terminal ${i}`, command: "for i in $(seq 1 200); do echo history-line-$i; done; exec bash --noprofile --norc", isolation: 'shared' }))
+  browser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox'] })
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  const errors = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.setDefaultTimeout(10000)
+  await page.goto(`${daemon.url}/?token=${daemon.token}`)
+  await page.locator(`#session-row-${sessions[0].id}`).click()
+  await page.waitForSelector('.xterm-rows')
+  await page.waitForFunction(() => !document.querySelector('.terminal-status')?.textContent?.includes('Bağlanıyor'))
+  // Initial attachment must include scrollback, without using the history button.
+  await page.waitForFunction(() => ![...document.querySelectorAll('.terminal-status button')].some(b => b.textContent === 'Geçmiş'))
+  const screen = page.locator('.xterm-screen')
+  await screen.hover()
+  await page.mouse.wheel(0, -4000)
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('history-line-1'))
+  console.log('PASS: detail history scroll without history button')
+  await page.getByRole('button', { name: 'Branch yönetimi', exact: true }).click()
+  await page.getByLabel('Yeni branch oluştur', { exact: true }).check()
+  await page.getByRole('textbox', { name: 'Yeni branch adı' }).fill('feature/browser-check')
+  const create = page.getByRole('button', { name: 'Oluştur ve geç', exact: true })
+  assert(await create.isVisible()); assert(await create.isEnabled())
+  await create.click()
+  await page.waitForFunction(() => document.querySelector('.branch-trigger')?.textContent?.includes('feature/browser-check'))
+  assert.equal(git('branch', '--show-current'), 'feature/browser-check')
+  await page.getByRole('button', { name: 'Branch yönetimini kapat' }).click()
+  console.log('PASS: visible branch creation button creates and switches')
+  for (const s of sessions.slice(0, 2)) await page.getByRole('button', { name: `${s.name} oturumunu terminal grid'e ekle`, exact: true }).click()
+  await page.waitForFunction(() => document.querySelectorAll('.grid-panel .xterm').length === 2)
+  // Grid cursors must blink immediately, without focusing either terminal.
+  assert.equal(await page.locator('.grid-panel .xterm.focus').count(), 0)
+  await page.waitForFunction(() => document.querySelectorAll('.grid-panel .xterm-cursor').length === 2)
+  for (const off of [false, true, false]) {
+    await page.waitForFunction(off => {
+      if (document.documentElement.classList.contains('grid-cursor-off') !== off) return false
+      const cursors = [...document.querySelectorAll('.grid-panel .xterm-cursor')]
+      return cursors.length === 2 && cursors.every(cursor =>
+        (getComputedStyle(cursor).backgroundColor === 'rgba(0, 0, 0, 0)') === off)
+    }, off, { timeout: 2500 })
+  }
+  console.log('PASS: focused and unfocused grid cursors blink together')
+  await page.locator(`#session-row-${sessions[0].id}`).click()
+  assert.equal(await page.locator('.grid-panel .xterm').count(), 2)
+  assert.equal(await page.locator('.clean-topbar').count(), 0)
+  await page.getByRole('button', { name: '+ Yeni grid', exact: true }).click()
+  await page.getByRole('button', { name: `${sessions[2].name} oturumunu terminal grid'e ekle`, exact: true }).click()
+  await page.waitForFunction(() => document.querySelectorAll('.grid-panel .xterm').length === 1)
+  await page.locator(`#session-row-${sessions[0].id}`).click()
+  await page.waitForFunction(() => document.querySelectorAll('.grid-panel .xterm').length === 2)
+  assert.equal(await page.getByRole('button', { name: 'Grid 1', exact: true }).getAttribute('aria-pressed'), 'true')
+  await page.reload()
+  await page.getByRole('button', { name: /Terminal grid/ }).click()
+  await page.waitForFunction(() => document.querySelectorAll('.grid-panel .xterm').length === 2)
+  assert.equal(await page.getByRole('button', { name: 'Grid 2', exact: true }).count(), 1)
+  console.log('PASS: independent grids persist and sidebar navigates to containing grid')
+  for (const width of [900, 1500, 1100, 1280]) {
+    await page.setViewportSize({ width, height: 800 })
+    await page.waitForFunction(() => [...document.querySelectorAll('.term-host')].every(host => {
+      const screen = host.querySelector('.xterm-screen')?.getBoundingClientRect()
+      const box = host.getBoundingClientRect()
+      return screen && screen.width <= box.width && screen.height <= box.height && screen.height > box.height - 40
+    }))
+  }
+  const top = await page.locator('.grid-stage').boundingBox()
+  assert(top.y < 110, `Grid chrome too tall: ${top.y}`)
+  await page.locator('.grid-panel .xterm-screen').first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Böl / panel yerleşimi…' }).click()
+  await page.getByRole('button', { name: 'Yeni terminal · alta', exact: true }).click()
+  await page.getByLabel('Görev adı').fill('Split terminal')
+  await page.getByLabel('Program', { exact: true }).selectOption({ label: 'Kabuk' })
+  for (const label of ['Grok', 'OpenCode', 'Antigravity']) assert(await page.getByLabel('Program', { exact: true }).locator('option', { hasText: label }).count())
+  await page.getByRole('button', { name: 'Oturumu başlat', exact: true }).click()
+  await page.waitForFunction(() => document.querySelectorAll('.grid-panel .xterm').length === 3)
+  console.log('PASS: compact grid fits after resize; context menu creates split terminal')
+  await page.getByRole('button', { name: 'Ayarlar' }).click()
+  await page.getByLabel('Tema', { exact: true }).selectOption('forest')
+  await page.getByRole('button', { name: 'Bitti', exact: true }).click()
+  assert.equal(await page.locator('html').getAttribute('data-theme'), 'forest')
+  await page.locator('.project-head').first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Proje rengi…' }).click()
+  await page.getByLabel('Vurgu rengi').fill('#ff8800')
+  await page.getByRole('button', { name: 'Kaydet', exact: true }).click()
+  assert.equal(await page.locator('.grid-panel').first().evaluate(el => el.style.getPropertyValue('--project-color')), '#ff8800')
+  await page.locator('.grid-panel .xterm-screen').first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Terminal rengi…' }).click()
+  await page.getByLabel('Vurgu rengi').fill('#44bbff')
+  await page.getByRole('button', { name: 'Kaydet', exact: true }).click()
+  assert.equal(await page.locator('.grid-panel').first().evaluate(el => el.style.getPropertyValue('--project-color')), '#44bbff')
+  await page.screenshot({ path: '/tmp/agentdeck-workspace.png' })
+  // A real child process named claude exercises process detection and live tab updates.
+  const agentExecutable = path.join(root, 'claude')
+  fs.copyFileSync('/bin/sleep', agentExecutable)
+  fs.chmodSync(agentExecutable, 0o755)
+  const automatic = await post('sessions', { projectId: project.id, name: '', command: null, isolation: 'shared' })
+  await page.reload()
+  await page.getByRole('button', { name: `${automatic.name} oturumunu terminal grid'e ekle`, exact: true }).click()
+  const pane = page.locator(`.grid-panel[data-session-id="${automatic.id}"]`)
+  await page.waitForFunction(id => document.querySelector(`[data-session-id="${id}"] .terminal-status`)?.textContent?.includes('Kontrol sizde'), automatic.id)
+  await pane.locator('.xterm-screen').click()
+  await page.keyboard.type(`${agentExecutable} 30`)
+  await page.keyboard.press('Enter')
+  const liveName = `Claude Code ${automatic.id.slice(0, 6)}`
+  await page.waitForFunction(name => [...document.querySelectorAll('.dv-default-tab')].some(el => el.textContent?.includes(name)), liveName)
+  assert((await page.locator(`#session-row-${automatic.id}`).textContent()).includes(liveName))
+  await page.keyboard.press('Control+c')
+  await page.waitForFunction(name => [...document.querySelectorAll('.dv-default-tab')].some(el => el.textContent?.includes(name)), automatic.name)
+  assert((await page.locator(`#session-row-${automatic.id}`).textContent()).includes(automatic.name))
+  console.log('PASS: manual agent launch updates automatic sidebar/tab titles and exit restores shell title')
+  await page.addInitScript(() => {
+    window.testNotices = []
+    window.agentdeckDesktop = {
+      notify: async notice => { window.testNotices.push(notice) },
+      selectProjectFolder: async () => null,
+    }
+  })
+  await page.reload()
+  await page.getByRole('button', { name: 'Ayarlar' }).click()
+  await page.getByLabel('Bildirimler', { exact: false }).check()
+  await page.getByRole('button', { name: 'Test bildirimi gönder' }).click()
+  await page.waitForFunction(() => window.testNotices.length === 1)
+  await page.getByRole('button', { name: 'Bitti', exact: true }).click()
+  const attention = await post('sessions', {
+    projectId: project.id,
+    name: 'Onay bekleyen terminal',
+    command: "printf 'Proceed? [y/N]\n'; sleep 300",
+    isolation: 'shared',
+  })
+  await page.waitForFunction(id => window.testNotices.some(n => n.sessionId === id), attention.id)
+  await page.waitForFunction(() => [...document.querySelectorAll('.notification-toast')].some(el => el.textContent?.includes('müdahale gerekli')))
+  assert.equal(await page.locator('.notification-toast').filter({ hasText: 'müdahale gerekli' }).count(), 1)
+  await post(`sessions/${automatic.id}/stop`, { expectedRunId: automatic.runId })
+  await page.waitForFunction(id => window.testNotices.some(n => n.sessionId === id), automatic.id)
+  assert.equal(await page.evaluate(id => window.testNotices.filter(n => n.sessionId === id).length, automatic.id), 1)
+  // Hidden windows must keep polling when desktop notifications are enabled.
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await post(`sessions/${sessions[0].id}/stop`, { expectedRunId: sessions[0].runId })
+  await page.waitForFunction(id => window.testNotices.some(n => n.sessionId === id), sessions[0].id)
+  console.log('PASS: native notification bridge receives test and terminal-exit notifications, including hidden windows')
+  assert.deepEqual(errors, [])
+  console.log('PASS: themes, project color inheritance, terminal override; no browser errors')
+} finally {
+  await browser?.close()
+  await daemon.close()
+  fs.rmSync(root, { recursive: true, force: true })
+}

@@ -1,5 +1,6 @@
-export type IconName = 'more' | 'play' | 'stop' | 'branch' | 'copy' | 'archive' | 'trash' | 'grid' | 'terminal' | 'diff' | 'refresh' | 'plus' | 'back'
+export type IconName = 'settings' | 'more' | 'play' | 'stop' | 'branch' | 'copy' | 'archive' | 'trash' | 'grid' | 'terminal' | 'diff' | 'refresh' | 'plus' | 'back'
 const paths: Record<IconName, string> = {
+  settings: 'M4 7h16M4 17h16M8 4v6M16 14v6',
   more: 'M5 12h.01M12 12h.01M19 12h.01',
   play: 'm8 5 11 7-11 7Z', stop: 'M6 6h12v12H6Z',
   branch: 'M6 6v12M6 12c8 0 12 0 12-6M4 3h4v4H4ZM4 17h4v4H4ZM16 3h4v4h-4Z',

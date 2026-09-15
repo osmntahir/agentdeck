@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron')
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain, Notification } = require('electron')
 const { spawn } = require('node:child_process')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -145,6 +145,7 @@ function createWindow(token) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
       preload: path.join(__dirname, 'preload.js'),
     },
   })
@@ -216,6 +217,36 @@ if (!app.requestSingleInstanceLock()) {
         properties: ['openDirectory'],
       })
       return result.canceled ? null : (result.filePaths[0] ?? null)
+    })
+
+    const activeNotifications = new Set()
+    ipcMain.handle('agentdeck:notify', (event, notice) => {
+      if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame ||
+          new URL(event.senderFrame.url).origin !== BASE) throw new Error('Bildirim yalnız uygulama penceresinden gönderilebilir')
+      if (!notice || typeof notice.title !== 'string' || typeof notice.detail !== 'string' ||
+          typeof notice.sessionId !== 'string' || notice.title.length > 200 || notice.detail.length > 500 ||
+          notice.sessionId.length > 100) throw new Error('Bildirim içeriği geçersiz')
+      if (!Notification.isSupported()) throw new Error('Bu masaüstü ortamı bildirim desteklemiyor')
+      const notification = new Notification({ title: notice.title, body: notice.detail,
+        icon: path.join(__dirname, '..', 'build', 'icon.png'), silent: false, urgency: 'normal' })
+      activeNotifications.add(notification)
+      notification.once('close', () => activeNotifications.delete(notification))
+      notification.once('failed', (_event, error) => {
+        activeNotifications.delete(notification)
+        console.error('[agentdeck] Masaüstü bildirimi gösterilemedi:', error)
+      })
+      notification.once('click', () => {
+        if (!win || win.isDestroyed()) return
+        if (win.isMinimized()) win.restore()
+        win.show(); win.focus()
+        win.webContents.send('agentdeck:notification-click', notice.sessionId)
+      })
+      // Some platforms never emit close for expired notifications; bound retention.
+      if (activeNotifications.size > 20) {
+        const oldest = activeNotifications.values().next().value
+        oldest.close(); activeNotifications.delete(oldest)
+      }
+      notification.show()
     })
 
     buildMenu()

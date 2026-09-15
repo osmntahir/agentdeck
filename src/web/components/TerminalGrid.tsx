@@ -1,5 +1,5 @@
 import { BranchPicker } from './BranchPicker'
-import { projectStyle, usePreferences } from '../preferences'
+import { terminalStyle, usePreferences } from '../preferences'
 import { AgentMark } from './AgentMark'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
@@ -31,6 +31,7 @@ interface GridContextValue {
   onFocusHandled: () => void
   onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onOpen: (sessionId: string) => void
+  onLayout: (sessionId: string) => void
 }
 
 /** Paneller dockview portallarında çizilir; güncel state bağlamdan okunur. */
@@ -97,7 +98,7 @@ function TerminalPanel({ params, api }: IDockviewPanelProps) {
   // Gizli sekmede xterm açık tutulmaz; öne gelince ekran daemon'dan yeniden kurulur.
   if (!visible) return null
   return (
-    <div className="grid-panel colored-terminal" style={projectStyle(session.projectId, preferences)}>
+    <div className="grid-panel colored-terminal" data-session-id={session.id} style={terminalStyle(session, preferences)}>
       <TerminalPane
         key={`${grid.state.daemonId}:${session.id}:${session.runId}`}
         session={session}
@@ -107,6 +108,7 @@ function TerminalPanel({ params, api }: IDockviewPanelProps) {
         focusRequest={grid.focusRequest?.sessionId === session.id ? grid.focusRequest : undefined}
         onFocusHandled={grid.onFocusHandled}
         compact
+        onLayout={() => grid.onLayout(session.id)}
       />
     </div>
   )
@@ -168,6 +170,8 @@ const COMPONENTS = { terminal: TerminalPanel }
 const THEME: DockviewTheme = { ...themeDark, name: 'agentdeck', gap: 8 }
 
 interface Props {
+  gridId: string
+  onRefresh: () => Promise<void>
   state: StateResponse
   healthy: boolean
   /** Başka görünümden eklenmek istenen oturum; grid hazır olunca işlenir. */
@@ -178,7 +182,16 @@ interface Props {
   onPanelsChange: (sessionIds: string[]) => void
 }
 
-export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onOpen, onSessionMenu, onPanelsChange }: Props) {
+export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, onPendingHandled, onOpen, onSessionMenu, onPanelsChange }: Props) {
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>
+    const tick = () => {
+      document.documentElement.classList.toggle('grid-cursor-off', Math.floor(Date.now() / 600) % 2 === 1)
+      timer = setTimeout(tick, 600 - Date.now() % 600)
+    }
+    tick()
+    return () => { clearTimeout(timer); document.documentElement.classList.remove('grid-cursor-off') }
+  }, [])
   const [api, setApi] = useState<DockviewApi | null>(null)
   const [panelIds, setPanelIds] = useState<string[]>([])
   const [candidate, setCandidate] = useState<string | null>(null)
@@ -194,18 +207,18 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
   latest.current = { sessions: state.sessions, onPanelsChange }
 
   const onReady = ({ api: ready }: DockviewReadyEvent) => {
-    const saved = loadGridLayout()
+    const saved = loadGridLayout(gridId)
     if (saved) {
       try {
         ready.fromJSON(saved)
       } catch {
         // Okunamayan yerleşim oturumları etkilemez; grid boş başlar.
         ready.clear()
-        clearGridLayout()
+        clearGridLayout(gridId)
       }
     }
     const publish = () => {
-      saveGridLayout(ready.toJSON())
+      saveGridLayout(ready.toJSON(), gridId)
       setPanelIds(ready.panels.map((panel) => panel.id))
       latest.current.onPanelsChange(ready.panels.map((panel) => panel.id))
     }
@@ -233,6 +246,15 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
     onPendingHandled()
   }, [api, pendingAdd, healthy])
 
+  // Restored Dockview tabs keep their saved title unless explicitly refreshed.
+  useEffect(() => {
+    if (!api) return
+    for (const session of state.sessions) {
+      const panel = api.getPanel(session.id)
+      if (panel && panel.title !== session.name) panel.api.setTitle(session.name)
+    }
+  }, [api, state.sessions])
+
   // Silinen oturumun paneli kapanır; kaydı olmayan terminal gösterilmez.
   useEffect(() => {
     if (!api || !healthy) return
@@ -241,25 +263,11 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
   }, [api, healthy, state.sessions])
 
   return (
-    <GridContext.Provider value={{ state, healthy, onOpen, onSessionMenu, focusRequest, onFocusHandled: () => setFocusRequest(null) }}>
+    <GridContext.Provider value={{ state, healthy, onOpen, onSessionMenu, onLayout: setLayoutPanel, focusRequest, onFocusHandled: () => setFocusRequest(null) }}>
       <section className="terminal-grid">
-        <header className="workspace-header">
-          <div>
-            <span className="breadcrumb">Çalışma alanı</span>
-            <h1>Terminal grid</h1>
-          </div>
-          <div className="grid-header-meta">
-            <span className="grid-hint">
-              Sekmeyi sürükleyip bir panelin kenarına bırakın; aradaki çizgiyle boyutlandırın.
-            </span>
-            <span className="grid-count">
-              {count} / {MAX_GRID_PANELS} terminal
-            </span>
-          </div>
-        </header>
         {panelIds.length > 0 && (
           <div className="grid-panel-navigation" role="toolbar" aria-label="Grid terminalleri" ref={navigation}>
-            <span>Oklarla seç · Enter ile terminale geç</span>
+            <span>{count}/{MAX_GRID_PANELS}</span>
             {panelIds.map((id) => (
               <button
                 key={id}
@@ -295,10 +303,8 @@ export function TerminalGrid({ state, healthy, pendingAdd, onPendingHandled, onO
             ))}
           </div>
         )}
-        {candidateId && <div className="grid-layout-action">
-          <button type="button" onClick={() => setLayoutPanel(candidateId)}>Seçilen panelin yerleşimi</button>
-        </div>}
-        {layoutPanel && api && <GridLayoutDialog api={api} panelId={layoutPanel} sessions={state.sessions}
+
+        {layoutPanel && api && <GridLayoutDialog projects={state.projects} healthy={healthy} onRefresh={onRefresh} api={api} panelId={layoutPanel} sessions={state.sessions}
           onClose={() => setLayoutPanel(null)} />}
         {notice && (
           <div className="error" role="alert">

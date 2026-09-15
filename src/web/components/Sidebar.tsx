@@ -1,5 +1,7 @@
+import { ColorDialog } from './ColorDialog'
+import { ActionMenu, type MenuPosition } from './ActionMenu'
 import { inProjectNavigation } from '../../shared/workspacePolicy'
-import { projectStyle, usePreferences, updatePreferences } from '../preferences'
+import { projectStyle, terminalStyle, usePreferences, updatePreferences } from '../preferences'
 import { AgentMark } from './AgentMark'
 import { Icon } from './Icon'
 import { useState } from 'react'
@@ -57,6 +59,8 @@ export function Sidebar({
   onAddToGrid,
 }: Props) {
   const preferences = usePreferences()
+  const [colorProject, setColorProject] = useState<{ id: string; name: string } | null>(null)
+  const [projectMenu, setProjectMenu] = useState<{ id: string; name: string; position: MenuPosition } | null>(null)
   const [colorError, setColorError] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [rowFocus, setRowFocus] = useState<string | null>(null)
@@ -95,7 +99,7 @@ export function Sidebar({
           const owned = state.sessions.filter((s) => s.projectId === project.id)
           return (
             <div key={project.id} className="project colored-project" style={projectStyle(project.id, preferences)}>
-              <div className="project-head">
+              <div className="project-head" onContextMenu={e => { e.preventDefault(); setProjectMenu({ id: project.id, name: project.name, position: { x: e.clientX, y: e.clientY, origin: e.currentTarget } }) }}>
                 <label className="project-color" title={`${project.name} proje rengi`}><input type="color" aria-label={`${project.name} proje rengi`} value={preferences.colors[project.id] ?? '#9aaad4'} onChange={e => {
                   try { updatePreferences({ colors: { ...preferences.colors, [project.id]: e.target.value } }); setColorError(null) }
                   catch { setColorError('Proje rengi kaydedilemedi.') }
@@ -181,6 +185,8 @@ export function Sidebar({
         })}
       </div>
 
+      {projectMenu && <ActionMenu position={projectMenu.position} onClose={() => setProjectMenu(null)} actions={[{ label: 'Proje rengi…', icon: 'settings', run: () => setColorProject(projectMenu) }]} />}
+      {colorProject && <ColorDialog {...colorProject} onClose={() => setColorProject(null)} />}
       {colorError && <p className="error">{colorError}</p>}
       <OrphanList scan={orphans} onRefresh={onRefreshOrphans} />
 
@@ -280,8 +286,9 @@ function SessionRow({
   onAddToGrid: () => void
   onMenu: (event: React.MouseEvent<HTMLElement>) => void
 }) {
+  const preferences = usePreferences()
   return (
-    <div className="session-row-wrap" onContextMenu={onMenu}>
+    <div style={terminalStyle(session, preferences)} className="session-row-wrap" onContextMenu={onMenu}>
       <button
         className={`session-row${active ? ' active' : ''}`}
         tabIndex={tabbable ? 0 : -1}

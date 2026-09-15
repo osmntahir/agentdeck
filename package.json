@@ -12,7 +12,8 @@
     "start": "node dist/server/index.js",
     "app": "npm run build && node scripts/launch.mjs",
     "install-desktop": "node scripts/install-desktop.mjs",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "test:browser": "npm run build && node tests/browser/workspace.mjs"
   },
   "dependencies": {
     "@xterm/addon-serialize": "0.14.0",
@@ -33,6 +34,7 @@
     "@xterm/xterm": "^6.0.0",
     "concurrently": "^10.0.5",
     "electron": "^44.3.0",
+    "playwright": "1.63.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "tsx": "^4.23.13",

@@ -7,9 +7,10 @@ export function inProjectNavigation(session: SessionView): boolean {
   return session.archivedAt === null && (session.lifecycle === 'live' || session.remainingProcessGroup)
 }
 
-/** Yalnız daemon kaybıyla yarım kalan işler; genel programlar otomatik tekrar edilmez. */
+/** Kesilmiş işler veya doğrulanmış açık konuşma kimliği olan eski Run'lar; genel komutlar tekrar edilmez. */
 export function recoveryLaunch(session: SessionView): { command: string | null; mode: 'command' | 'picker' } | null {
-  if (session.lifecycle !== 'orphaned' || session.archivedAt !== null || session.degraded) return null
+  const exactResume = session.lastLaunch?.mode === 'resume' && session.autoResumeAttempted !== true
+  if ((session.lifecycle !== 'orphaned' && !exactResume) || session.archivedAt !== null || session.degraded) return null
   const command = repeatLaunchCommand(session)
   if (command === null) return { command: null, mode: 'command' }
   if (command !== undefined && explicitResumeOf(command)) return { command, mode: 'command' }

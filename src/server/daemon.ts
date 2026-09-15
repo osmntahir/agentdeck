@@ -1,3 +1,4 @@
+import { sessionDisplayName } from '../shared/sessionName'
 import { readGitWorkspace, switchWorkspaceBranch } from './branchControl'
 import http from 'node:http'
 import path from 'node:path'
@@ -19,6 +20,9 @@ import { createTerminalHost, type TerminalEvent, type PreviewResult } from './te
 import { chunkText, type SnapshotScope } from './terminalState'
 import { readUserEnvironment } from './env'
 import { lastLaunchFor, repeatLaunchCommand } from '../shared/launchPolicy'
+import { resumeTargetFromTerminalText } from '../shared/resumeDetection'
+import { terminalAttentionFromText } from '../shared/terminalAttention'
+import { recoveryLaunch } from '../shared/workspacePolicy'
 import {
   commandLabel,
   type DiffScope,
@@ -29,6 +33,7 @@ import {
   type RepoDiff,
   type Session,
   type SessionView,
+  type TerminalAttention,
   type SessionWorktree,
 } from '../shared/types'
 
@@ -37,6 +42,10 @@ const PROTOCOL_VERSION = 2
 /** Başlangıç rezervasyonları (spec §4). Fazla legacy kayıt kesilmez; create durur. */
 const MAX_SESSIONS = 256
 const MAX_LIVE_RUNS = 32
+/** Açılışta çok sayıda CLI'ın aynı anda profil/önbellek açmasını önler. */
+const STARTUP_RESTORE_CONCURRENCY = 3
+/** Kısa devam çıktısı soru gibi görünse de bildirim oluşturmaz. */
+const ATTENTION_SETTLE_MS = 800
 
 /** Silme onayı daemon ömrüne bağlıdır ve 60 sn sonra düşer. */
 const CONFIRMATION_TTL_MS = 60_000
@@ -248,7 +257,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const token = store.token()
   // Ekran modeli ayrı bir iş parçacığında yaşar; HTTP/Git kontrol işleri onun
   // ayrıştırma yüküyle bloke olmaz (spec §4).
-  const host = createTerminalHost({ checkpoints: openCheckpointStore(options.dataDir) })
+  const checkpoints = openCheckpointStore(options.dataDir)
+  const host = createTerminalHost({ checkpoints })
   const sessionLocks = createExclusiveLocks()
   const gitQueues = createSerialQueues()
   /** Diff ve branch okuması HTTP kontrol işlerini boğmaz: aynı anda en çok iki Git işi (spec §5). */
@@ -303,9 +313,12 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   function sessionView(session: Session): SessionView {
     const live = sessions.activity(session.id)
     const cwdProblem = directoryProblem(session.cwd)
+    const foregroundAgent = sessions.foregroundAgent(session.id)
     return {
       ...session,
-      foregroundAgent: sessions.foregroundAgent(session.id),
+      name: sessionDisplayName(session, foregroundAgent),
+      foregroundAgent,
+      attention: terminalAttention(session.id, session.runId),
       activity: live?.activity ?? null,
       lastActivityAt: live?.lastActivityAt ?? null,
       remainingProcessGroup: sessions.hasLingeringGroup(session.id),
@@ -320,6 +333,78 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
   function findSession(id: string): Session | undefined {
     return store.get().sessions.find((s) => s.id === id)
+  }
+
+  const attentionBySession = new Map<string, { runId: string; attention: TerminalAttention }>()
+  const pendingAttention = new Map<string, NodeJS.Timeout>()
+
+  function terminalAttention(sessionId: string, runId: string | null): TerminalAttention | null {
+    const entry = attentionBySession.get(sessionId)
+    return entry && entry.runId === runId ? entry.attention : null
+  }
+
+  function clearTerminalAttention(sessionId: string, runId?: string): void {
+    if (runId) {
+      const timer = pendingAttention.get(runId)
+      if (timer) clearTimeout(timer)
+      pendingAttention.delete(runId)
+    }
+    const current = attentionBySession.get(sessionId)
+    if (!current || runId === undefined || current.runId === runId) attentionBySession.delete(sessionId)
+  }
+
+  function scheduleTerminalAttention(sessionId: string, runId: string, tail: string): void {
+    const candidate = terminalAttentionFromText(tail)
+    const active = terminalAttention(sessionId, runId)
+    if (!candidate) {
+      clearTerminalAttention(sessionId, runId)
+      return
+    }
+    if (active && active.kind === candidate.kind && active.message === candidate.message) return
+    clearTerminalAttention(sessionId, runId)
+    const timer = setTimeout(() => {
+      pendingAttention.delete(runId)
+      // Timer boyunca yeni çıktı geldiyse yalnız güncel tail değerlendirilir.
+      const current = terminalAttentionFromText(resumeOutputTails.get(runId) ?? '')
+      if (!current || !sessions.isLive(sessionId, runId)) return
+      attentionBySession.set(sessionId, { runId, attention: { ...current, detectedAt: Date.now() } })
+    }, ATTENTION_SETTLE_MS)
+    timer.unref?.()
+    pendingAttention.set(runId, timer)
+  }
+
+  /** Resume footer'ı parçalı PTY çıktısında bölünebilir; son 8 KiB yeterlidir. */
+  const resumeOutputTails = new Map<string, string>()
+  const observedResumeCommands = new Map<string, string>()
+  const observedResumeTargets = new Map<string, NonNullable<ReturnType<typeof resumeTargetFromTerminalText>>>()
+
+  function rememberResumeTarget(sessionId: string, runId: string, target: NonNullable<ReturnType<typeof resumeTargetFromTerminalText>>): void {
+    void store.commit((draft) => {
+      const session = draft.sessions.find((entry) => entry.id === sessionId)
+      // Eski Run'ın çıktısı yeni Run'ın konuşma hedefini değiştiremez.
+      if (!session || session.runId !== runId) return
+      session.lastLaunch = { mode: 'resume', cli: target.cli, conversationId: target.conversationId }
+      delete session.autoResumeAttempted
+    }).catch(() => {
+      // Store serviceError'u taşır; canlı PTY sırf hedef kaydedilemedi diye ölmez.
+    })
+  }
+
+  function persistObservedResumeTarget(sessionId: string, runId: string): void {
+    const target = observedResumeTargets.get(runId)
+    if (target) rememberResumeTarget(sessionId, runId, target)
+  }
+
+  function recordTerminalOutput(sessionId: string, runId: string, chunk: string): void {
+    host.feed(runId, chunk)
+    const tail = `${resumeOutputTails.get(runId) ?? ''}${chunk}`.slice(-8192)
+    resumeOutputTails.set(runId, tail)
+    scheduleTerminalAttention(sessionId, runId, tail)
+    const target = resumeTargetFromTerminalText(tail)
+    if (!target || observedResumeCommands.get(runId) === target.command) return
+    observedResumeCommands.set(runId, target.command)
+    observedResumeTargets.set(runId, target)
+    rememberResumeTarget(sessionId, runId, target)
   }
 
   /**
@@ -337,6 +422,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
   /** Yeni Run için sıralı ekran modelini açar; PTY doğmadan önce hazırdır. */
   function openTerminal(sessionId: string, runId: string): void {
+    clearTerminalAttention(sessionId)
     host.open({
       sessionId,
       runId,
@@ -352,6 +438,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
   /** Bir Run'ın gözlenen çıkışını kalıcı kayda yazar. */
   function recordExit(sessionId: string, exit: sessions.RunExit): void {
+    clearTerminalAttention(sessionId, exit.runId)
+    persistObservedResumeTarget(sessionId, exit.runId)
+    resumeOutputTails.delete(exit.runId)
+    observedResumeCommands.delete(exit.runId)
+    observedResumeTargets.delete(exit.runId)
     // Çıkışta işlenmiş son çıktı checkpoint'e yazılır; sonra model bırakılır.
     const terminalClosed = host.close(exit.runId)
     const commit = store
@@ -719,7 +810,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
             command: program,
             cwd,
             userEnv,
-            onData: (chunk) => host.feed(runId, chunk),
+            onData: (chunk) => recordTerminalOutput(sid, runId, chunk),
             onExit: (exit) => recordExit(sid, exit),
           })
         } catch (err) {
@@ -767,6 +858,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           }
           throw new HttpError(503, 'persistence', `Oturum kaydedilemedi: ${(err as Error).message}`, detail)
         }
+        persistObservedResumeTarget(sid, runId)
         await host.publish(sid, runId)
         return session
       })
@@ -873,6 +965,62 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
   })
 
+  /** Yeni PTY doğurur ve yalnız kalıcı kayıt başarıyla yazılırsa canlı olarak yayımlar. */
+  async function startRun(
+    current: Session,
+    command: string | null,
+    userEnv: Record<string, string>,
+    lastLaunch: LastLaunch,
+    autoResumeAttempted = false,
+  ): Promise<Session> {
+    // cwd eksikse yeni Run yok: dizin yaratma veya shared fallback yok.
+    if (dirIdentityOf(current.cwd) === null) {
+      throw new HttpError(400, 'cwd_missing', `Çalışma dizini yok: ${current.cwd}`)
+    }
+
+    const runId = crypto.randomBytes(16).toString('hex')
+    openTerminal(current.id, runId)
+    try {
+      sessions.spawn({
+        sessionId: current.id,
+        runId,
+        command,
+        cwd: current.cwd,
+        userEnv,
+        onData: (chunk) => recordTerminalOutput(current.id, runId, chunk),
+        onExit: (exit) => recordExit(current.id, exit),
+      })
+    } catch (err) {
+      await host.discard(current.id, runId)
+      throw new HttpError(500, 'spawn_failed', `Run başlatılamadı: ${(err as Error).message}`)
+    }
+
+    try {
+      await store.commit((draft) => {
+        const target = draft.sessions.find((s) => s.id === current.id)
+        if (!target) throw new HttpError(404, 'not_found', 'Oturum yok')
+        target.lifecycle = 'live'
+        target.runId = runId
+        target.exitCode = null
+        target.exitSignal = null
+        target.endedAt = null
+        target.lastLaunch = lastLaunch
+        if (autoResumeAttempted) target.autoResumeAttempted = true
+        else delete target.autoResumeAttempted
+      })
+    } catch (err) {
+      await sessions.stop(current.id)
+      await host.discard(current.id, runId)
+      if (err instanceof HttpError) throw err
+      throw new HttpError(503, 'persistence', `Yeni Run kaydedilemedi: ${(err as Error).message}`)
+    }
+    // PTY çok hızlı footer yazdıysa, artık kalıcı Run kimliğiyle ilişkilendirilebilir.
+    persistObservedResumeTarget(current.id, runId)
+    // Yeni Run kayda girdi: saklama sınırı ancak şimdi eski kayıtları budar.
+    await host.publish(current.id, runId)
+    return findSession(current.id) as Session
+  }
+
   /**
    * Mevcut çalışma kopyasında yeni Run. Canlı iş önce doğrulanmış biçimde
    * durdurulur; cwd yoksa yeni Run açılmaz. Başarılı Run lastLaunch'a yazılır,
@@ -921,47 +1069,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
             })
           }
 
-          // cwd eksikse yeni Run yok: dizin yaratma veya shared fallback yok.
-          if (dirIdentityOf(current.cwd) === null) {
-            throw new HttpError(400, 'cwd_missing', `Çalışma dizini yok: ${current.cwd}`)
-          }
-
-          const runId = crypto.randomBytes(16).toString('hex')
-          openTerminal(current.id, runId)
-          try {
-            sessions.spawn({
-              sessionId: current.id,
-              runId,
-              command,
-              cwd: current.cwd,
-              userEnv,
-              onData: (chunk) => host.feed(runId, chunk),
-              onExit: (exit) => recordExit(current.id, exit),
-            })
-          } catch (err) {
-            await host.discard(current.id, runId)
-            throw new HttpError(500, 'spawn_failed', `Yeniden başlatılamadı: ${(err as Error).message}`)
-          }
-
-          try {
-            await store.commit((draft) => {
-              const target = draft.sessions.find((s) => s.id === current.id)
-              if (!target) return
-              target.lifecycle = 'live'
-              target.runId = runId
-              target.exitCode = null
-              target.exitSignal = null
-              target.endedAt = null
-              target.lastLaunch = intentFor(current, command)
-            })
-          } catch (err) {
-            await sessions.stop(current.id)
-            await host.discard(current.id, runId)
-            throw new HttpError(503, 'persistence', `Yeni Run kaydedilemedi: ${(err as Error).message}`)
-          }
-          // Yeni Run kayda girdi: saklama sınırı ancak şimdi eski kayıtları budar.
-          await host.publish(current.id, runId)
-          return findSession(current.id) as Session
+          return startRun(current, command, userEnv, intentFor(current, command))
         },
       )
       res.json(sessionView(findSession(session.id) ?? session))
@@ -970,6 +1078,88 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     } finally {
       held.release()
     }
+  }
+
+  /** Checkpoint'teki doğrulanmış footer, eski Run'a aitse yalnız o Run'ın hedefini günceller. */
+  async function backfillResumeTargetsFromCheckpoints(): Promise<void> {
+    const candidates = store.get().sessions.filter((session) =>
+      session.archivedAt === null && session.runId !== null && session.lastLaunch?.mode !== 'resume',
+    )
+    const limiter = createLimiter(2)
+    await Promise.all(candidates.map((session) => limiter.run(async () => {
+      const runId = session.runId as string
+      const saved = await checkpoints.read(session.id, runId)
+      if (saved.state !== 'ready') return
+      const target = resumeTargetFromTerminalText(saved.checkpoint.text)
+      if (!target) return
+      await store.commit((draft) => {
+        const current = draft.sessions.find((entry) => entry.id === session.id)
+        if (!current || current.runId !== runId) return
+        current.lastLaunch = { mode: 'resume', cli: target.cli, conversationId: target.conversationId }
+        delete current.autoResumeAttempted
+      })
+    }).catch((err) => {
+      console.warn(`[agentdeck] terminal geçmişinden resume hedefi okunamadı (${session.id}): ${(err as Error).message}`)
+    })))
+  }
+
+  /** Hedef yazılmadan önce işaretlenir; spawn/env hatası sonraki açılışta döngü oluşturmaz. */
+  async function markAutoResumeAttempted(session: Session): Promise<void> {
+    await store.commit((draft) => {
+      const current = draft.sessions.find((entry) => entry.id === session.id)
+      if (!current || current.runId !== session.runId) return
+      current.autoResumeAttempted = true
+    })
+  }
+
+  /**
+   * Kesilmiş canlı Run'lar ile checkpoint'ten açık konuşma kimliği bulunan eski
+   * Run'lar yeni PTY olarak geri açılır. Genel komutlar ve kimliği olmayan
+   * bitmiş işler aday değildir.
+   */
+  async function restoreResumableSession(sessionId: string, interrupted: ReadonlySet<string>): Promise<void> {
+    const held = sessionLocks.tryAcquire(sessionId)
+    if (!held) return
+    try {
+      const current = findSession(sessionId)
+      if (!current || current.archivedAt !== null || current.runId === null || current.lifecycle === 'live') return
+      const hasInterruptedRun = interrupted.has(current.id)
+      const hasSavedResume = current.lastLaunch?.mode === 'resume' && current.autoResumeAttempted !== true
+      if (!hasInterruptedRun && !hasSavedResume) return
+
+      const recovery = recoveryLaunch(sessionView(current))
+      if (!recovery) return
+      if (sessions.liveCount() >= MAX_LIVE_RUNS) {
+        console.warn(`[agentdeck] otomatik geri açma atlandı (canlı Run sınırı): ${current.id}`)
+        return
+      }
+
+      const nextLastLaunch = current.lastLaunch?.mode === 'resume' && recovery.mode === 'command'
+        ? current.lastLaunch
+        : lastLaunchFor(recovery.mode, recovery.command)
+      if (!nextLastLaunch) return
+      await markAutoResumeAttempted(current)
+      await startRun(current, recovery.command, userEnvironment(), nextLastLaunch, true)
+    } catch (err) {
+      // İşaret kalıcıdır: açılış hatası aynı eski hedefi yeniden çalıştırmaz.
+      console.warn(`[agentdeck] oturum otomatik geri açılamadı (${sessionId}): ${(err as Error).message}`)
+    } finally {
+      held.release()
+    }
+  }
+
+  async function restoreResumableSessions(): Promise<void> {
+    await backfillResumeTargetsFromCheckpoints()
+    const interrupted = new Set(store.interruptedSessionIds())
+    const candidates = new Set([
+      ...interrupted,
+      ...store.get().sessions
+        .filter((session) => session.archivedAt === null && session.lastLaunch?.mode === 'resume' && session.autoResumeAttempted !== true)
+        .map((session) => session.id),
+    ])
+    if (candidates.size === 0) return
+    const limiter = createLimiter(STARTUP_RESTORE_CONCURRENCY)
+    await Promise.all([...candidates].map((id) => limiter.run(() => restoreResumableSession(id, interrupted))))
   }
 
   app.post('/api/sessions/:id/restart', async (req, res) => {
@@ -1830,6 +2020,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           sendJson({ type: 'error', code: 'input_too_large', message: 'Girdi parçası 64 KiB tavanını aşıyor' })
           return
         }
+        clearTerminalAttention(sessionId as string, runId)
         sessions.write(sessionId as string, msg.data)
         return
       }
@@ -1895,6 +2086,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         (scan.unreadable.length > 0 ? ` (okunamayan dizin: ${scan.unreadable.length})` : ''),
     )
   }
+
+  await restoreResumableSessions()
 
   let closed: Promise<void> | null = null
   return {

@@ -13,6 +13,8 @@ export function BranchPicker({ session, healthy }: { session: SessionView; healt
   const [target, setTarget] = useState('')
   const [create, setCreate] = useState(false)
   const root = useRef<HTMLDivElement>(null)
+  const popover = useRef<HTMLDialogElement>(null)
+  useEffect(() => { if (open) popover.current?.showModal() }, [open])
   const trigger = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     let cancelled = false; let timer: ReturnType<typeof setTimeout>
@@ -40,8 +42,8 @@ export function BranchPicker({ session, healthy }: { session: SessionView; healt
   const repo = data?.repos.find(item => item.path === repoPath) ?? data?.repos[0]
   return <div className="branch-control" ref={root} onKeyDown={e => { if (e.key === 'Escape' && open) { e.stopPropagation(); setOpen(false); trigger.current?.focus() } }}>
     <button ref={trigger} className="branch-trigger" title="Git branch ve çalışma alanı" aria-label="Branch yönetimi" aria-expanded={open} onClick={() => setOpen(!open)}><Icon name="branch" /><span>{repo ? repo.branch ?? `HEAD ${repo.head?.slice(0, 7) ?? 'yok'}` : error ? 'Git okunamadı' : data ? 'Git yok' : 'Git…'}</span>{repo?.dirty && <span className="dirty-dot" title="Kaydedilmemiş değişiklikler">●</span>}</button>
-    {open && <div className="branch-popover">
-      <header><strong>Git çalışma alanı</strong><button title="Git durumunu yenile" aria-label="Git durumunu yenile" onClick={() => setRevision(n => n + 1)}><Icon name="refresh" /></button></header>
+    {open && <dialog ref={popover} className="branch-popover" aria-label="Git çalışma alanı" onCancel={e => { e.preventDefault(); setOpen(false); trigger.current?.focus() }}>
+      <header><strong>Git çalışma alanı</strong><button aria-label="Branch yönetimini kapat" onClick={() => setOpen(false)}>×</button><button title="Git durumunu yenile" aria-label="Git durumunu yenile" onClick={() => setRevision(n => n + 1)}><Icon name="refresh" /></button></header>
       <code className="workspace-path">{session.cwd}</code>
       {data && data.repos.length > 1 && <label>Depo<select value={repo?.path} onChange={e => { setRepoPath(e.target.value); setTarget('') }}>{data.repos.map(item => <option key={item.path}>{item.path}</option>)}</select></label>}
       {repo && <><p className="review-note">{repo.dirty ? 'Değişiklikler var · önce commit veya stash yapın.' : 'Çalışma ağacı temiz.'} {session.isolation === 'shared' && 'Branch değişikliği bu klasördeki tüm terminalleri etkiler.'}</p>
@@ -58,6 +60,6 @@ export function BranchPicker({ session, healthy }: { session: SessionView; healt
       {data?.truncated && <p className="error">Depo listesi eksik.</p>}
       {data?.repos.length === 0 && <p className="muted">Bu çalışma alanında Git deposu yok.</p>}
       {error && <p className="error" role="alert">{error}</p>}
-    </div>}
+    </dialog>}
   </div>
 }

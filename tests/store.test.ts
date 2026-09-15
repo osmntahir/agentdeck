@@ -142,6 +142,10 @@ test('önceki daemon canlı bıraktıysa kayıt orphaned olur, ölüm bilgisi uy
     assert.equal(s.exitSignal, null)
     assert.equal(s.endedAt, null, 'kurtarma saati ölüm saati gibi yazılmaz')
     assert.equal(s.runId, 'r1', 'kayıtlı runId korunur')
+    assert.deepEqual(store.interruptedSessionIds(), ['a1'], 'yalnız bu açılışta otomatik geri açma adayıdır')
+    const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')) as PersistedState
+    assert.equal(onDisk.sessions[0]?.lifecycle, 'orphaned', 'başarısız geri açma tekrar denenmesin diye durum kalıcılaşır')
+    assert.deepEqual(openStore(dir).interruptedSessionIds(), [], 'aynı orphaned kayıt sonraki açılışta yeniden aday olmaz')
   } finally {
     removeDir(dir)
   }

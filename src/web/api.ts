@@ -225,7 +225,3 @@ export const getGitWorkspaces = (id: string, branches = false) =>
   call<import('../shared/types').GitWorkspaces>(`/api/sessions/${id}/git?branches=${branches ? '1' : '0'}`)
 export const switchBranch = (id: string, input: { repo: string; branch: string; create: boolean; expectedHead: string | null; expectedBranch: string | null; expectedRunId: string | null }) =>
   call<import('../shared/types').GitWorkspace>(`/api/sessions/${id}/git/switch`, { method: 'POST', body: JSON.stringify(input) })
-
-/** Aynı orphan Run'ı iki pencere aynı anda geri açsa da sunucu tek sonuç üretir. */
-export const recoverSession = (session: SessionView, intent: { command: string | null; mode: 'command' | 'picker' }) =>
-  call<SessionView>(`/api/sessions/${session.id}/launch`, { method: 'POST', body: JSON.stringify({ ...intent, expectedRunId: session.runId, requestId: `recover-${session.id}-${session.runId ?? 'legacy'}` }) })

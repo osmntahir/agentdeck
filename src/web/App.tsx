@@ -1,9 +1,10 @@
+import { ColorDialog } from './components/ColorDialog'
 import { ActionMenu, type MenuAction, type MenuPosition } from './components/ActionMenu'
 import { Icon } from './components/Icon'
 import { AgentMark } from './components/AgentMark'
 import { BranchPicker } from './components/BranchPicker'
 import { SettingsDialog } from './components/SettingsDialog'
-import { usePreferences, projectStyle } from './preferences'
+import { usePreferences, terminalStyle } from './preferences'
 import { useWorkspaceLifecycle } from './useWorkspaceLifecycle'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as api from './api'
@@ -16,7 +17,7 @@ import { DiffView } from './components/DiffView'
 import { NewSessionDialog } from './components/NewSessionDialog'
 import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
-import { savedGridSessionIds } from './gridLayout'
+import { loadGridWorkspaces, saveGridWorkspaces, clearGridLayout, savedGridSessionIds } from './gridLayout'
 import { createStatePoller, pollPreviewIds } from '../shared/statePoll'
 import { sessionWorkActions } from '../shared/sessionActions'
 import {
@@ -65,6 +66,10 @@ const EMPTY: StateResponse = {
 
 export function App() {
   const preferences = usePreferences()
+  const notificationsEnabled = useRef(preferences.notifications)
+  notificationsEnabled.current = preferences.notifications
+  useLayoutEffect(() => { document.documentElement.dataset.theme = preferences.theme }, [preferences.theme])
+  const [colorSession, setColorSession] = useState<SessionView | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [menu, setMenu] = useState<{ id: string; position: MenuPosition } | null>(null)
@@ -74,7 +79,9 @@ export function App() {
   const [tab, setTab] = useState<'terminal' | 'diff'>('terminal')
   // Oturum seçili değilken ana alanın gösterdiği görünüm.
   const [view, setView] = useState<'sessions' | 'grid'>('sessions')
-  const [gridIds, setGridIds] = useState<string[]>(savedGridSessionIds)
+  const [grids, setGrids] = useState(loadGridWorkspaces)
+  const [gridId, setGridId] = useState(() => loadGridWorkspaces()[0].id)
+  const [gridIds, setGridIds] = useState<string[]>(() => savedGridSessionIds(loadGridWorkspaces()[0].id))
   const [pendingGridAdd, setPendingGridAdd] = useState<string | null>(null)
   const [addingProject, setAddingProject] = useState(false)
   const [dialogProject, setDialogProject] = useState<Project | null>(null)
@@ -102,7 +109,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
 
   const refresh = () => pollerRef.current?.refresh() ?? Promise.resolve()
-  const lifecycle = useWorkspaceLifecycle(state, stateHealthy, preferences, refresh)
+  const lifecycle = useWorkspaceLifecycle(state, stateHealthy, preferences)
 
   // Yetim keşfi salt okunurdur ve poll edilmez: açılışta ve istenince okunur.
   const refreshOrphans = () =>
@@ -121,7 +128,7 @@ export function App() {
       },
       schedule: (fn, ms) => window.setTimeout(fn, ms),
       cancel: (handle) => window.clearTimeout(handle as number),
-      isHidden: () => document.visibilityState === 'hidden',
+      isHidden: () => document.visibilityState === 'hidden' && !notificationsEnabled.current,
       onState: (next) => {
         receivedAt.current = performance.now()
         setState(next)
@@ -152,6 +159,10 @@ export function App() {
       window.clearInterval(tick)
     }
   }, [])
+
+  useEffect(() => {
+    pollerRef.current?.visibilityChanged()
+  }, [preferences.notifications])
 
   const now = state.serverNow ? state.serverNow + (performance.now() - receivedAt.current) : Date.now()
 
@@ -297,6 +308,27 @@ export function App() {
     setTab('terminal')
   }
 
+  const selectSession = (id: string) => {
+    const owner = grids.find(g => (g.id === gridId ? gridIds : savedGridSessionIds(g.id)).includes(id))
+    if (owner) { setGridId(owner.id); setPendingGridAdd(id); setActiveId(null); setView('grid') }
+    else openSession(id)
+    setPendingDelete(null)
+  }
+  useEffect(() => {
+    const onClick = (event: Event) => {
+      const id: unknown = (event as CustomEvent).detail
+      if (typeof id === 'string' && id) selectSession(id)
+    }
+    window.addEventListener('agentdeck:notification-click', onClick)
+    const unsubscribe = window.agentdeckDesktop?.onNotificationClick?.(id => { if (id) selectSession(id) })
+    return () => { window.removeEventListener('agentdeck:notification-click', onClick); unsubscribe?.() }
+  }, [grids, gridId, gridIds])
+  const createGrid = () => {
+    const next = { id: crypto.randomUUID(), name: `Grid ${grids.length + 1}` }
+    try { saveGridWorkspaces([...grids, next]); setGrids([...grids, next]); setGridId(next.id); setGridIds([]); setPendingGridAdd(null) }
+    catch { setError('Grid kaydedilemedi.') }
+  }
+
   // Grid'e ekleme grid'i açar. Tek görünüm kapanır; aynı Run için iki terminal açık kalmaz.
   const addToGrid = (id: string) => {
     setPendingGridAdd(id)
@@ -428,6 +460,7 @@ export function App() {
   const menuActions: MenuAction[] = menuSession ? [
     { label: 'Terminali aç', icon: 'terminal', run: () => openSession(menuSession.id) },
     { label: 'Değişiklikleri incele', icon: 'diff', run: () => { openSession(menuSession.id); setTab('diff') } },
+    { label: 'Terminal rengi…', icon: 'settings', run: () => setColorSession(menuSession) },
     { label: 'Grid’e ekle', icon: 'grid', run: () => addToGrid(menuSession.id) },
     ...(menuSession.archivedAt === null ? sessionWorkActions(menuSession).map(action => ({ label: action.label, description: action.description, icon: action.kind === 'stop' ? 'stop' as const : 'play' as const, disabled: !stateHealthy || Boolean(menuSession.degraded && action.kind !== 'stop'), run: () => executeAction(menuSession, action) })) : []),
     { label: menuSession.archivedAt !== null ? 'Arşivden çıkar' : hasRunningProcesses(menuSession) ? 'Durdur ve arşivle' : 'Arşivle', icon: 'archive', disabled: !stateHealthy, run: () => toggleArchive(menuSession) },
@@ -437,6 +470,14 @@ export function App() {
 
   return (
     <div className={`app${preferences.compact ? ' compact-ui' : ''}`}>
+      {preferences.notifications && lifecycle.notices.length > 0 && <aside className="notification-toasts" aria-live="polite" aria-label="Yeni bildirimler">
+        {lifecycle.notices.slice(0, 3).map(notice => <article className="notification-toast" key={notice.id}>
+          <button className="notification-toast-open" onClick={() => { lifecycle.dismissNotice(notice.id); openSession(notice.sessionId) }}>
+            <strong>{notice.title}</strong><span>{notice.detail}</span>
+          </button>
+          <button className="notification-toast-close" aria-label="Bildirimi kapat" onClick={() => lifecycle.dismissNotice(notice.id)}>×</button>
+        </article>)}
+      </aside>}
 
       <SidebarShell>{(navigate) => <Sidebar
         state={state}
@@ -457,8 +498,7 @@ export function App() {
         onAddToGrid={(id) => navigate(() => addToGrid(id))}
         activeId={activeId}
         onSelect={(id) => navigate(() => {
-          setActiveId(id)
-          setPendingDelete(null)
+          selectSession(id)
         })}
         onNewSession={(project) => navigate(() => setDialogProject(project))}
         onAddProject={() => navigate(() => setAddingProject(true))}
@@ -472,8 +512,6 @@ export function App() {
       />}</SidebarShell>
 
       <main className="main">
-        {lifecycle.recoveryMessage && <div className="recovery-notice" role="status"><span>{lifecycle.recoveryMessage}</span><button aria-label="Geri açma bilgisini kapat" onClick={lifecycle.dismissRecovery}>×</button></div>}
-
         {connectionError && (
           <div className="error" role="alert">
             {connectionError}
@@ -506,7 +544,22 @@ export function App() {
           />
         </div>
         {view === 'grid' && !active && (
-          <TerminalGrid
+          <div className="grid-workspace">
+          <div className="grid-workspace-tabs" role="navigation" aria-label="Grid çalışma alanları">
+            {grids.map(g => <button key={g.id} aria-pressed={gridId === g.id} onClick={() => { setGridId(g.id); setGridIds(savedGridSessionIds(g.id)); setPendingGridAdd(null) }}>{g.name}</button>)}
+            <button title="Ayrı bir terminal gridi oluştur" onClick={createGrid}>+ Yeni grid</button>
+            <button title="Grid adını değiştir" onClick={() => {
+              const name = window.prompt('Grid adı', grids.find(g => g.id === gridId)?.name)?.trim()
+              if (!name) return
+              const next = grids.map(g => g.id === gridId ? { ...g, name: name.slice(0, 60) } : g)
+              try { saveGridWorkspaces(next); setGrids(next) } catch { setError('Grid adı kaydedilemedi.') }
+            }}>Adlandır</button>
+            {grids.length > 1 && <button title="Grid yerleşimini kaldır; terminaller çalışmaya devam eder" onClick={() => {
+              const next = grids.filter(g => g.id !== gridId)
+              try { saveGridWorkspaces(next); clearGridLayout(gridId); setGrids(next); setGridId(next[0].id); setGridIds(savedGridSessionIds(next[0].id)); setPendingGridAdd(null) } catch { setError('Grid kaldırılamadı.') }
+            }}>Grid’i kaldır</button>}
+          </div>
+          <TerminalGrid key={gridId} gridId={gridId} onRefresh={refresh}
             state={state}
             healthy={stateHealthy}
             pendingAdd={pendingGridAdd}
@@ -515,10 +568,11 @@ export function App() {
             onSessionMenu={showMenu}
             onPanelsChange={setGridIds}
           />
+          </div>
         )}
         {active && (
           <>
-            <header className="topbar clean-topbar" style={projectStyle(active.projectId, preferences)} onContextMenu={event => showMenu(active.id, event)}>
+            <header className="topbar clean-topbar" style={terminalStyle(active, preferences)} onContextMenu={event => showMenu(active.id, event)}>
               <button className="topbar-back icon-button" aria-keyshortcuts="F6 Escape" title="Oturumlara dön" aria-label="Oturumlara dön" onClick={leaveToScan}><Icon name="back" /></button>
               <AgentMark session={active} />
               <div className="topbar-info"><div className="title">{active.name}</div><button className="workspace-path path-copy" title={copiedPath ? 'Yol kopyalandı' : `Workspace: ${active.cwd} · kopyala`} onClick={copyPath}>{activeProject?.name ?? 'Workspace'} · {active.cwd}</button></div>
@@ -562,7 +616,7 @@ export function App() {
                 Terminal geçmişi kaydedilemedi: {state.terminals[active.id].checkpoint.lastError}
               </div>
             )}
-            <div className="body colored-terminal" style={projectStyle(active.projectId, preferences)}>
+            <div className="body colored-terminal" style={terminalStyle(active, preferences)}>
               {tab === 'terminal' && (
                 <div className="terminals">
                   {runs && runs.previous.length > 0 && (
@@ -593,6 +647,7 @@ export function App() {
                   )}
                   <TerminalPane
                     key={`${state.daemonId}:${active.id}:${inspectRunId ?? active.runId}`}
+                    onLayout={() => addToGrid(active.id)}
                     runId={inspectRunId}
                     session={active}
                     daemonId={state.daemonId}
@@ -607,6 +662,7 @@ export function App() {
       </main>
 
       {menu && menuSession && <ActionMenu position={menu.position} actions={menuActions} onClose={closeMenu} />}
+      {colorSession && <ColorDialog id={colorSession.id} projectId={colorSession.projectId} name={colorSession.name} onClose={() => setColorSession(null)} />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {addingProject && (
         <AddProjectDialog

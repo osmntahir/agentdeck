@@ -1,3 +1,4 @@
+import { ProgramIcon } from './AgentMark'
 import { useEffect, useRef, useState } from 'react'
 import type { SessionView } from '../../shared/types'
 import { hasRunningProcesses, PRESETS } from '../../shared/types'
@@ -84,7 +85,7 @@ export function LaunchDialog({ session, busy, error, onCancel, onLaunch }: Props
                 className={selected ? 'on' : ''}
                 onClick={() => fill(shortcut.command)}
               >
-                {shortcut.label}
+                <ProgramIcon command={shortcut.command} />{shortcut.label}
               </button>
             )
           })}

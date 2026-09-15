@@ -1,8 +1,14 @@
+import { NewSessionDialog } from './NewSessionDialog'
+import * as client from '../api'
+import type { Isolation, Project, SessionView } from '../../shared/types'
 import { useEffect, useRef, useState } from 'react'
 import type { DockviewApi, Position } from 'dockview-react'
-import type { SessionView } from '../../shared/types'
+import { MAX_GRID_PANELS } from '../gridLayout'
 
 interface Props {
+  projects: Project[]
+  healthy: boolean
+  onRefresh: () => Promise<void>
   api: DockviewApi
   panelId: string
   sessions: SessionView[]
@@ -10,11 +16,31 @@ interface Props {
 }
 
 /** Aynı Dockview taşıma/boyut API'si; terminal tuşlarını yakalayan kısayol yoktur. */
-export function GridLayoutDialog({ api, panelId, sessions, onClose }: Props) {
+export function GridLayoutDialog({ projects, healthy, onRefresh, api, panelId, sessions, onClose }: Props) {
+  const [newProjectId, setNewProjectId] = useState(projects[0]?.id ?? '')
+  const [creatingNew, setCreatingNew] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [newDirection, setNewDirection] = useState<'right' | 'below'>('right')
+  const project = projects.find(p => p.id === newProjectId)
+  const create = async (input: { name: string; command: string | null; isolation: Isolation }) => {
+    if (!project || busy || !healthy || api.panels.length >= MAX_GRID_PANELS) return
+    setBusy(true); setError(null)
+    try {
+      const session = await client.createSession({ ...input, projectId: project.id })
+      await onRefresh()
+      const reference = api.getPanel(panelId)
+      api.addPanel({ id: session.id, component: 'terminal', title: session.name, params: { sessionId: session.id }, ...(reference ? { position: { referenceGroup: reference.api.group, direction: newDirection } } : {}) })
+      setCreatingNew(false); finish()
+    } catch (e) { setError((e as Error).message) }
+    finally { setBusy(false) }
+  }
   const dialog = useRef<HTMLDialogElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
   const targets = api.panels.filter((panel) => panel.id !== panelId)
+  const available = sessions.filter(s => !api.getPanel(s.id) && s.archivedAt === null)
+  const [addId, setAddId] = useState(available[0]?.id ?? '')
   const [targetId, setTargetId] = useState(targets[0]?.id ?? '')
   const [position, setPosition] = useState<Position>('right')
   const present = api.panels.some((panel) => panel.id === panelId)
@@ -46,6 +72,7 @@ export function GridLayoutDialog({ api, panelId, sessions, onClose }: Props) {
   }, [present])
 
   return (
+    <>
     <dialog
       ref={dialog}
       className="session-modal"
@@ -58,6 +85,23 @@ export function GridLayoutDialog({ api, panelId, sessions, onClose }: Props) {
       <div className="dialog">
         <h2 id="grid-layout-title">Panel yerleşimi</h2>
         <p>{label(panelId)}</p>
+        <fieldset className="grid-size-actions"><legend>Bu terminali böl</legend>
+          <label htmlFor="grid-add">Eklenecek terminal</label>
+          <select id="grid-add" value={addId} onChange={e => setAddId(e.target.value)}>
+            {available.length === 0 && <option value="">Eklenebilecek terminal yok</option>}
+            {available.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <div className="command-fills">{(['right', 'below'] as const).map(direction => <button key={direction} type="button" disabled={!panel || !addId || api.panels.length >= MAX_GRID_PANELS} onClick={() => {
+            const session = available.find(s => s.id === addId)
+            if (!panel || !session || api.panels.length >= MAX_GRID_PANELS) return
+            api.addPanel({ id: session.id, component: 'terminal', title: session.name, params: { sessionId: session.id }, position: { referenceGroup: panel.api.group, direction } })
+            finish()
+          }}>{direction === 'right' ? 'Sağa böl' : 'Alta böl'}</button>)}</div>
+        </fieldset>
+        <fieldset className="grid-size-actions"><legend>Yeni terminal oluştur ve böl</legend>
+          <label>Proje<select value={newProjectId} onChange={e => setNewProjectId(e.target.value)}>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+          <div className="command-fills">{(['right', 'below'] as const).map(direction => <button type="button" key={direction} disabled={!healthy || !project || api.panels.length >= MAX_GRID_PANELS} onClick={() => { setNewDirection(direction); setCreatingNew(true) }}>{direction === 'right' ? 'Yeni terminal · sağa' : 'Yeni terminal · alta'}</button>)}</div>
+        </fieldset>
         <label htmlFor="grid-target">Hedef panel</label>
         <select
           id="grid-target"
@@ -126,5 +170,7 @@ export function GridLayoutDialog({ api, panelId, sessions, onClose }: Props) {
         </div>
       </div>
     </dialog>
+    {creatingNew && project && <NewSessionDialog project={project} busy={busy} error={error} onCancel={() => { if (!busy) setCreatingNew(false) }} onCreate={input => void create(input)} />}
+    </>
   )
 }

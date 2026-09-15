@@ -1,3 +1,5 @@
+import { ColorDialog } from './ColorDialog'
+import { THEMES, usePreferences } from '../preferences'
 import { ActionMenu, type MenuPosition } from './ActionMenu'
 import { Icon } from './Icon'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -13,6 +15,7 @@ let lastPtyF6: (() => void) | null = null
 
 interface Props {
   session: SessionView
+  onLayout?: () => void
   daemonId: string
   stateHealthy: boolean
   /** Tek görünümde terminal odağı alır; grid'de paneller birbirinin odağını çalmaz. */
@@ -28,6 +31,7 @@ interface Props {
 
 export function TerminalPane({
   session,
+  onLayout,
   daemonId,
   stateHealthy,
   autoFocus = true,
@@ -36,6 +40,8 @@ export function TerminalPane({
   onFocusHandled,
   runId: inspectRunId = null,
 }: Props) {
+  const preferences = usePreferences()
+  const [colorOpen, setColorOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
   const [clipboardError, setClipboardError] = useState<string | null>(null)
   const closeMenu = useCallback(() => setMenuPosition(null), [])
@@ -68,9 +74,9 @@ export function TerminalPane({
       cols: 120, rows: 32, scrollback: 1000,
       fontSize: 13,
       fontFamily: 'ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace',
-      cursorBlink: true, disableStdin: true,
+      cursorBlink: !compact, cursorInactiveStyle: 'block', disableStdin: true,
       theme: {
-        background: '#0e1116', foreground: '#d5dae2', cursor: '#7aa2f7',
+        ...THEMES[preferences.theme],
         // Uygulamanın kaydırma çubuklarıyla aynı palet.
         scrollbarSliderBackground: 'rgba(160, 163, 174, 0.22)',
         scrollbarSliderHoverBackground: 'rgba(160, 163, 174, 0.42)',
@@ -93,13 +99,16 @@ export function TerminalPane({
     }
     const canInput = () => healthy.current && stream?.status.ready && stream.status.live && stream.status.owned
     const resize = () => {
+      if (disposed || !stream?.status.ready) return
+      if (!stream.status.live) { fit.fit(); return }
       if (!canInput()) return
       const size = fit.proposeDimensions()
       if (!size) return
       const cols = Math.max(2, Math.min(300, size.cols))
       const rows = Math.max(1, Math.min(120, size.rows))
       const key = `${cols}:${rows}`
-      if (key === requestedSize || (cols === term.cols && rows === term.rows)) return
+      if (cols === term.cols && rows === term.rows) { requestedSize = ''; return }
+      if (key === requestedSize) return
       requestedSize = key
       send({ type: 'resize', cols, rows, generation: stream!.status.generation })
     }
@@ -109,7 +118,7 @@ export function TerminalPane({
       requestedSize = ''
       let claimed = 0
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const query = new URLSearchParams({ session: session.id, run: runId, token: TOKEN })
+      const query = new URLSearchParams({ session: session.id, run: runId, token: TOKEN, scope: 'scrollback' })
       const ws = new WebSocket(`${proto}://${location.host}/ws?${query}`)
       socket = ws
       let protocolFailed = false
@@ -132,7 +141,7 @@ export function TerminalPane({
       }, () => { protocolFailed = true; ws.close() })
       stream = consumer
       setStatus(consumer.status)
-      ws.onmessage = (event) => { if (typeof event.data === 'string') void consumer.receive(event.data) }
+      ws.onmessage = (event) => { if (typeof event.data === 'string') void consumer.receive(event.data).then(resize) }
       ws.onclose = (event) => {
         if (disposed || socket !== ws) return
         // İnceleme bağlantısı replay kuyruğa alındıktan sonra kapanır; yazımlar kendi callback'leriyle biter.
@@ -145,7 +154,11 @@ export function TerminalPane({
         reconnect = setTimeout(connect, delay)
       }
     }
-    connect()
+    // Initialize xterm's cursor on its empty normal buffer without taking focus.
+    // Do this before replay so application cursor visibility/buffer modes win.
+    // This local display sequence is never sent to the PTY.
+    if (compact) term.write('\x1b[?1047l', connect)
+    else connect()
     const input = term.onData((data) => {
       if (!canInput()) return
       for (const part of inputChunks(data)) {
@@ -181,12 +194,18 @@ export function TerminalPane({
       lastPtyF6 = sendMine
     }
     term.textarea?.addEventListener('focus', onTermFocus)
-    const observer = new ResizeObserver(resize)
+    let resizeFrame = 0
+    const scheduleResize = () => { cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(resize) }
+    document.fonts.ready.then(() => { if (!disposed) scheduleResize() })
+    window.addEventListener('resize', scheduleResize)
+    const observer = new ResizeObserver(scheduleResize)
     observer.observe(hostRef.current!)
     return () => {
       disposed = true
       if (reconnect) clearTimeout(reconnect)
       observer.disconnect()
+      cancelAnimationFrame(resizeFrame)
+      window.removeEventListener('resize', scheduleResize)
       term.textarea?.removeEventListener('focus', onTermFocus)
       if (lastPtyF6 === sendMine) lastPtyF6 = null
       input.dispose()
@@ -214,6 +233,10 @@ export function TerminalPane({
     }
   }, [])
 
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = { ...termRef.current.options.theme, ...THEMES[preferences.theme] }
+  }, [preferences.theme])
+
   const needsControl = Boolean(status?.ready && status.live && !status.owned)
   // Salt okunur kalma veya bağlantı mesajı kompakt şeritte de sürekli görünür.
   const attention = !stateHealthy || Boolean(status?.message) || needsControl
@@ -223,6 +246,8 @@ export function TerminalPane({
       setMenuPosition({ x: event.clientX, y: event.clientY, origin: document.activeElement as HTMLElement })
     }}>
       {menuPosition && <ActionMenu position={menuPosition} onClose={closeMenu} actions={[
+        ...(onLayout ? [{ label: 'Böl / panel yerleşimi…', icon: 'grid' as const, run: onLayout }] : []),
+        { label: 'Terminal rengi…', icon: 'settings', run: () => setColorOpen(true) },
         { label: 'Seçimi kopyala', icon: 'copy', disabled: !termRef.current?.hasSelection(), run: () => { navigator.clipboard.writeText(termRef.current?.getSelection() ?? '').catch(() => setClipboardError('Pano erişimi reddedildi. Ctrl+Shift+C ile kopyalayabilirsiniz.')) } },
         { label: 'Yapıştır', icon: 'terminal', disabled: !stateHealthy || !status?.ready || !status.live || !status.owned, run: () => { navigator.clipboard.readText().then(text => termRef.current?.paste(text)).catch(() => setClipboardError('Pano erişimi reddedildi. Ctrl+Shift+V ile yapıştırabilirsiniz.')) } },
         { label: 'Tümünü seç', icon: 'copy', run: () => termRef.current?.selectAll() },
@@ -231,6 +256,7 @@ export function TerminalPane({
         { label: 'Terminale F6 gönder', icon: 'terminal', disabled: !stateHealthy || !status?.owned, run: () => actions.current.f6() },
         { label: 'Yeniden bağlan', icon: 'refresh', run: () => setRetry(value => value + 1) },
       ]} />}
+      {colorOpen && <ColorDialog id={session.id} projectId={session.projectId} name={session.name} onClose={() => setColorOpen(false)} />}
       {clipboardError && <div className="error" role="alert">{clipboardError}<button onClick={() => setClipboardError(null)}>×</button></div>}
       <div className={`terminal-status${compact ? ' compact' : ''}${attention ? ' attention' : ''}`} role="status">
         <span title="F6 uygulama çubuğuna geçer; menü gerçek F6'yı terminale gönderir.">

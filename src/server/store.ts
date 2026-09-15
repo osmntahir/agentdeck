@@ -57,6 +57,12 @@ function nullableNum(value: unknown, what: string): number | null {
   return num(value, what)
 }
 
+function optionalBool(value: unknown, what: string): boolean | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'boolean') corrupt(what)
+  return value
+}
+
 function project(raw: unknown): Project {
   if (!isObject(raw)) corrupt('project kaydı')
   const kind = raw.kind === undefined ? 'git' : raw.kind
@@ -133,6 +139,7 @@ function session(raw: unknown): Session {
     runId: nullableStr(raw.runId, 'session.runId'),
     archivedAt: nullableNum(raw.archivedAt, 'session.archivedAt'),
     lastLaunch: lastLaunch(raw.lastLaunch),
+    autoResumeAttempted: optionalBool(raw.autoResumeAttempted, 'session.autoResumeAttempted'),
   }
 }
 
@@ -175,6 +182,7 @@ function migrateLegacySession(raw: unknown): Session {
     runId: null,
     archivedAt: null,
     lastLaunch: { mode: 'command', command },
+    autoResumeAttempted: undefined,
   }
 }
 
@@ -204,11 +212,21 @@ function parseKnownSchema(raw: unknown): { state: PersistedState; migrated: bool
   }
 }
 
-/** Önceki daemon'dan yönetilebilir PTY kalmaz; canlı kayıt orphaned olur. */
-function recoverLifecycles(state: PersistedState): void {
+/**
+ * Önceki daemon'dan yönetilebilir PTY kalmaz; canlı kayıt orphaned olur.
+ * Dönen kimlikler, yalnız bu açılışta daemon'un otomatik geri açmayı deneyebileceği
+ * Run'lardır. Dönüşüm diske de yazılır; başarısız deneme sonraki açılışta sonsuz
+ * kez tekrarlanmaz.
+ */
+function recoverLifecycles(state: PersistedState): string[] {
+  const interrupted: string[] = []
   for (const s of state.sessions) {
-    if (s.lifecycle === 'live') s.lifecycle = 'orphaned'
+    if (s.lifecycle === 'live') {
+      interrupted.push(s.id)
+      s.lifecycle = 'orphaned'
+    }
   }
+  return interrupted
 }
 
 function deepFreeze<T>(value: T): T {
@@ -224,6 +242,8 @@ export interface Store {
   get(): PersistedState
   revision(): number
   serviceError(): string | null
+  /** Bu daemon açılırken yarım kaldığı görülen, bir kez otomatik denenebilecek Run'lar. */
+  interruptedSessionIds(): readonly string[]
   /**
    * Copy-on-write mutation: taslak klonlanır, temp+rename ile yazılır ve ancak
    * rename başarılıysa yayımlanır. Çağrılar sıraya girer.
@@ -249,6 +269,7 @@ export function openStore(dataDir: string): Store {
 
   let published: PersistedState
   let migratedFrom: string | null = null
+  let interruptedSessionIds: string[] = []
 
   if (raw === null) {
     // Kayıt yok ama yönetilen alanda çalışma kopyası duruyorsa, bu kopya
@@ -271,7 +292,7 @@ export function openStore(dataDir: string): Store {
     }
     const result = parseKnownSchema(parsed)
     published = result.state
-    recoverLifecycles(published)
+    interruptedSessionIds = recoverLifecycles(published)
 
     if (result.migrated) {
       migratedFrom = raw
@@ -314,18 +335,23 @@ export function openStore(dataDir: string): Store {
     return task
   }
 
-  if (migratedFrom !== null) {
+  if (migratedFrom !== null || interruptedSessionIds.length > 0) {
     // Yedek atomik yayımdan önce yazılır: yedeklenemiyorsa migrate edilmez.
-    const backup = `${stateFile}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`
-    try {
-      fs.writeFileSync(backup, migratedFrom, { mode: 0o600, flag: 'wx' })
-    } catch (err) {
-      throw new StateError('state_unreadable', `Migrate yedeği yazılamadı: ${(err as Error).message}`)
+    if (migratedFrom !== null) {
+      const backup = `${stateFile}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`
+      try {
+        fs.writeFileSync(backup, migratedFrom, { mode: 0o600, flag: 'wx' })
+      } catch (err) {
+        throw new StateError('state_unreadable', `Migrate yedeği yazılamadı: ${(err as Error).message}`)
+      }
     }
     try {
       writeAtomic(published)
     } catch (err) {
-      throw new StateError('state_unreadable', `Migrate yayımlanamadı: ${(err as Error).message}`)
+      throw new StateError(
+        'state_unreadable',
+        `${migratedFrom !== null ? 'Migrate' : 'Oturum kurtarma durumu'} yayımlanamadı: ${(err as Error).message}`,
+      )
     }
     revision += 1
   }
@@ -337,6 +363,7 @@ export function openStore(dataDir: string): Store {
     get: () => published,
     revision: () => revision,
     serviceError: () => serviceError,
+    interruptedSessionIds: () => [...interruptedSessionIds],
     commit,
     token(): string {
       try {

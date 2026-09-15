@@ -25,6 +25,9 @@ test('kullanıcının açık UUID komutu tam hedefi korur; otomatik devam seçme
   assert.equal(explicitResumeCommand('claude', id), `claude --resume ${id}`)
   assert.equal(explicitResumeCommand('codex', ` ${id} `), `codex resume ${id}`)
   assert.equal(explicitResumeCommand('gemini', id), `gemini --resume ${id}`)
+  assert.equal(explicitResumeCommand('agy', id), `agy --conversation=${id}`)
+  assert.equal(explicitResumeCommand('grok', id), `grok --resume ${id}`)
+  assert.equal(explicitResumeCommand('opencode', id), `opencode --session ${id}`)
   for (const invalid of ['', 'latest', '--last', '1', 'conversation name', '../file.json',
     `${id}; touch marker`, `${id}\nexit`, `$(echo ${id})`, `${id}'`, id.slice(0, -1)]) {
     assert.equal(explicitResumeCommand('claude', invalid), null)
