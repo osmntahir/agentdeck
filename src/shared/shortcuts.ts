@@ -1,0 +1,42 @@
+/**
+ * Uygulama kısayolları. Terminal odaktayken de çalışırlar; bu yüzden yalnız
+ * kabuk ve ajan CLI'larının pratikte kullanmadığı birleşimler seçildi
+ * (GNOME Terminal'in sekme kısayollarıyla aynı aile). Eşleşen tuş PTY'ye gitmez.
+ */
+export type AppShortcut =
+  | { kind: 'palette' }
+  | { kind: 'jump'; index: number }
+  | { kind: 'cycle'; delta: 1 | -1 }
+  | { kind: 'new-session' }
+  | { kind: 'maximize' }
+
+export interface KeyLike {
+  key: string
+  code: string
+  ctrlKey: boolean
+  shiftKey: boolean
+  altKey: boolean
+  metaKey: boolean
+}
+
+export function appShortcut(event: KeyLike, inTerminal: boolean): AppShortcut | null {
+  const { key, code, ctrlKey: ctrl, shiftKey: shift, altKey: alt, metaKey: meta } = event
+  const mod = ctrl || meta
+  // Ctrl+K kabukta satır silmedir; terminal dışında paleti açar, terminalde Ctrl+Shift+P kullanılır.
+  if (mod && shift && !alt && code === 'KeyP') return { kind: 'palette' }
+  if (mod && !shift && !alt && code === 'KeyK' && !inTerminal) return { kind: 'palette' }
+  if (alt && !mod && !shift && /^Digit[1-9]$/.test(code)) return { kind: 'jump', index: Number(code.slice(5)) - 1 }
+  if (ctrl && !alt && !meta && !shift && (key === 'PageDown' || key === 'PageUp')) return { kind: 'cycle', delta: key === 'PageDown' ? 1 : -1 }
+  if (mod && shift && !alt && code === 'KeyN') return { kind: 'new-session' }
+  if (mod && shift && !alt && key === 'Enter') return { kind: 'maximize' }
+  return null
+}
+
+/** Kısayol ipucu metni; menü ve paletteki etiketlerle aynı yazım. */
+export const SHORTCUT_LABELS = {
+  palette: 'Ctrl+Shift+P',
+  jump: 'Alt+1…9',
+  cycle: 'Ctrl+PgUp / PgDn',
+  newSession: 'Ctrl+Shift+N',
+  maximize: 'Ctrl+Shift+Enter',
+} as const

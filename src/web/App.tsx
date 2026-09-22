@@ -5,13 +5,16 @@ import { AgentMark } from './components/AgentMark'
 import { BranchPicker } from './components/BranchPicker'
 import { SettingsDialog } from './components/SettingsDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
-import { usePreferences, terminalStyle } from './preferences'
+import { usePreferences, terminalStyle, updatePreferences, THEMES, type ThemeName } from './preferences'
+import { CommandPalette, type PaletteCommand } from './components/CommandPalette'
+import { appShortcut, SHORTCUT_LABELS, type AppShortcut } from '../shared/shortcuts'
+import { stateLabel, statusTone, StatusDot } from './sessionStatus'
 import { useWorkspaceLifecycle } from './useWorkspaceLifecycle'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as api from './api'
 import { AddProjectDialog } from './components/AddProjectDialog'
 import { Workspace } from './components/Workspace'
-import { Sidebar, stateLabel } from './components/Sidebar'
+import { Sidebar, navigationIds } from './components/Sidebar'
 import { SidebarShell } from './components/SidebarShell'
 import { TerminalPane } from './components/TerminalPane'
 import { DiffView } from './components/DiffView'
@@ -24,6 +27,8 @@ import { sessionWorkActions, sessionWorkCli } from '../shared/sessionActions'
 import {
   hasRunningProcesses,
   type Isolation,
+  type Preset,
+  type ProjectView,
   type Project,
   type StateResponse,
   type SessionView,
@@ -97,7 +102,13 @@ export function App() {
   const [grids, setGrids] = useState(loadGridWorkspaces)
   const [gridId, setGridId] = useState(() => loadGridWorkspaces()[0].id)
   const [gridIds, setGridIds] = useState<string[]>(() => savedGridSessionIds(loadGridWorkspaces()[0].id))
-  const [pendingGridAdd, setPendingGridAdd] = useState<string | null>(null)
+  const [pendingGridAdd, setPendingGridAdd] = useState<{ id: string; focus: boolean } | null>(null)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [renamingGrid, setRenamingGrid] = useState<string | null>(null)
+  const [gridMenu, setGridMenu] = useState<MenuPosition | null>(null)
+  const closeGridMenu = useCallback(() => setGridMenu(null), [])
+  // Bildirim merkezi listeyi tutar; köşedeki kart birkaç saniye sonra kendiliğinden çekilir.
+  const [toastsHidden, setToastsHidden] = useState<ReadonlySet<string>>(new Set())
   const [addingProject, setAddingProject] = useState(false)
   const [dialogProject, setDialogProject] = useState<Project | null>(null)
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; preview: api.DeletePreview } | null>(null)
@@ -215,10 +226,8 @@ export function App() {
     }
   }, [active?.id, active?.runId])
 
-  const [copiedPath, setCopiedPath] = useState(false)
-  // Düğmeler değişince eski açıklama ve kopyalama bildirimi ekranda kalmaz.
+  // Düğmeler değişince eski açıklama ekranda kalmaz.
   useEffect(() => {
-    setCopiedPath(false)
     setTrustHidden(false)
   }, [active?.id, active?.archivedAt, active?.lifecycle])
 
@@ -274,10 +283,19 @@ export function App() {
         event.preventDefault()
       }
     }
-    // F6 tarayıcı adres çubuğuna gitmesin diye yakalama aşamasında tutulur.
+    // F6 tarayıcı adres çubuğuna gitmesin diye yakalama aşamasında tutulur. Uygulama
+    // kısayolları da burada yakalanır: xterm'e hiç ulaşmaz, PTY'ye gönderilmez.
     const onF6 = (event: KeyboardEvent) => {
-      if (event.key !== 'F6') return
-      onKey(event)
+      if (event.key === 'F6') { onKey(event); return }
+      if (event.repeat && event.key !== 'PageUp' && event.key !== 'PageDown') return
+      const shortcut = appShortcut(event, inTerminal(event.target))
+      if (!shortcut) return
+      // Açık pencere veya menü klavyeyi sahiplenir; palet açıkken yalnız kendi kısayolu onu kapatır.
+      if (document.querySelector('dialog[open]:not(.palette-modal), [role=menu]')) return
+      if (document.querySelector('dialog.palette-modal[open]') && shortcut.kind !== 'palette') return
+      event.preventDefault()
+      event.stopPropagation()
+      shortcutRef.current(shortcut)
     }
     window.addEventListener('keydown', onF6, true)
     window.addEventListener('keydown', onKey)
@@ -286,6 +304,16 @@ export function App() {
       window.removeEventListener('keydown', onKey)
     }
   }, [activeId, addingProject, launchOpen, launching])
+
+  useEffect(() => {
+    const pending = lifecycle.notices.filter((notice) => !toastsHidden.has(notice.id))
+    if (pending.length === 0) return
+    const timer = window.setTimeout(() => {
+      setToastsHidden((hidden) => new Set([...hidden, ...pending.map((notice) => notice.id)]))
+    }, 9000)
+    return () => window.clearTimeout(timer)
+  }, [lifecycle.notices, toastsHidden])
+  const toasts = lifecycle.notices.filter((notice) => !toastsHidden.has(notice.id)).slice(0, 3)
 
   const run = (promise: Promise<unknown>) => {
     setError(null)
@@ -314,11 +342,60 @@ export function App() {
     setTab('terminal')
   }
 
-  const selectSession = (id: string) => {
+  const selectSession = (id: string, focus = false) => {
     const owner = grids.find(g => (g.id === gridId ? gridIds : savedGridSessionIds(g.id)).includes(id))
-    if (owner) { setGridId(owner.id); setPendingGridAdd(id); setActiveId(null); setView('grid') }
+    if (owner) {
+      if (owner.id !== gridId) setGridIds(savedGridSessionIds(owner.id))
+      setGridId(owner.id); setPendingGridAdd({ id, focus }); setActiveId(null); setView('grid')
+    }
     else openSession(id)
     setPendingDelete(null)
+  }
+
+  // Paletten tek adımda: proje klasöründe varsayılan adla oturum açılır, grid'deysen grid'e eklenir.
+  const quickCreate = (project: ProjectView, preset: Preset) => {
+    if (creating) return
+    setCreating(true)
+    setError(null)
+    try { updatePreferences({ lastProgram: { ...preferences.lastProgram, [project.id]: preset.label } }) } catch { /* tercih yalnız bu açılışta kalır */ }
+    const intoGrid = view === 'grid' && !active
+    api
+      .createSession({ name: '', command: preset.command, isolation: 'shared', projectId: project.id })
+      .then(async (session) => {
+        await refresh()
+        if (intoGrid) { setPendingGridAdd({ id: session.id, focus: true }); setView('grid') }
+        else openSession(session.id)
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setCreating(false))
+  }
+
+  const shortcutRef = useRef<(shortcut: AppShortcut) => void>(() => {})
+  shortcutRef.current = (shortcut) => {
+    if (shortcut.kind === 'palette') { setPaletteOpen((open) => !open); return }
+    if (shortcut.kind === 'maximize') {
+      if (view === 'grid' && !active) window.dispatchEvent(new Event('agentdeck:grid-maximize'))
+      return
+    }
+    if (shortcut.kind === 'new-session') {
+      const project = state.projects.find((p) => p.id === (active?.projectId ?? state.sessions.find((s) => s.id === pendingGridAdd?.id)?.projectId)) ?? state.projects[0]
+      if (project) setDialogProject(project)
+      else setAddingProject(true)
+      return
+    }
+    const ids = navigationIds(state)
+    if (ids.length === 0) return
+    if (shortcut.kind === 'jump') {
+      const id = ids[shortcut.index]
+      if (id) selectSession(id, true)
+      return
+    }
+    // Grid'de sıradaki oturum odaktaki panele göre seçilir.
+    const focusedPanel = document.activeElement?.closest<HTMLElement>('[data-session-id]')?.dataset.sessionId
+    const current = activeId ?? focusedPanel ?? null
+    const index = current ? ids.indexOf(current) : -1
+    const next = ids[(index + shortcut.delta + ids.length) % ids.length] ?? ids[0]
+    if (next) selectSession(next, true)
   }
   useEffect(() => {
     const onClick = (event: Event) => {
@@ -337,7 +414,7 @@ export function App() {
 
   // Grid'e ekleme grid'i açar. Tek görünüm kapanır; aynı Run için iki terminal açık kalmaz.
   const addToGrid = (id: string) => {
-    setPendingGridAdd(id)
+    setPendingGridAdd({ id, focus: false })
     setActiveId(null)
     setPendingDelete(null)
     setView('grid')
@@ -352,15 +429,6 @@ export function App() {
         ? api.unarchiveSession(active.id)
         : api.archiveSession(active.id, active.runId, hasRunningProcesses(active)),
     )
-  }
-
-  const copyPath = () => {
-    if (!active) return
-    const cwd = active.cwd
-    navigator.clipboard
-      .writeText(cwd)
-      .then(() => setCopiedPath(true))
-      .catch(() => setError(`Pano erişimi reddedildi; yolu elle kopyalayın: ${cwd}`))
   }
 
   // Mevcut çalışma kopyasında yeni Run; başarılıysa terminal yeni Run'a bağlanır.
@@ -460,11 +528,40 @@ export function App() {
     if (action.kind === 'continue' || action.kind === 'fresh') return run(api.launchSession(session.id, session.runId, action.command, action.kind === 'fresh' ? 'fresh' : 'picker'))
     setActiveId(session.id); setError(null); setLaunchOpen(true)
   }
+  const renameGrid = (id: string, value: string) => {
+    setRenamingGrid(null)
+    const name = value.trim().slice(0, 60)
+    if (!name) return
+    const next = grids.map(g => g.id === id ? { ...g, name } : g)
+    try { saveGridWorkspaces(next); setGrids(next) } catch { setError('Grid adı kaydedilemedi.') }
+  }
+  const removeGrid = () => {
+    const next = grids.filter(g => g.id !== gridId)
+    if (next.length === 0) return
+    try { saveGridWorkspaces(next); clearGridLayout(gridId); setGrids(next); setGridId(next[0].id); setGridIds(savedGridSessionIds(next[0].id)); setPendingGridAdd(null) } catch { setError('Grid kaldırılamadı.') }
+  }
+  const goHome = () => { leaveToScan(); setView('sessions') }
+  const goGrid = () => { leaveToScan(); setView('grid') }
+  const paletteCommands: PaletteCommand[] = [
+    ...(active ? [
+      { id: 'active-diff', label: `Değişiklikleri incele · ${active.name}`, icon: 'diff' as const, keywords: 'diff fark', run: () => setTab('diff') },
+      { id: 'active-grid', label: `Grid’e ekle · ${active.name}`, icon: 'grid' as const, run: () => addToGrid(active.id) },
+      { id: 'active-launch', label: `Komut çalıştır… · ${active.name}`, icon: 'play' as const, keywords: 'resume devam', run: () => setLaunchOpen(true) },
+    ] : []),
+    { id: 'home', label: 'Tüm oturumlar', icon: 'list', keywords: 'pano ana sayfa', hint: 'Esc', run: goHome },
+    { id: 'grid', label: 'Terminal grid', icon: 'grid', keywords: 'bölünmüş yan yana', run: goGrid },
+    ...grids.filter(() => grids.length > 1).map(g => ({ id: `grid:${g.id}`, label: `Grid’e geç · ${g.name}`, icon: 'layout' as const, run: () => { leaveToScan(); setGridId(g.id); setGridIds(savedGridSessionIds(g.id)); setPendingGridAdd(null); setView('grid') } })),
+    { id: 'new-grid', label: 'Yeni grid oluştur', icon: 'plus', run: () => { createGrid(); goGrid() } },
+    { id: 'new-session', label: 'Yeni oturum…', icon: 'plus', hint: SHORTCUT_LABELS.newSession, keywords: 'ajan terminal başlat', run: () => shortcutRef.current({ kind: 'new-session' }) },
+    { id: 'add-project', label: 'Proje ekle…', icon: 'folder', keywords: 'klasör depo', run: () => setAddingProject(true) },
+    { id: 'settings', label: 'Ayarlar', icon: 'settings', keywords: 'tercih', run: () => setSettingsOpen(true) },
+    ...Object.entries(THEMES).filter(([id]) => id !== preferences.theme).map(([id, theme]) => ({ id: `theme:${id}`, label: `Tema: ${theme.label}`, icon: 'palette' as const, keywords: 'renk görünüm', run: () => { try { updatePreferences({ theme: id as ThemeName }) } catch { setError('Tema kaydedilemedi.') } } })),
+  ]
   const menuSession = state.sessions.find(session => session.id === menu?.id)
   const menuActions: MenuAction[] = menuSession ? [
     { label: 'Terminali aç', icon: 'terminal', run: () => openSession(menuSession.id) },
     { label: 'Değişiklikleri incele', icon: 'diff', run: () => { openSession(menuSession.id); setTab('diff') } },
-    { label: 'Terminal rengi…', icon: 'settings', run: () => setColorSession(menuSession) },
+    { label: 'Terminal rengi…', icon: 'palette', run: () => setColorSession(menuSession) },
     { label: 'Grid’e ekle', icon: 'grid', run: () => addToGrid(menuSession.id) },
     ...(menuSession.archivedAt === null ? sessionWorkActions(menuSession).map(action => ({ label: action.label[0].toLocaleUpperCase('tr') + action.label.slice(1), description: action.description, icon: action.kind === 'stop' ? 'stop' as const : action.kind === 'restart' ? 'refresh' as const : 'play' as const, disabled: !stateHealthy || Boolean(menuSession.degraded && action.kind !== 'stop'), run: () => executeAction(menuSession, action) })) : []),
     { label: menuSession.archivedAt !== null ? 'Arşivden çıkar' : hasRunningProcesses(menuSession) ? 'Durdur ve arşivle' : 'Arşivle', icon: 'archive', disabled: !stateHealthy, run: () => toggleArchive(menuSession) },
@@ -474,20 +571,35 @@ export function App() {
 
   return (
     <div className={`app${preferences.compact ? ' compact-ui' : ''}`}>
-      {preferences.notifications && lifecycle.notices.length > 0 && <aside className="notification-toasts" aria-live="polite" aria-label="Yeni bildirimler">
-        {lifecycle.notices.slice(0, 3).map(notice => <article className="notification-toast" key={notice.id}>
-          <button className="notification-toast-open" onClick={() => { lifecycle.dismissNotice(notice.id); openSession(notice.sessionId) }}>
-            <strong>{notice.title}</strong><span>{notice.detail}</span>
-          </button>
-          <button className="notification-toast-close" aria-label="Bildirimi kapat" onClick={() => lifecycle.dismissNotice(notice.id)}>×</button>
-        </article>)}
+      {preferences.notifications && toasts.length > 0 && <aside className="notification-toasts" aria-live="polite" aria-label="Yeni bildirimler">
+        {toasts.map(notice => {
+          const session = state.sessions.find((item) => item.id === notice.sessionId)
+          return <article className="notification-toast" key={notice.id} data-tone={session ? statusTone(session) : 'done'}>
+            <span className="toast-icon" aria-hidden="true"><Icon name={notice.title.includes('müdahale') ? 'alert' : 'bell'} size={16} /></span>
+            <button className="notification-toast-open" onClick={() => { lifecycle.dismissNotice(notice.id); selectSession(notice.sessionId, true) }}>
+              <strong>{notice.title}</strong><span>{notice.detail}</span>
+            </button>
+            <button className="notification-toast-close icon-button ghost" aria-label="Bildirimi kapat" onClick={() => lifecycle.dismissNotice(notice.id)}><Icon name="close" size={14} /></button>
+          </article>
+        })}
       </aside>}
 
       <SidebarShell>{(navigate) => <Sidebar
         state={state}
         onSessionMenu={showMenu}
         onSettings={() => setSettingsOpen(true)}
-        notifications={preferences.notifications && <div className="notification-center"><button aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(!notificationsOpen)}>Bildirimler {lifecycle.notices.length > 0 && <span className="badge">{lifecycle.notices.length}</span>}</button>{notificationsOpen && <div className="notification-list"><header><strong>Terminal çıkışları</strong><button onClick={lifecycle.clearNotices}>Temizle</button></header>{lifecycle.notices.length === 0 && <p className="muted">Yeni bildirim yok.</p>}{lifecycle.notices.map(notice => <button key={notice.id} onClick={() => { setNotificationsOpen(false); navigate(() => openSession(notice.sessionId)) }}><strong>{notice.title}</strong><span>{notice.detail}</span></button>)}</div>}</div>}
+        onPalette={() => navigate(() => setPaletteOpen(true))}
+        onAddProject={() => navigate(() => setAddingProject(true))}
+        notifications={preferences.notifications && <div className="notification-center">
+          <button className="icon-button ghost" aria-label="Bildirim merkezi" title="Bildirimler" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(!notificationsOpen)}>
+            <Icon name="bell" />{lifecycle.notices.length > 0 && <span className="bell-badge">{lifecycle.notices.length}</span>}
+          </button>
+          {notificationsOpen && <div className="notification-list">
+            <header><strong>Bildirimler</strong>{lifecycle.notices.length > 0 && <button className="ghost-button" onClick={lifecycle.clearNotices}>Temizle</button>}</header>
+            {lifecycle.notices.length === 0 && <p className="muted">Yeni bildirim yok. Bir terminal bittiğinde veya onay beklediğinde burada görünür.</p>}
+            {lifecycle.notices.map(notice => <button key={notice.id} onClick={() => { setNotificationsOpen(false); navigate(() => selectSession(notice.sessionId, true)) }}><strong>{notice.title}</strong><span>{notice.detail}</span></button>)}
+          </div>}
+        </div>}
         healthy={stateHealthy}
         onHome={() => navigate(() => {
           leaveToScan()
@@ -522,7 +634,8 @@ export function App() {
         )}
         {error && (
           <div className="error" role="alert">
-            {error}
+            <span>{error}</span>
+            <button className="icon-button ghost" aria-label="Hatayı kapat" onClick={() => setError(null)}><Icon name="close" size={14} /></button>
           </div>
         )}
         {state.serviceError && (
@@ -542,25 +655,12 @@ export function App() {
             onSessionMenu={showMenu}
             onNewSession={setDialogProject}
             onAddProject={() => setAddingProject(true)}
+            onPalette={() => setPaletteOpen(true)}
             onAddToGrid={addToGrid}
           />
         </div>
         {view === 'grid' && !active && (
           <div className="grid-workspace">
-          <div className="grid-workspace-tabs" role="navigation" aria-label="Grid çalışma alanları">
-            {grids.map(g => <button key={g.id} aria-pressed={gridId === g.id} onClick={() => { setGridId(g.id); setGridIds(savedGridSessionIds(g.id)); setPendingGridAdd(null) }}>{g.name}</button>)}
-            <button title="Ayrı bir terminal gridi oluştur" onClick={createGrid}>+ Yeni grid</button>
-            <button title="Grid adını değiştir" onClick={() => {
-              const name = window.prompt('Grid adı', grids.find(g => g.id === gridId)?.name)?.trim()
-              if (!name) return
-              const next = grids.map(g => g.id === gridId ? { ...g, name: name.slice(0, 60) } : g)
-              try { saveGridWorkspaces(next); setGrids(next) } catch { setError('Grid adı kaydedilemedi.') }
-            }}>Adlandır</button>
-            {grids.length > 1 && <button title="Grid yerleşimini kaldır; terminaller çalışmaya devam eder" onClick={() => {
-              const next = grids.filter(g => g.id !== gridId)
-              try { saveGridWorkspaces(next); clearGridLayout(gridId); setGrids(next); setGridId(next[0].id); setGridIds(savedGridSessionIds(next[0].id)); setPendingGridAdd(null) } catch { setError('Grid kaldırılamadı.') }
-            }}>Grid’i kaldır</button>}
-          </div>
           <TerminalGrid key={gridId} gridId={gridId} onRefresh={refresh}
             state={state}
             healthy={stateHealthy}
@@ -569,34 +669,71 @@ export function App() {
             onOpen={openSession}
             onSessionMenu={showMenu}
             onPanelsChange={setGridIds}
+            toolbar={<div className="grid-workspace-tabs" role="navigation" aria-label="Grid çalışma alanları">
+              {grids.map(g => renamingGrid === g.id
+                ? <input key={g.id} className="grid-rename" aria-label="Grid adı" autoFocus defaultValue={g.name} maxLength={60}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onBlur={(event) => renameGrid(g.id, event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur() }
+                      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setRenamingGrid(null) }
+                    }} />
+                : <button key={g.id} aria-pressed={gridId === g.id} title="Çift tıkla: yeniden adlandır"
+                    onDoubleClick={() => setRenamingGrid(g.id)}
+                    onClick={() => { if (g.id !== gridId) { setGridId(g.id); setGridIds(savedGridSessionIds(g.id)); setPendingGridAdd(null) } }}>{g.name}</button>)}
+              <button className="icon-button ghost" title="Ayrı bir terminal gridi oluştur" aria-label="Yeni grid" onClick={createGrid}><Icon name="plus" size={14} /></button>
+              <button className="icon-button ghost" title="Grid işlemleri" aria-label="Grid işlemleri" onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                setGridMenu({ x: rect.left, y: rect.bottom + 4, origin: event.currentTarget })
+              }}><Icon name="more" size={14} /></button>
+            </div>}
           />
           </div>
         )}
         {active && (
           <>
             <header className="topbar clean-topbar" style={terminalStyle(active, preferences)} onContextMenu={event => showMenu(active.id, event)}>
-              <button className="topbar-back icon-button" aria-keyshortcuts="F6 Escape" title="Oturumlara dön" aria-label="Oturumlara dön" onClick={leaveToScan}><Icon name="back" /></button>
-              <AgentMark session={active} />
-              <div className="topbar-info"><div className="title">{active.name}</div><button className="workspace-path path-copy" title={copiedPath ? 'Yol kopyalandı' : `Çalışma klasörü: ${active.cwd} · kopyala`} onClick={copyPath}>{activeProject?.name ?? 'Workspace'} · {active.cwd}</button></div>
-              <span className={`status-badge ${active.lifecycle}`} title={active.degraded ?? undefined}><span className={`dot ${active.lifecycle}`} />{active.archivedAt !== null ? 'Arşiv' : active.lifecycle === 'live' ? active.activity === 'idle' ? 'Sessiz' : 'Canlı' : stateLabel(active)}</span>
-              {active.isolation === 'worktree' && <span className="badge">İzole</span>}
+              <nav className="crumbs" aria-label="Konum">
+                <button className="topbar-back crumb" aria-keyshortcuts="F6 Escape" title="Oturumlara dön · Esc" aria-label="Oturumlara dön" onClick={leaveToScan}>
+                  <Icon name="back" size={14} /><span>{activeProject?.name ?? 'Oturumlar'}</span>
+                </button>
+                <span className="crumb-sep" aria-hidden="true">/</span>
+                <AgentMark session={active} />
+                <h1 className="title" title={active.cwd}>{active.name}</h1>
+              </nav>
+              <span className="status-pill" data-tone={statusTone(active)} title={active.attention?.message ?? active.degraded ?? undefined}>
+                <StatusDot session={active} />{active.archivedAt !== null ? 'Arşiv' : stateLabel(active)}
+              </span>
+              {active.isolation === 'worktree' && <span className="chip" title="Kendi worktree'sinde çalışır">İzole</span>}
               <BranchPicker key={active.id} session={active} healthy={stateHealthy} />
-              <div className="tabs"><button className={tab === 'terminal' ? 'on' : ''} onClick={() => setTab('terminal')}><Icon name="terminal" /> Terminal</button><button className={tab === 'diff' ? 'on' : ''} onClick={() => setTab('diff')}><Icon name="diff" /> Değişiklikler</button></div>
-              {active.archivedAt === null && active.lifecycle !== 'live' && sessionWorkActions(active).filter(action => action.primary).map(action => <button key={action.kind} className="primary" disabled={!stateHealthy || Boolean(active.degraded)} title={action.description} onClick={() => executeAction(active, action)}><Icon name="play" />{action.kind === 'continue' ? 'Devam et' : 'Yeniden aç'}</button>)}
-              <button className="icon-button" aria-label="Oturum işlemleri" title="Oturum işlemleri · sağ tık" onClick={event => showMenu(active.id, event)}><Icon name="more" /></button>
+              <span className="topbar-spacer" />
+              <div className="segmented tabs" role="group" aria-label="Görünüm">
+                <button className={tab === 'terminal' ? 'on' : ''} aria-pressed={tab === 'terminal'} onClick={() => setTab('terminal')}><Icon name="terminal" size={14} /> Terminal</button>
+                <button className={tab === 'diff' ? 'on' : ''} aria-pressed={tab === 'diff'} onClick={() => setTab('diff')}><Icon name="diff" size={14} /> Değişiklikler</button>
+              </div>
+              {active.archivedAt === null && active.lifecycle !== 'live' && sessionWorkActions(active).filter(action => action.primary).map(action => <button key={action.kind} className="primary" disabled={!stateHealthy || Boolean(active.degraded)} title={action.description} onClick={() => executeAction(active, action)}><Icon name="play" size={14} />{action.kind === 'continue' ? 'Devam et' : 'Yeniden aç'}</button>)}
+              <button className="icon-button ghost" title="Grid'e ekle" aria-label="Grid'e ekle" onClick={() => addToGrid(active.id)}><Icon name="grid" /></button>
+              <button className="icon-button ghost" aria-label="Oturum işlemleri" title="Oturum işlemleri · sağ tık" onClick={event => showMenu(active.id, event)}><Icon name="more" /></button>
             </header>
             {(active.degraded || activeProject?.degraded) && <div className="error">{active.degraded ?? activeProject?.degraded}</div>}
+            {active.attention && active.lifecycle === 'live' && (
+              <div className="attention-note" role="status">
+                <Icon name="alert" size={14} />
+                <span>{active.attention.kind === 'approval' ? 'Ajan onayınızı bekliyor' : 'Ajan yanıtınızı bekliyor'}{active.attention.message ? `: ${active.attention.message}` : ''}</span>
+              </div>
+            )}
             {state.terminals?.[active.id]?.outputPressure && <div className="review-note" role="status">Çıktı işleniyor…</div>}
             {showTrust && (
               <div className="trust-note" role="note">
                 <span>{TRUST_NOTE}</span>
                 <button
+                  className="ghost-button"
                   onClick={() => {
                     sessionStorage.setItem(trustKey(active.id), '1')
                     setTrustHidden(true)
                   }}
                 >
-                  Kapat
+                  Anladım
                 </button>
               </div>
             )}
@@ -616,7 +753,7 @@ export function App() {
                 <div className="terminals">
                   {runs && runs.previous.length > 0 && (
                     <div className="run-bar">
-                      <div className="tabs" role="group" aria-label="Terminal görüntüsü">
+                      <div className="segmented tabs" role="group" aria-label="Terminal görüntüsü">
                         <button
                           className={inspectRunId === null ? 'on' : ''}
                           aria-pressed={inspectRunId === null}
@@ -631,7 +768,7 @@ export function App() {
                             aria-pressed={inspectRunId === previous.runId}
                             onClick={() => setInspectRunId(previous.runId)}
                           >
-                            Önceki görüntü · {new Date(previous.updatedAt).toLocaleTimeString()}
+                            Önceki · {new Date(previous.updatedAt).toLocaleTimeString('tr', { hour: '2-digit', minute: '2-digit' })}
                           </button>
                         ))}
                       </div>
@@ -657,6 +794,21 @@ export function App() {
       </main>
 
       {menu && menuSession && <ActionMenu position={menu.position} actions={menuActions} onClose={closeMenu} />}
+      {gridMenu && <ActionMenu label="Grid işlemleri" position={gridMenu} onClose={closeGridMenu} actions={[
+        { label: 'Yeniden adlandır', icon: 'edit', run: () => setRenamingGrid(gridId) },
+        { label: 'Yeni grid', icon: 'plus', run: createGrid },
+        { label: 'Grid’i kaldır', icon: 'trash', danger: true, disabled: grids.length < 2, description: 'Grid yerleşimini kaldırır; terminaller çalışmaya devam eder.', run: removeGrid },
+      ]} />}
+      {paletteOpen && (
+        <CommandPalette
+          state={state}
+          sessionOrder={navigationIds(state)}
+          commands={paletteCommands}
+          onSelectSession={(id) => selectSession(id, true)}
+          onQuickCreate={quickCreate}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
       {colorSession && <ColorDialog id={colorSession.id} projectId={colorSession.projectId} name={colorSession.name} onClose={() => setColorSession(null)} />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {pendingDelete && (

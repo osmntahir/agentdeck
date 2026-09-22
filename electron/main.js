@@ -82,7 +82,8 @@ function buildMenu() {
       {
         label: 'agentdeck',
         submenu: [
-          { label: 'Yenile', accelerator: 'CmdOrCtrl+R', click: () => win?.reload() },
+          // Ctrl+R ve Ctrl+W kabukta geçmiş araması ve kelime silmedir; menü bunları terminalden çalmaz.
+          { label: 'Yenile', accelerator: 'CmdOrCtrl+Shift+R', click: () => win?.reload() },
           {
             label: 'Geliştirici araçları',
             accelerator: 'F12',
@@ -109,7 +110,7 @@ function buildMenu() {
           },
           { type: 'separator' },
           // Pencereyi kapatmak daemon'u öldürmez: kalıcılık bunun üzerine kurulu.
-          { label: 'Pencereyi kapat (oturumlar sürer)', accelerator: 'CmdOrCtrl+W', role: 'quit' },
+          { label: 'Pencereyi kapat (oturumlar sürer)', accelerator: 'CmdOrCtrl+Shift+W', role: 'quit' },
         ],
       },
       {
@@ -137,7 +138,7 @@ function createWindow(token) {
   win = new BrowserWindow({
     width: 1360,
     height: 860,
-    backgroundColor: '#0b0d11',
+    backgroundColor: '#0b0c0f',
     autoHideMenuBar: true,
     title: 'agentdeck',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),

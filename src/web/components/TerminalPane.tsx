@@ -10,6 +10,9 @@ import type { SessionView } from '../../shared/types'
 import { inputChunks, TerminalStream, type StreamStatus } from '../../shared/terminalStream'
 import { TOKEN } from '../api'
 
+/** Paketle gelen yazı tipi; main.tsx ilk çizimden önce yükler, xterm hücre ölçüsünü doğru alır. */
+export const TERMINAL_FONT = '"JetBrains Mono Variable", ui-monospace, "Fira Code", Menlo, monospace'
+
 /** Menü odağı çalsa da son odaklanan pane F6 alır. */
 let lastPtyF6: (() => void) | null = null
 
@@ -73,14 +76,15 @@ export function TerminalPane({
     const term = new Terminal({
       cols: 120, rows: 32, scrollback: 1000,
       fontSize: 13,
-      fontFamily: 'ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace',
+      lineHeight: 1.15,
+      fontFamily: TERMINAL_FONT,
       cursorBlink: !compact, cursorInactiveStyle: 'block', disableStdin: true,
       theme: {
-        ...THEMES[preferences.theme],
+        ...THEMES[preferences.theme].terminal,
         // Uygulamanın kaydırma çubuklarıyla aynı palet.
-        scrollbarSliderBackground: 'rgba(160, 163, 174, 0.22)',
-        scrollbarSliderHoverBackground: 'rgba(160, 163, 174, 0.42)',
-        scrollbarSliderActiveBackground: 'rgba(155, 180, 255, 0.55)',
+        scrollbarSliderBackground: 'rgba(160, 163, 174, 0.18)',
+        scrollbarSliderHoverBackground: 'rgba(160, 163, 174, 0.36)',
+        scrollbarSliderActiveBackground: 'rgba(160, 175, 255, 0.5)',
       },
     })
     termRef.current = term
@@ -234,7 +238,7 @@ export function TerminalPane({
   }, [])
 
   useEffect(() => {
-    if (termRef.current) termRef.current.options.theme = { ...termRef.current.options.theme, ...THEMES[preferences.theme] }
+    if (termRef.current) termRef.current.options.theme = { ...termRef.current.options.theme, ...THEMES[preferences.theme].terminal }
   }, [preferences.theme])
 
   const needsControl = Boolean(status?.ready && status.live && !status.owned)
@@ -247,11 +251,11 @@ export function TerminalPane({
     }}>
       {menuPosition && <ActionMenu label="Terminal işlemleri" position={menuPosition} onClose={closeMenu} actions={[
         ...(onLayout ? [{ label: 'Böl / panel yerleşimi…', icon: 'grid' as const, run: onLayout }] : []),
-        { label: 'Terminal rengi…', icon: 'settings', run: () => setColorOpen(true) },
+        { label: 'Terminal rengi…', icon: 'palette', run: () => setColorOpen(true) },
         { label: 'Seçimi kopyala', icon: 'copy', disabled: !termRef.current?.hasSelection(), run: () => { navigator.clipboard.writeText(termRef.current?.getSelection() ?? '').catch(() => setClipboardError('Pano erişimi reddedildi. Ctrl+Shift+C ile kopyalayabilirsiniz.')) } },
         { label: 'Yapıştır', icon: 'terminal', disabled: !stateHealthy || !status?.ready || !status.live || !status.owned, run: () => { navigator.clipboard.readText().then(text => termRef.current?.paste(text)).catch(() => setClipboardError('Pano erişimi reddedildi. Ctrl+Shift+V ile yapıştırabilirsiniz.')) } },
         { label: 'Tümünü seç', icon: 'copy', run: () => termRef.current?.selectAll() },
-        { label: 'En alta git', icon: 'back', run: () => termRef.current?.scrollToBottom() },
+        { label: 'En alta git', icon: 'chevron', run: () => termRef.current?.scrollToBottom() },
         { label: 'Terminal geçmişini yükle', icon: 'archive', disabled: !status?.ready || !status.live || status.historyLoaded, run: () => actions.current.history() },
         { label: 'Terminale F6 gönder', icon: 'terminal', disabled: !stateHealthy || !status?.owned, run: () => actions.current.f6() },
         { label: 'Yeniden bağlan', icon: 'refresh', run: () => setRetry(value => value + 1) },
@@ -274,7 +278,7 @@ export function TerminalPane({
           <Icon name="refresh" />
         </button>
       </div>
-      {!runId && <p>Bu oturumda henüz Run çalışmadı.</p>}
+      {!runId && <p className="terminal-empty">Bu oturumda henüz Run çalışmadı.</p>}
       <div ref={hostRef} className="term-host" />
     </div>
   )

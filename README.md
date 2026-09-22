@@ -27,14 +27,18 @@ tarayıcıyı kapatmak ajanı öldürmez.
 - **Klasör seçici** — masaüstünde “Proje ekle → Klasör seç…” sistem penceresini açar. Tarayıcıda tam klasör yolu yazılır.
 - **Oturum panosu** — projeye göre gruplanmış gerçek terminal önizlemeleri, program/proje/oturum araması, yaşam döngüsü, yaş ve çalışma dizini hatası. Görünen taramanın ilk 24 oturumu için önizleme alınır; oturum veya grid açıkken bu iş istenmez. Karttan tek terminale geçilir. Oklarla aday değişir, Enter açar; poll sırayı ve odağı değiştirmez.
 - **Dar ekran** — 700 px ve altında proje/oturum listesi çekmecede açılır; Escape odağı açan düğmeye döndürür.
-- **Klavye** — F6 terminalden uygulama çubuğuna çıkar; masaüstü menüsü gerçek F6'yı PTY'ye gönderir. Escape PTY'de kalır, kromda taramaya döner.
+- **Komut paleti** — `Ctrl+Shift+P` (terminal dışında `Ctrl+K`) oturumlar, yeni oturum ve komutlar arasında arar. Onay bekleyen oturum en üstte gelir; "yeni oturum" satırı pencere açmadan ajanı proje klasöründe başlatır, grid açıksa grid'e ekler.
+- **Klavye** — `Alt+1…9` kenar çubuğundaki oturuma atlar (Alt basılıyken numaralar görünür), `Ctrl+PgUp/PgDn` önceki/sonraki oturuma geçer, `Ctrl+Shift+N` yeni oturum açar, grid'de `Ctrl+Shift+Enter` paneli büyütür. Bu kısayollar terminal odaktayken de çalışır ve PTY'ye gönderilmez ([ADR 0015](docs/adr/0015-keyboard-first-workspace.md)). Taramada `/` aramaya gider. F6 terminalden uygulama çubuğuna çıkar; masaüstü menüsü gerçek F6'yı PTY'ye gönderir. Escape PTY'de kalır, kromda taramaya döner. Masaüstünde yenileme `Ctrl+Shift+R`, pencereyi kapatma `Ctrl+Shift+W`'dir; `Ctrl+R`/`Ctrl+W` terminalde kalır.
+- **Dikkat durumu** — onay veya yanıt bekleyen terminal kenar çubuğunda, kartta, grid sekmesinde ve başlıkta turuncu işaretlenir; pano başlığındaki sayaç bunları filtreler. Canlı Run "Çalışıyor" ve "Sessiz" olarak ayrılır.
 - **Terminal grid** — birden çok oturumun terminali yan yana açılır. Sekmeyi
   sürükleyip bir panelin kenarına bırakarak bölünür, aradaki çizgiyle
   boyutlandırılır. Oturumlar kenar çubuğundan veya karttan sürüklenerek ya da
   “Grid'e ekle” ile eklenir; en çok 8 panel. Grid gezinme çubuğunda oklar ve
   Home/End panel adayını seçer; Enter/Space terminale geçer. “Seçilen panelin
   yerleşimi” ile klavyeden bölme, sekmeleştirme, boyutlandırma ve panel kapatma
-  yapılır. Yerleşim bu cihazda hatırlanır.
+  yapılır. Grup başlığındaki simgeyle veya `Ctrl+Shift+Enter` ile panel tüm
+  alanı kaplar ve geri döner. Ayrı gridler tek satırlık çubukta seçilir; ad çift
+  tıklamayla değişir. Yerleşim bu cihazda hatırlanır.
   Gizli sekmede terminal açık tutulmaz ([ADR 0010](docs/adr/0010-terminal-grid.md)).
 - **Oturumlar arası geçiş** — tek oturum görünümünde yalnız odaktaki terminal açılır; ekran daemon'daki
   headless modelden kurulur. Scrollback açık “Terminal geçmişini yükle” eylemiyle gelir.

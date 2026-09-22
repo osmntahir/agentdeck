@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Isolation, Project } from '../../shared/types'
 import { PRESETS } from '../../shared/types'
 import { getProjectHead } from '../api'
+import { updatePreferences, usePreferences } from '../preferences'
 
 interface Props {
   busy: boolean
@@ -17,9 +18,11 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
   useEffect(() => {
     dialog.current?.showModal()
   }, [])
+  const preferences = usePreferences()
   const [name, setName] = useState('')
   // Preset yalnız başlangıç Command'ını doldurur; kalıcı ajan kimliği değildir.
-  const [presetIndex, setPresetIndex] = useState(0)
+  // Projede son kullanılan program önceden seçilir.
+  const [presetIndex, setPresetIndex] = useState(() => Math.max(0, PRESETS.findIndex((p) => p.label === preferences.lastProgram[project.id])))
   const [isolation, setIsolation] = useState<Isolation | null>('shared')
   const [hasHead, setHasHead] = useState<boolean | null>(null)
   useEffect(() => {
@@ -47,6 +50,7 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     if (busy || !ready || isolation === null) return
+    try { updatePreferences({ lastProgram: { ...preferences.lastProgram, [project.id]: PRESETS[presetIndex].label } }) } catch { /* tercih yalnız bu açılışta kalır */ }
     onCreate({ name: name.trim(), command: PRESETS[presetIndex].command, isolation })
   }
 
@@ -61,8 +65,23 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
       }}
     >
       <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <h2 id="new-session-title">Yeni oturum</h2>
-        <div className="dialog-sub">{project.name}</div>
+        <header className="dialog-head">
+          <h2 id="new-session-title">Yeni oturum</h2>
+          <div className="dialog-sub">{project.name}</div>
+        </header>
+
+        <fieldset className="program-picker">
+          <legend>Program</legend>
+          <div className="program-tiles">
+            {PRESETS.map((preset, index) => (
+              <label key={preset.label} className="program-tile">
+                <input type="radio" name="program" checked={presetIndex === index} onChange={() => setPresetIndex(index)} />
+                <ProgramIcon command={preset.command} />
+                <span>{preset.label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
         <label>
           Görev adı
@@ -70,45 +89,41 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="İsteğe bağlı, en çok 80 karakter"
+            placeholder="İsteğe bağlı · boş kalırsa programdan adlandırılır"
+            maxLength={80}
           />
         </label>
 
-        <label>
-          Program
-          <span className="program-choice"><ProgramIcon command={PRESETS[presetIndex].command} /><select aria-label="Program" value={presetIndex} onChange={(e) => setPresetIndex(Number(e.target.value))}>
-            {PRESETS.map((preset, index) => (
-              <option key={preset.label} value={index}>
-                {preset.label}
-              </option>
-            ))}
-          </select></span>
-        </label>
-
-        <div className="radio-group">
-          <label className="radio">
-            <input
-              type="radio"
-              checked={isolation === 'worktree'}
-              disabled={worktreeClosed}
-              onChange={() => setIsolation('worktree')}
-            />
-            <span>
-              <strong>İzole çalışma</strong> —{' '}
-              {worktreeClosed
-                ? 'projede commit yok; worktree açılamaz'
-                : project.kind === 'folder'
-                  ? "alt klasörlerdeki her Git deposu için worktree ve branch"
-                  : "kendi worktree'si ve branch'i"}
-            </span>
-          </label>
-          <label className="radio">
-            <input type="radio" checked={isolation === 'shared'} onChange={() => setIsolation('shared')} />
-            <span>
-              <strong>Proje klasörü</strong> — mevcut branch, yeni branch oluşturulmaz
-            </span>
-          </label>
-        </div>
+        <fieldset className="isolation-picker">
+          <legend>Çalışma yeri</legend>
+          <div className="radio-group">
+            <label className="radio">
+              <input type="radio" checked={isolation === 'shared'} onChange={() => setIsolation('shared')} />
+              <span>
+                <strong>Proje klasörü</strong>
+                <small>Mevcut branch; yeni branch oluşturulmaz.</small>
+              </span>
+            </label>
+            <label className="radio">
+              <input
+                type="radio"
+                checked={isolation === 'worktree'}
+                disabled={worktreeClosed}
+                onChange={() => setIsolation('worktree')}
+              />
+              <span>
+                <strong>İzole çalışma</strong>
+                <small>
+                  {worktreeClosed
+                    ? 'Projede commit yok; worktree açılamaz.'
+                    : project.kind === 'folder'
+                      ? 'Her alt Git deposu için worktree ve branch.'
+                      : "Kendi worktree'si ve branch'i."}
+                </small>
+              </span>
+            </label>
+          </div>
+        </fieldset>
         {worktreeClosed && (
           <p className="dialog-note muted">
             İlk commit sonrası izole çalışma da kullanılabilir.

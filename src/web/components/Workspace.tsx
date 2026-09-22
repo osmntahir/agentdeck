@@ -1,12 +1,13 @@
 import { projectStyle, usePreferences } from '../preferences'
 import { AgentMark } from './AgentMark'
 import { Icon } from './Icon'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ProjectView, SessionView, StateResponse } from '../../shared/types'
 import { commandLabel, formatAge, sessionAgeMs } from '../../shared/types'
-import { stateLabel } from './Sidebar'
+import { stateLabel, statusTone, StatusDot } from '../sessionStatus'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
 import { ProtectedBranches } from './ProtectedBranches'
+import { SHORTCUT_LABELS } from '../../shared/shortcuts'
 
 interface Props {
   state: StateResponse
@@ -21,9 +22,12 @@ interface Props {
   onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onNewSession: (project: ProjectView) => void
   onAddProject: () => void
+  onPalette: () => void
   onPreviewIds: (ids: string[]) => void
   onAddToGrid: (id: string) => void
 }
+
+type Filter = 'all' | 'attention' | 'live' | 'exited' | 'orphaned' | 'archived'
 
 function neighbor(ids: string[], current: string | null, delta: number): string | null {
   if (ids.length === 0) return null
@@ -32,8 +36,12 @@ function neighbor(ids: string[], current: string | null, delta: number): string 
   return ids[(index + delta + ids.length) % ids.length]!
 }
 
-function sessionAge(session: SessionView, now: number): string {
-  return formatAge(sessionAgeMs(session, now))
+function matchesFilter(session: SessionView, filter: Filter): boolean {
+  if (filter === 'archived') return session.archivedAt !== null
+  if (session.archivedAt !== null) return false
+  if (filter === 'all') return true
+  if (filter === 'attention') return session.lifecycle === 'live' && session.attention !== null
+  return session.lifecycle === filter
 }
 
 export function Workspace({
@@ -46,23 +54,28 @@ export function Workspace({
   onSessionMenu,
   onNewSession,
   onAddProject,
+  onPalette,
   onPreviewIds,
   onAddToGrid,
 }: Props) {
   const preferences = usePreferences()
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState<Filter>('all')
   const [candidate, setCandidate] = useState<string | null>(null)
+  const search = useRef<HTMLInputElement>(null)
   // Branch okuması yalnız istenince yapılır; poll edilmez.
   const [branchesFor, setBranchesFor] = useState<string | null>(null)
-  const live = state.sessions.filter((s) => s.lifecycle === 'live').length
-  const archivedCount = state.sessions.filter((s) => s.archivedAt !== null).length
+  const current = state.sessions.filter((s) => s.archivedAt === null)
+  const counts = {
+    attention: current.filter((s) => statusTone(s) === 'attention').length,
+    running: current.filter((s) => s.lifecycle === 'live').length,
+    finished: current.filter((s) => s.lifecycle !== 'live').length,
+    archived: state.sessions.length - current.length,
+  }
   // Arşivlenen oturum aktif taramada görünmez; yalnız Arşiv filtresiyle bulunur.
   const sessions = state.sessions.filter(
     (s) =>
-      (filter === 'archived'
-        ? s.archivedAt !== null
-        : s.archivedAt === null && (filter === 'all' || s.lifecycle === filter)) &&
+      matchesFilter(s, filter) &&
       `${s.name} ${commandLabel(s.command)} ${state.projects.find((p) => p.id === s.projectId)?.name ?? ''}`
         .toLocaleLowerCase('tr')
         .includes(query.toLocaleLowerCase('tr')),
@@ -85,6 +98,21 @@ export function Workspace({
     onFocusHandled()
   }, [focusId, onFocusHandled])
 
+  // "/" taramada aramaya odaklanır; metin alanı veya terminal içindeyken yazılır.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return
+      if (target instanceof Element && target.closest('.xterm, dialog')) return
+      if (!search.current || search.current.getClientRects().length === 0) return
+      event.preventDefault()
+      search.current.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // The daemon bounds preview work to 24 cards; searching brings matching cards into that window.
   const previewKey = sessions
     .slice(0, 24)
@@ -95,85 +123,92 @@ export function Workspace({
     return () => onPreviewIds([])
   }, [previewKey, onPreviewIds, previewsEnabled])
 
-  const moveCandidate = (delta: number) => {
-    const next = neighbor(sessionIds, candidate, delta)
-    if (!next) return
-    setCandidate(next)
-    document.getElementById(`session-card-${next}`)?.focus()
+  const focusCard = (id: string | null | undefined) => {
+    if (!id) return
+    setCandidate(id)
+    document.getElementById(`session-card-${id}`)?.focus()
   }
+
+  const filters: Array<[Filter, string, number | null]> = [
+    ['all', 'Tümü', current.length],
+    ['attention', 'Bekleyen', counts.attention || null],
+    ['live', 'Canlı', null],
+    ['exited', 'Sonlanan', null],
+    ['orphaned', 'Bağlantısız', null],
+    ['archived', 'Arşiv', counts.archived || null],
+  ]
 
   return (
     <>
       <header className="workspace-header">
-        <div>
-          <span className="breadcrumb">Çalışma alanı</span>
+        <div className="workspace-title">
           <h1>Oturumlar</h1>
+          {state.projects.length > 0 && (
+            <div className="workspace-stats" aria-label="Oturum özeti">
+              {counts.attention > 0 && (
+                <button className="stat stat-attention" onClick={() => setFilter('attention')}>
+                  <span className="status-dot" data-tone="attention" /> {counts.attention} onay/yanıt bekliyor
+                </button>
+              )}
+              <span className="stat"><span className="status-dot" data-tone="active" /> {counts.running} çalışıyor</span>
+              <span className="stat"><span className="status-dot" data-tone="done" /> {counts.finished} sonlandı</span>
+            </div>
+          )}
         </div>
         {state.projects.length > 0 && (
-          <button className="primary" onClick={onAddProject}>
-            + Proje ekle
-          </button>
+          <div className="workspace-header-actions">
+            <button className="ghost-button" onClick={onPalette} title={`Komut paleti · ${SHORTCUT_LABELS.palette}`}>
+              <Icon name="command" size={14} /> Hızlı başlat
+            </button>
+            <button className="primary" onClick={onAddProject}>
+              <Icon name="plus" size={14} /> Proje ekle
+            </button>
+          </div>
         )}
       </header>
       <div className="workspace-scroll">
-        <div className="workspace-tools">
-          <div className="filter-tabs">
-            {[
-              ['all', 'Tüm oturumlar'],
-              ['live', 'Canlı'],
-              ['exited', 'Sonlanan'],
-              ['orphaned', 'Bağlantısız'],
-              ['archived', 'Arşiv'],
-            ].map(([value, label]) => (
-              <button
-                aria-pressed={filter === value}
-                key={value}
-                className={filter === value ? 'on' : ''}
-                onClick={() => setFilter(value)}
-              >
-                {label}
-                {value === 'all' && <span>{state.sessions.length - archivedCount}</span>}
-                {value === 'archived' && archivedCount > 0 && <span>{archivedCount}</span>}
-              </button>
-            ))}
+        {state.projects.length > 0 && (
+          <div className="workspace-tools">
+            <div className="segmented filter-tabs" role="group" aria-label="Oturum filtresi">
+              {filters.map(([value, label, count]) => (
+                <button aria-pressed={filter === value} key={value} className={filter === value ? 'on' : ''} onClick={() => setFilter(value)}>
+                  {label}
+                  {count !== null && <span className={value === 'attention' ? 'count attention' : 'count'}>{count}</span>}
+                </button>
+              ))}
+            </div>
+            <label className="search-field">
+              <Icon name="search" size={14} />
+              <input
+                ref={search}
+                aria-label="Oturum ara"
+                placeholder="Oturum veya proje ara"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery('') }
+                  if (e.key === 'ArrowDown') { e.preventDefault(); focusCard(sessionIds[0]) }
+                }}
+              />
+              {!query && <kbd>/</kbd>}
+            </label>
           </div>
-          <input
-            aria-label="Oturum ara"
-            placeholder="Proje veya oturum ara…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
+        )}
         {!state.projects.length ? (
           <section className="welcome">
-            <div className="welcome-mark" aria-hidden="true">
-              &gt;_
-            </div>
-            <span className="eyebrow">İLK ÇALIŞMA ALANIN</span>
-            <h2>İyi işler bir projeyle başlar.</h2>
+            <div className="welcome-mark" aria-hidden="true"><Icon name="terminal" size={28} /></div>
+            <h2>Ajanlarını tek ekrandan yönet.</h2>
             <p>
-              Git projenizi veya yerel klasörünüzü ekleyin. Claude Code, Codex, Gemini veya terminal ile
-              kaldığınız yerden devam edin.
+              Bir Git deposu veya yerel klasör ekle. Claude Code, Codex, Gemini ya da düz bir terminali yan yana
+              çalıştır; pencereyi kapatsan da çalışmaya devam etsinler.
             </p>
-            <button className="primary" onClick={onAddProject}>
-              + İlk projeni ekle
+            <button className="primary large" onClick={onAddProject}>
+              <Icon name="plus" size={16} /> İlk projeni ekle
             </button>
             <div className="welcome-steps">
-              <div>
-                <b>01</b>
-                <strong>Projeni bağla</strong>
-                <span>Bilgisayarındaki proje klasörünü seç.</span>
-              </div>
-              <div>
-                <b>02</b>
-                <strong>Bir oturum başlat</strong>
-                <span>Programını ve çalışma biçimini belirle.</span>
-              </div>
-              <div>
-                <b>03</b>
-                <strong>Paralel ilerle</strong>
-                <span>Terminal ve değişiklikleri tek yerden izle.</span>
-              </div>
+              <div><b>1</b><strong>Projeni bağla</strong><span>Bilgisayarındaki klasörü seç.</span></div>
+              <div><b>2</b><strong>Ajanı başlat</strong><span>Tek tıkla ya da <kbd>Ctrl K</kbd> ile.</span></div>
+              <div><b>3</b><strong>Yan yana izle</strong><span>Grid'de terminalleri böl, <kbd>Alt+1…9</kbd> ile geç.</span></div>
             </div>
           </section>
         ) : (
@@ -184,12 +219,12 @@ export function Workspace({
               return (
                 <section className="project-section" key={project.id} style={projectStyle(project.id, preferences)}>
                   <header>
-                    <div className="project-monogram">{project.name.slice(0, 2).toUpperCase()}</div>
-                    <div>
-                      <h3>
-                        {project.name} <span>{owned.length}</span>{' '}
-                        {project.kind === 'folder' && <span>Yerel klasör</span>}
-                      </h3>
+                    <div className="project-monogram" aria-hidden="true">{project.name.slice(0, 2).toUpperCase()}</div>
+                    <div className="project-section-title">
+                      <h2>
+                        {project.name} <span className="count">{owned.length}</span>
+                        {project.kind === 'folder' && <span className="chip">Yerel klasör</span>}
+                      </h2>
                       <p title={project.path}>{project.path}</p>
                       {project.degraded && (
                         <p className="degraded-line" title={project.degraded}>
@@ -198,22 +233,25 @@ export function Workspace({
                       )}
                     </div>
                     <button
+                      className="ghost-button"
                       aria-expanded={branchesFor === project.id}
                       onClick={() => setBranchesFor(branchesFor === project.id ? null : project.id)}
                     >
-                      Branch'ler
+                      <Icon name="branch" size={14} /> Branch'ler
                     </button>
-                    <button onClick={() => onNewSession(project)}>+ Yeni oturum</button>
+                    <button className="ghost-button" onClick={() => onNewSession(project)}><Icon name="plus" size={14} /> Yeni oturum</button>
                   </header>
                   {branchesFor === project.id && <ProtectedBranches project={project} sessions={state.sessions} />}
                   <div className="session-grid" role="list">
                     {owned.map((session) => {
                       const preview = state.previews?.[session.id]
                       const selected = candidate === session.id
+                      const tone = statusTone(session)
                       return (
                         // Kart içinde ayrı "Grid'e ekle" düğmesi olduğu için kart kendisi düğme değildir.
                         <div
                           className={`session-card${selected ? ' candidate' : ''}${session.degraded ? ' is-degraded' : ''}`}
+                          data-tone={tone}
                           key={session.id}
                           id={`session-card-${session.id}`}
                           role="listitem"
@@ -228,30 +266,17 @@ export function Workspace({
                             if (e.target !== e.currentTarget) return
                             if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
                               e.preventDefault()
-                              moveCandidate(1)
+                              focusCard(neighbor(sessionIds, candidate, 1))
                               return
                             }
                             if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
                               e.preventDefault()
-                              moveCandidate(-1)
+                              focusCard(neighbor(sessionIds, candidate, -1))
                               return
                             }
-                            if (e.key === 'Home') {
+                            if (e.key === 'Home' || e.key === 'End') {
                               e.preventDefault()
-                              const first = sessionIds[0]
-                              if (first) {
-                                setCandidate(first)
-                                document.getElementById(`session-card-${first}`)?.focus()
-                              }
-                              return
-                            }
-                            if (e.key === 'End') {
-                              e.preventDefault()
-                              const last = sessionIds[sessionIds.length - 1]
-                              if (last) {
-                                setCandidate(last)
-                                document.getElementById(`session-card-${last}`)?.focus()
-                              }
+                              focusCard(e.key === 'Home' ? sessionIds[0] : sessionIds[sessionIds.length - 1])
                               return
                             }
                             if (e.key !== 'Enter' && e.key !== ' ') return
@@ -261,17 +286,23 @@ export function Workspace({
                         >
                           <div className="card-heading">
                             <AgentMark session={session} />
-                            <span className="card-state">
-                              <span className={`dot ${session.lifecycle}`} />
+                            <h3 title={session.name}>{session.name}</h3>
+                            <span className="card-state" data-tone={tone}>
+                              <StatusDot session={session} />
                               {stateLabel(session)}
                             </span>
                           </div>
-                          <h3>{session.name}</h3>
                           <div className="card-meta">
-                            <span className="card-project">{project.name}</span>
+                            <span title={session.cwd}>{session.isolation === 'worktree' ? 'İzole çalışma' : 'Proje klasörü'}</span>
                             <span aria-hidden="true">·</span>
-                            <span className="card-branch" title={session.cwd}>{session.isolation === 'worktree' ? 'İzole çalışma' : 'Proje klasörü'}</span>
+                            <span className="card-age">{session.archivedAt !== null && 'Arşivde · '}{formatAge(sessionAgeMs(session, now))}</span>
                           </div>
+                          {session.attention && session.lifecycle === 'live' && (
+                            <div className="card-attention" title={session.attention.message}>
+                              <Icon name="alert" size={14} />
+                              <span>{session.attention.message || 'Terminal girdinizi bekliyor'}</span>
+                            </div>
+                          )}
                           {session.degraded && (
                             <div className="card-degraded" title={session.degraded}>
                               {session.degraded}
@@ -286,35 +317,29 @@ export function Workspace({
                                   ? 'Önizleme için terminali açın.'
                                   : 'Terminal önizlemesi hazırlanıyor…'}
                           </pre>}
-                          <footer>
-                            <span>
-                              {session.archivedAt !== null && 'Arşivde · '}
-                              <span className="card-age">{sessionAge(session, now)}</span>
-                            </span>
-                            <span className="card-actions">
-                              <button
-                                className="card-grid-add"
-                                title="Grid’e ekle"
-                                aria-label="Grid’e ekle"
-                                tabIndex={-1}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  onAddToGrid(session.id)
-                                }}
-                              >
-                                <Icon name="grid" />
-                              </button>
-<button title="Oturum işlemleri" aria-label={`${session.name} işlemleri`} onClick={e => { e.stopPropagation(); onSessionMenu(session.id, e) }}><Icon name="more" /></button>
-                            </span>
-                          </footer>
+                          <div className="card-actions">
+                            <button
+                              className="icon-button ghost card-grid-add"
+                              title="Grid’e ekle"
+                              aria-label="Grid’e ekle"
+                              tabIndex={-1}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onAddToGrid(session.id)
+                              }}
+                            >
+                              <Icon name="grid" size={14} />
+                            </button>
+                            <button className="icon-button ghost" title="Oturum işlemleri" aria-label={`${session.name} işlemleri`} onClick={e => { e.stopPropagation(); onSessionMenu(session.id, e) }}><Icon name="more" size={14} /></button>
+                          </div>
                         </div>
                       )
                     })}
                     {filter !== 'archived' && (
                       <button className="new-session-card" onClick={() => onNewSession(project)}>
-                        <span>+</span>
-                        <strong>Yeni bir işe başla</strong>
-                        <small>Bu projede bir oturum aç</small>
+                        <span className="new-session-plus"><Icon name="plus" size={18} /></span>
+                        <strong>Yeni oturum</strong>
+                        <small>{project.name} içinde ajan veya terminal başlat</small>
                       </button>
                     )}
                   </div>
@@ -340,12 +365,17 @@ export function Workspace({
       </div>
       <footer className="workspace-footer">
         <span>
-          {state.projects.length} proje · {state.sessions.length - archivedCount} oturum
-          {archivedCount > 0 && ` · ${archivedCount} arşivde`}
+          {state.projects.length} proje · {current.length} oturum
+          {counts.archived > 0 && ` · ${counts.archived} arşivde`}
           {/* Kayıt tavanı yalnız yaklaşınca söylenir; arşivler de sayılır. */}
           {state.sessions.length >= 200 && ` · en çok 256 kayıt (arşivler dahil)`}
         </span>
-        <span>Oturumlar pencere kapansa da çalışır.</span>
+        <span className="footer-hints">
+          <span><kbd>Ctrl K</kbd> palet</span>
+          <span><kbd>Alt+1…9</kbd> oturuma geç</span>
+          <span><kbd>/</kbd> ara</span>
+          <span>Oturumlar pencere kapansa da çalışır.</span>
+        </span>
       </footer>
     </>
   )

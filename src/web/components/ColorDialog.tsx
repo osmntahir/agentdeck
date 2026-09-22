@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { updatePreferences, usePreferences } from '../preferences'
+import { projectColor, updatePreferences, usePreferences } from '../preferences'
 
 export function ColorDialog({ id, projectId, name, onClose }: { id: string; projectId?: string; name: string; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const preferences = usePreferences()
   const key = projectId ? 'terminalColors' : 'colors'
-  const inherited = projectId ? preferences.colors[projectId] ?? '#9aaad4' : '#9aaad4'
+  const inherited = projectColor(projectId ?? id, preferences)
   const [color, setColor] = useState(preferences[key][id] ?? inherited)
   const [error, setError] = useState('')
   useEffect(() => { dialog.current?.showModal() }, [])
