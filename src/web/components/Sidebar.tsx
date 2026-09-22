@@ -6,7 +6,7 @@ import { AgentMark } from './AgentMark'
 import { Icon } from './Icon'
 import { useState } from 'react'
 import type { ProjectView, SessionView, StateResponse } from '../../shared/types'
-import type { OrphanScanResult, ProjectDeletePreview } from '../api'
+import type { OrphanScanResult } from '../api'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
 
 interface Props {
@@ -20,12 +20,8 @@ interface Props {
   onHome: () => void
   healthy: boolean
   onNewSession: (project: ProjectView) => void
-  onDeleteProject: (id: string) => void
-  /** Oturumu olan projenin silme önizlemesi; onay bu projede gösterilir. */
-  projectDelete: ProjectDeletePreview | null
-  onPreviewProjectDelete: (id: string) => void
-  onConfirmProjectDelete: () => void
-  onCancelProjectDelete: () => void
+  /** Onay penceresini App açar; kenar çubuğu yalnız isteği iletir. */
+  onRemoveProject: (project: ProjectView) => void
   orphans: OrphanScanResult | null
   onRefreshOrphans: () => void
   view: 'sessions' | 'grid'
@@ -44,11 +40,7 @@ export function Sidebar({
   onHome,
   healthy,
   onNewSession,
-  onDeleteProject,
-  projectDelete,
-  onPreviewProjectDelete,
-  onConfirmProjectDelete,
-  onCancelProjectDelete,
+  onRemoveProject,
   orphans,
   onRefreshOrphans,
   view,
@@ -60,7 +52,6 @@ export function Sidebar({
   const [colorProject, setColorProject] = useState<{ id: string; name: string } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ id: string; name: string; position: MenuPosition } | null>(null)
   const [colorError, setColorError] = useState<string | null>(null)
-  const [confirmId, setConfirmId] = useState<string | null>(null)
   const [rowFocus, setRowFocus] = useState<string | null>(null)
   const visibleIds = state.projects.flatMap((project) =>
     state.sessions.filter((session) => session.projectId === project.id && inProjectNavigation(session)).map((s) => s.id),
@@ -111,59 +102,14 @@ export function Sidebar({
                   )}
                 </div>
                 <div className="project-actions">
-                  {confirmId === project.id ? (
-                    <>
-                      <button
-                        // Oturumu olmayan projede yalnız kayıt kaldırılır; dosyalara dokunulmaz.
-                        title="Proje kaydını kaldır (dosyalara dokunulmaz)"
-                        onClick={() => {
-                          setConfirmId(null)
-                          onDeleteProject(project.id)
-                        }}
-                      >
-                        Kaldır?
-                      </button>
-                      <button title="Vazgeç" onClick={() => setConfirmId(null)}>
-                        ×
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button title="Yeni oturum" onClick={() => onNewSession(project)}>
-                        +
-                      </button>
-                      <button
-                        className="project-remove"
-                        title="Projeyi kaldır"
-                        // Oturumu olan projede önce neyin silineceği gösterilir.
-                        onClick={() => (owned.length > 0 ? onPreviewProjectDelete(project.id) : setConfirmId(project.id))}
-                      >
-                        ×
-                      </button>
-                    </>
-                  )}
+                  <button title="Yeni oturum" onClick={() => onNewSession(project)}>
+                    +
+                  </button>
+                  <button className="project-remove" title="Projeyi kaldır" onClick={() => onRemoveProject(project)}>
+                    ×
+                  </button>
                 </div>
               </div>
-
-              {projectDelete?.projectId === project.id && (
-                <div className="project-delete-confirm" role="alert">
-                  <span>{projectDeleteSummary(projectDelete)}</span>
-                  {/* Kullanıcı silinecek tam yolları onaydan önce görür. */}
-                  <ul>
-                    {projectDelete.sessions
-                      .filter((s) => s.isolation === 'worktree')
-                      .map((s) => (
-                        <li key={s.id}>
-                          <code>{s.cwd}</code>
-                        </li>
-                      ))}
-                  </ul>
-                  <div className="project-actions">
-                    <button className="danger" onClick={onConfirmProjectDelete}>Sil (branch'ler kalır)</button>
-                    <button onClick={onCancelProjectDelete}>Vazgeç</button>
-                  </div>
-                </div>
-              )}
 
               {/* Arşivlenen oturum gezinmede görünmez; proje silme onayında yine sayılır. */}
               {owned.filter(inProjectNavigation).map((session) => (
@@ -198,18 +144,6 @@ export function Sidebar({
         {notifications}
       </div>
     </aside>
-  )
-}
-
-/** Proje silmenin neyi götürüp neyi koruyacağını onaydan önce söyler. */
-function projectDeleteSummary(preview: ProjectDeletePreview): string {
-  const isolated = preview.sessions.filter((s) => s.isolation === 'worktree')
-  const changed = isolated.reduce((sum, s) => sum + s.changedEntries, 0)
-  const ignored = isolated.reduce((sum, s) => sum + s.ignoredEntries, 0)
-  return (
-    `${preview.sessions.length} oturum kaydı kaldırılır, ${isolated.length} izole çalışma kopyası silinir` +
-    (changed + ignored > 0 ? ` (${changed} değişiklik ve ${ignored} ignored giriş dahil)` : '') +
-    ". Ortak klasör dosyaları ve branch'ler korunur."
   )
 }
 

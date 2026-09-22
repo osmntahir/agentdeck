@@ -848,26 +848,6 @@ button.primary {
 .project-section > header > button + button {
   margin-left: 0;
 }
-.project-delete-confirm {
-  display: grid;
-  gap: 6px;
-  margin: 4px 8px 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: 12px;
-}
-.project-delete-confirm ul {
-  margin: 0;
-  padding-left: 16px;
-  max-height: 120px;
-  overflow: auto;
-  font-size: 11px;
-}
-.project-delete-confirm .danger {
-  color: var(--red);
-  border-color: color-mix(in srgb, var(--red) 45%, transparent);
-}
 /* Kaldırma "+" düğmesinin yanında hep görünmesin; üzerine gelince veya odakta çıkar. */
 .project-remove {
   opacity: 0;
@@ -881,10 +861,36 @@ button.primary {
     opacity: 1;
   }
 }
-.project-delete-confirm code,
-.delete-target code {
-  font-family: ui-monospace, monospace;
+.confirm-paths {
+  display: grid;
+  gap: 6px;
+  max-height: 200px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.confirm-paths span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.confirm-paths code,
+.confirm-dialog .dialog-note code {
+  font: 11px/1.5 ui-monospace, monospace;
   overflow-wrap: anywhere;
+}
+.confirm-dialog h2 {
+  overflow-wrap: anywhere;
+}
+button.danger-action {
+  background: var(--red);
+  border-color: var(--red);
+  color: #16080a;
+  font-weight: 600;
+}
+button.danger-action:hover {
+  background: color-mix(in srgb, var(--red) 85%, #fff);
 }
 /* Eylemin tek cümlelik açıklaması; terminal boyutunu değiştirmemek için üstte yüzer. */
 .action-hint {
@@ -1706,8 +1712,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .setting-row strong { display: block; font-size: 13px; }
 .setting-row small { display: block; color: var(--muted); margin-top: 5px; font-size: 12px; }
 .setting-row input { width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
-.recovery-notice, .delete-confirm-bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12px; }
-.recovery-notice > span, .delete-confirm-bar > span { flex: 1; }
+.recovery-notice { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12px; }
+.recovery-notice > span { flex: 1; }
 .notification-center { position: relative; }
 .notification-list { text-align: left; position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 60; width: min(340px, calc(100vw - 24px)); padding: 12px; background: #1b1e24; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 40px #0008; max-height: 60dvh; overflow: auto; }
 .notification-list > button { display: flex; flex-direction: column; width: 100%; text-align: left; background: transparent; padding: 10px; margin-bottom: 4px; }

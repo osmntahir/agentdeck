@@ -4,6 +4,7 @@ import { Icon } from './components/Icon'
 import { AgentMark } from './components/AgentMark'
 import { BranchPicker } from './components/BranchPicker'
 import { SettingsDialog } from './components/SettingsDialog'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { usePreferences, terminalStyle } from './preferences'
 import { useWorkspaceLifecycle } from './useWorkspaceLifecycle'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -51,7 +52,21 @@ function deleteQuestion(preview: api.DeletePreview): string {
   const parts: string[] = []
   if (preview.changedEntries > 0) parts.push(`${preview.changedEntries} değişiklik`)
   if (preview.ignoredEntries > 0) parts.push(`${preview.ignoredEntries} ignored giriş (.env ve bağımlılıklar dahil)`)
-  return parts.length > 0 ? `${parts.join(' ve ')} ile birlikte klasörü sil?` : 'klasörü sil?'
+  return parts.length > 0
+    ? `Çalışma kopyası ${parts.join(' ve ')} ile birlikte silinir. Bu geri alınamaz.`
+    : 'Çalışma kopyası silinir. Bu geri alınamaz.'
+}
+
+/** Proje silmenin neyi götürüp neyi koruyacağını onaydan önce söyler. */
+function projectDeleteSummary(preview: api.ProjectDeletePreview): string {
+  const isolated = preview.sessions.filter((s) => s.isolation === 'worktree')
+  const changed = isolated.reduce((sum, s) => sum + s.changedEntries, 0)
+  const ignored = isolated.reduce((sum, s) => sum + s.ignoredEntries, 0)
+  return (
+    `${preview.sessions.length} oturum kaydı kaldırılır, ${isolated.length} izole çalışma kopyası silinir` +
+    (changed + ignored > 0 ? ` (${changed} değişiklik ve ${ignored} ignored giriş dahil)` : '') +
+    ". Ortak klasör dosyaları ve branch'ler korunur."
+  )
 }
 
 const EMPTY: StateResponse = {
@@ -85,8 +100,9 @@ export function App() {
   const [pendingGridAdd, setPendingGridAdd] = useState<string | null>(null)
   const [addingProject, setAddingProject] = useState(false)
   const [dialogProject, setDialogProject] = useState<Project | null>(null)
-  const [pendingDelete, setPendingDelete] = useState<api.DeletePreview | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; preview: api.DeletePreview } | null>(null)
   const [projectDelete, setProjectDelete] = useState<api.ProjectDeletePreview | null>(null)
+  const [projectRemove, setProjectRemove] = useState<{ id: string; name: string } | null>(null)
   const [orphans, setOrphans] = useState<api.OrphanScanResult | null>(null)
   const [stateHealthy, setStateHealthy] = useState(false)
   const previewIds = useRef<string[]>([])
@@ -248,16 +264,6 @@ export function App() {
         event.preventDefault()
         return
       }
-      if (pendingDelete) {
-        setPendingDelete(null)
-        event.preventDefault()
-        return
-      }
-      if (projectDelete) {
-        setProjectDelete(null)
-        event.preventDefault()
-        return
-      }
       if (addingProject) {
         setAddingProject(false)
         event.preventDefault()
@@ -279,7 +285,7 @@ export function App() {
       window.removeEventListener('keydown', onF6, true)
       window.removeEventListener('keydown', onKey)
     }
-  }, [activeId, addingProject, launchOpen, launching, pendingDelete, projectDelete])
+  }, [activeId, addingProject, launchOpen, launching])
 
   const run = (promise: Promise<unknown>) => {
     setError(null)
@@ -374,28 +380,26 @@ export function App() {
   }
 
   // Silme her zaman taze bir önizlemeyle başlar: kullanıcı neyin gideceğini görür.
-  const askDelete = (target = active) => {
-    if (!target) return
-    const active = target
-    setActiveId(active.id)
+  // Onay bulunulan ekranda açılır; oturuma geçilmez.
+  const askDelete = (target: SessionView) => {
     setError(null)
     api
-      .previewSessionDelete(active.id)
-      .then(setPendingDelete)
+      .previewSessionDelete(target.id)
+      .then((preview) => setPendingDelete({ id: target.id, name: target.name, preview }))
       .catch((e) => setError(e.message))
   }
 
   const confirmDelete = () => {
-    if (!active || !pendingDelete) return
-    const sessionId = active.id
-    const token = pendingDelete.confirmationToken
+    if (!pendingDelete) return
+    const { id: sessionId, name } = pendingDelete
+    const token = pendingDelete.preview.confirmationToken
     setPendingDelete(null)
     setError(null)
     api
       .deleteSession(sessionId, token)
       .then(() => {
         const neighbor = nextVisibleSession(boardSessionIds(state), sessionId)
-        setActiveId(null)
+        setActiveId((current) => (current === sessionId ? null : current))
         setScanFocusId(neighbor)
         refreshOrphans()
         return refresh()
@@ -406,7 +410,7 @@ export function App() {
         if (e instanceof api.ApiCallError && e.code === 'confirmation_stale') {
           api
             .previewSessionDelete(sessionId)
-            .then(setPendingDelete)
+            .then((preview) => setPendingDelete({ id: sessionId, name, preview }))
             .catch(() => setPendingDelete(null))
         }
         return refresh()
@@ -501,11 +505,11 @@ export function App() {
           selectSession(id)
         })}
         onNewSession={(project) => navigate(() => setDialogProject(project))}
-        onDeleteProject={(id) => run(api.deleteProject(id))}
-        projectDelete={projectDelete}
-        onPreviewProjectDelete={askProjectDelete}
-        onConfirmProjectDelete={confirmProjectDelete}
-        onCancelProjectDelete={() => setProjectDelete(null)}
+        onRemoveProject={(project) => {
+          // Oturumu olan projede önce neyin silineceği gösterilir; olmayanda yalnız kayıt kalkar.
+          if (state.sessions.some((s) => s.projectId === project.id)) askProjectDelete(project.id)
+          else setProjectRemove({ id: project.id, name: project.name })
+        }}
         orphans={orphans}
         onRefreshOrphans={refreshOrphans}
       />}</SidebarShell>
@@ -583,7 +587,6 @@ export function App() {
             </header>
             {(active.degraded || activeProject?.degraded) && <div className="error">{active.degraded ?? activeProject?.degraded}</div>}
             {state.terminals?.[active.id]?.outputPressure && <div className="review-note" role="status">Çıktı işleniyor…</div>}
-            {pendingDelete && <div className="delete-confirm-bar" role="alert"><span>{pendingDelete.isolation === 'shared' ? 'Yalnız oturum kaydı kaldırılır; klasör korunur.' : deleteQuestion(pendingDelete)}</span><button onClick={confirmDelete}>Sil</button><button onClick={() => setPendingDelete(null)}>Vazgeç</button></div>}
             {showTrust && (
               <div className="trust-note" role="note">
                 <span>{TRUST_NOTE}</span>
@@ -595,12 +598,6 @@ export function App() {
                 >
                   Kapat
                 </button>
-              </div>
-            )}
-            {pendingDelete && (
-              <div className="pad muted delete-target">
-                {pendingDelete.isolation === 'shared' ? 'Korunacak klasör: ' : 'Silinecek klasör: '}
-                <code>{pendingDelete.cwd}</code>
               </div>
             )}
 
@@ -662,6 +659,52 @@ export function App() {
       {menu && menuSession && <ActionMenu position={menu.position} actions={menuActions} onClose={closeMenu} />}
       {colorSession && <ColorDialog id={colorSession.id} projectId={colorSession.projectId} name={colorSession.name} onClose={() => setColorSession(null)} />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {pendingDelete && (
+        <ConfirmDialog
+          title={`“${pendingDelete.name}” silinsin mi?`}
+          confirmLabel={pendingDelete.preview.isolation === 'shared' ? 'Kaydı kaldır' : 'Klasörü sil'}
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        >
+          <p className="dialog-note">
+            {pendingDelete.preview.isolation === 'shared'
+              ? 'Yalnız oturum kaydı kaldırılır; proje klasörü ve dosyaları korunur.'
+              : deleteQuestion(pendingDelete.preview)}
+          </p>
+          <div className="confirm-paths">
+            <span>{pendingDelete.preview.isolation === 'shared' ? 'Korunacak klasör' : 'Silinecek klasör'}</span>
+            <code>{pendingDelete.preview.cwd}</code>
+          </div>
+          {pendingDelete.preview.branch && <p className="dialog-note muted">Branch korunur: <code>{pendingDelete.preview.branch}</code></p>}
+        </ConfirmDialog>
+      )}
+      {projectDelete && (
+        <ConfirmDialog
+          title={`“${state.projects.find((p) => p.id === projectDelete.projectId)?.name ?? 'Proje'}” silinsin mi?`}
+          confirmLabel="Projeyi sil"
+          onConfirm={confirmProjectDelete}
+          onCancel={() => setProjectDelete(null)}
+        >
+          <p className="dialog-note">{projectDeleteSummary(projectDelete)}</p>
+          {projectDelete.sessions.some((s) => s.isolation === 'worktree') && (
+            <div className="confirm-paths">
+              <span>Silinecek klasörler</span>
+              {/* Kullanıcı silinecek tam yolları onaydan önce görür. */}
+              {projectDelete.sessions.filter((s) => s.isolation === 'worktree').map((s) => <code key={s.id}>{s.cwd}</code>)}
+            </div>
+          )}
+        </ConfirmDialog>
+      )}
+      {projectRemove && (
+        <ConfirmDialog
+          title={`“${projectRemove.name}” kaldırılsın mı?`}
+          confirmLabel="Kaydı kaldır"
+          onConfirm={() => { const { id } = projectRemove; setProjectRemove(null); run(api.deleteProject(id)) }}
+          onCancel={() => setProjectRemove(null)}
+        >
+          <p className="dialog-note">Yalnız proje kaydı kaldırılır; klasöre ve dosyalara dokunulmaz.</p>
+        </ConfirmDialog>
+      )}
       {addingProject && (
         <AddProjectDialog
           onCancel={() => setAddingProject(false)}
