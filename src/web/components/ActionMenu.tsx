@@ -5,7 +5,7 @@ import { Icon, type IconName } from './Icon'
 export interface MenuAction { label: string; icon: IconName; run: () => void; disabled?: boolean; danger?: boolean; description?: string }
 export interface MenuPosition { x: number; y: number; origin: HTMLElement | null }
 
-export function ActionMenu({ position, actions, onClose }: { position: MenuPosition; actions: MenuAction[]; onClose: () => void }) {
+export function ActionMenu({ position, actions, onClose, label = 'Oturum işlemleri' }: { position: MenuPosition; actions: MenuAction[]; onClose: () => void; label?: string }) {
   const ref = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const menu = ref.current!
@@ -18,7 +18,7 @@ export function ActionMenu({ position, actions, onClose }: { position: MenuPosit
     window.addEventListener('resize', close)
     return () => { window.removeEventListener('pointerdown', outside); window.removeEventListener('resize', close) }
   }, [position, onClose])
-  return createPortal(<div className="action-menu" role="menu" aria-label="Oturum işlemleri" ref={ref} onKeyDown={(e) => {
+  return createPortal(<div className="action-menu" role="menu" aria-label={label} ref={ref} onKeyDown={(e) => {
     e.stopPropagation()
     const items = [...ref.current!.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
     const current = items.indexOf(document.activeElement as HTMLButtonElement)

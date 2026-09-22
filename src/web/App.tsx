@@ -10,7 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import * as api from './api'
 import { AddProjectDialog } from './components/AddProjectDialog'
 import { Workspace } from './components/Workspace'
-import { Sidebar } from './components/Sidebar'
+import { Sidebar, stateLabel } from './components/Sidebar'
 import { SidebarShell } from './components/SidebarShell'
 import { TerminalPane } from './components/TerminalPane'
 import { DiffView } from './components/DiffView'
@@ -19,7 +19,7 @@ import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
 import { loadGridWorkspaces, saveGridWorkspaces, clearGridLayout, savedGridSessionIds } from './gridLayout'
 import { createStatePoller, pollPreviewIds } from '../shared/statePoll'
-import { sessionWorkActions } from '../shared/sessionActions'
+import { sessionWorkActions, sessionWorkCli } from '../shared/sessionActions'
 import {
   hasRunningProcesses,
   type Isolation,
@@ -175,7 +175,7 @@ export function App() {
   }, [scanVisible, setPreviewIds])
   const activeProject = active ? (state.projects.find((p) => p.id === active.projectId) ?? null) : null
   const showTrust = Boolean(
-    active && active.isolation === 'worktree' && active.lifecycle === 'live' && !trustHidden && sessionStorage.getItem(trustKey(active.id)) !== '1',
+    active && active.isolation === 'worktree' && active.lifecycle === 'live' && sessionWorkCli(active) !== null && !trustHidden && sessionStorage.getItem(trustKey(active.id)) !== '1',
   )
 
   // Önceki Run görüntüleri saklanmış kayıtlardan okunur; oturum veya Run değişince seçim güncele döner.
@@ -462,9 +462,9 @@ export function App() {
     { label: 'Değişiklikleri incele', icon: 'diff', run: () => { openSession(menuSession.id); setTab('diff') } },
     { label: 'Terminal rengi…', icon: 'settings', run: () => setColorSession(menuSession) },
     { label: 'Grid’e ekle', icon: 'grid', run: () => addToGrid(menuSession.id) },
-    ...(menuSession.archivedAt === null ? sessionWorkActions(menuSession).map(action => ({ label: action.label, description: action.description, icon: action.kind === 'stop' ? 'stop' as const : 'play' as const, disabled: !stateHealthy || Boolean(menuSession.degraded && action.kind !== 'stop'), run: () => executeAction(menuSession, action) })) : []),
+    ...(menuSession.archivedAt === null ? sessionWorkActions(menuSession).map(action => ({ label: action.label[0].toLocaleUpperCase('tr') + action.label.slice(1), description: action.description, icon: action.kind === 'stop' ? 'stop' as const : action.kind === 'restart' ? 'refresh' as const : 'play' as const, disabled: !stateHealthy || Boolean(menuSession.degraded && action.kind !== 'stop'), run: () => executeAction(menuSession, action) })) : []),
     { label: menuSession.archivedAt !== null ? 'Arşivden çıkar' : hasRunningProcesses(menuSession) ? 'Durdur ve arşivle' : 'Arşivle', icon: 'archive', disabled: !stateHealthy, run: () => toggleArchive(menuSession) },
-    { label: 'Workspace yolunu kopyala', icon: 'copy', run: () => { navigator.clipboard.writeText(menuSession.cwd).catch(() => setError(`Yol kopyalanamadı: ${menuSession.cwd}`)) } },
+    { label: 'Çalışma klasörünün yolunu kopyala', icon: 'copy', run: () => { navigator.clipboard.writeText(menuSession.cwd).catch(() => setError(`Yol kopyalanamadı: ${menuSession.cwd}`)) } },
     { label: 'Silme seçenekleri…', icon: 'trash', danger: true, disabled: !stateHealthy, run: () => askDelete(menuSession) },
   ] : []
 
@@ -501,7 +501,6 @@ export function App() {
           selectSession(id)
         })}
         onNewSession={(project) => navigate(() => setDialogProject(project))}
-        onAddProject={() => navigate(() => setAddingProject(true))}
         onDeleteProject={(id) => run(api.deleteProject(id))}
         projectDelete={projectDelete}
         onPreviewProjectDelete={askProjectDelete}
@@ -531,7 +530,6 @@ export function App() {
           <Workspace
             onPreviewIds={setPreviewIds}
             state={state}
-            healthy={stateHealthy}
             now={now}
             previewsEnabled={preferences.previews && !active && view === 'sessions'}
             focusId={scanFocusId}
@@ -575,8 +573,8 @@ export function App() {
             <header className="topbar clean-topbar" style={terminalStyle(active, preferences)} onContextMenu={event => showMenu(active.id, event)}>
               <button className="topbar-back icon-button" aria-keyshortcuts="F6 Escape" title="Oturumlara dön" aria-label="Oturumlara dön" onClick={leaveToScan}><Icon name="back" /></button>
               <AgentMark session={active} />
-              <div className="topbar-info"><div className="title">{active.name}</div><button className="workspace-path path-copy" title={copiedPath ? 'Yol kopyalandı' : `Workspace: ${active.cwd} · kopyala`} onClick={copyPath}>{activeProject?.name ?? 'Workspace'} · {active.cwd}</button></div>
-              <span className={`status-badge ${active.lifecycle}`} title={active.degraded ?? undefined}><span className={`dot ${active.lifecycle}`} />{active.archivedAt !== null ? 'Arşiv' : active.lifecycle === 'live' ? active.activity === 'idle' ? 'Sessiz' : 'Canlı' : 'Geçmiş'}</span>
+              <div className="topbar-info"><div className="title">{active.name}</div><button className="workspace-path path-copy" title={copiedPath ? 'Yol kopyalandı' : `Çalışma klasörü: ${active.cwd} · kopyala`} onClick={copyPath}>{activeProject?.name ?? 'Workspace'} · {active.cwd}</button></div>
+              <span className={`status-badge ${active.lifecycle}`} title={active.degraded ?? undefined}><span className={`dot ${active.lifecycle}`} />{active.archivedAt !== null ? 'Arşiv' : active.lifecycle === 'live' ? active.activity === 'idle' ? 'Sessiz' : 'Canlı' : stateLabel(active)}</span>
               {active.isolation === 'worktree' && <span className="badge">İzole</span>}
               <BranchPicker key={active.id} session={active} healthy={stateHealthy} />
               <div className="tabs"><button className={tab === 'terminal' ? 'on' : ''} onClick={() => setTab('terminal')}><Icon name="terminal" /> Terminal</button><button className={tab === 'diff' ? 'on' : ''} onClick={() => setTab('diff')}><Icon name="diff" /> Değişiklikler</button></div>
@@ -595,7 +593,7 @@ export function App() {
                     setTrustHidden(true)
                   }}
                 >
-                  gizle
+                  Kapat
                 </button>
               </div>
             )}

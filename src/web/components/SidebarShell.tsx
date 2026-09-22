@@ -48,7 +48,7 @@ export function SidebarShell({ children }: { children: (navigate: (action: () =>
           trigger.current?.focus()
         }}
         onCancel={(event) => { event.preventDefault(); close() }}>
-        <button className="drawer-close" type="button" onClick={close}>Gezinmeyi kapat</button>
+        <button className="drawer-close" type="button" aria-label="Gezinmeyi kapat" title="Gezinmeyi kapat" onClick={close}>×</button>
         {children(navigate)}
       </dialog>
     </>

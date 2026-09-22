@@ -37,7 +37,7 @@ export function ProtectedBranches({ project, sessions }: { project: Project; ses
       <div className="branch-panel-head">
         <strong>Korunan branch'ler</strong>
         <span className="muted">Oturum silinse de branch kalır; uygulama branch silmez, merge veya PR açmaz.</span>
-        <button onClick={load}>yenile</button>
+        <button onClick={load}>Yenile</button>
       </div>
       {error && <div className="error">{error}</div>}
       {!data && !error && <div className="muted">yükleniyor…</div>}
@@ -58,7 +58,7 @@ export function ProtectedBranches({ project, sessions }: { project: Project; ses
                   <code title={branch.oid}>{branch.name}</code>
                   <code className="muted">{branch.oid.slice(0, 12)}</code>
                   <span className="muted">{session ? `oturum: ${session.name}` : 'kayıtlı oturum yok'}</span>
-                  <button onClick={() => copy(branch.name)}>{copied === branch.name ? 'kopyalandı' : 'kopyala'}</button>
+                  <button onClick={() => copy(branch.name)}>{copied === branch.name ? 'Kopyalandı' : 'Kopyala'}</button>
                 </div>
               )
             })

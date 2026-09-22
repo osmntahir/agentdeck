@@ -48,7 +48,7 @@ export function DiffView({ sessionId, isolation }: { sessionId: string; isolatio
         <header className="diff-repo-head"><Icon name="branch" /><strong>{repo.branch}</strong>{repo.path !== '.' && <span>{repo.path}</span>}{repo.baseCommit && scope === 'work' && <code title="Başlangıç commit'i">{repo.baseCommit.slice(0, 8)}</code>}</header>
         {repo.error && <p className="error">{repo.error}</p>}
         {repo.stale && <p className="error">Okuma sırasında HEAD değişti; yenileyin.</p>}
-        {repo.status && <details className="git-status-details"><summary>Index ve çalışma ağacı durumu</summary><pre>{repo.status}</pre></details>}
+        {repo.status && <details className="git-status-details"><summary>Git durumu (git status)</summary><pre>{repo.status}</pre></details>}
         {repo.files.map((file, index) => {
           const id = `${repo.path}:${index}:${file.path}`
           if (!file.path.toLocaleLowerCase().includes(query.toLocaleLowerCase())) return null
@@ -62,7 +62,7 @@ export function DiffView({ sessionId, isolation }: { sessionId: string; isolatio
             {!closed.has(id) && <div className="diff-code" role="region" aria-label={`${file.path} farkı`} tabIndex={0}>{file.lines.filter(line => line.kind !== 'meta' || line.text.startsWith('\\')).map((line, i) => <div className={`diff-line ${line.kind}`} key={i}><span className="line-number" aria-hidden="true">{line.old}</span><span className="line-number" aria-hidden="true">{line.next}</span><code>{line.text}</code></div>)}</div>}
           </section>
         })}
-        {!repo.error && !repo.diff && <p className="pad muted">{repo.status ? 'Net fark boş. Index ve çalışma ağacı durumunu yukarıdan inceleyebilirsiniz.' : 'Değişiklik yok.'}</p>}
+        {!repo.error && !repo.diff && <p className="pad muted">{repo.status ? 'Net fark boş. Ayrıntı için yukarıdaki Git durumuna bakın.' : 'Değişiklik yok.'}</p>}
         {(repo.patchTruncated || repo.statusTruncated) && <p className="error">Sonuç boyut sınırında kesildi; tüm değişiklikler gösterilemiyor. Tamamını yerel Git ile inceleyin.</p>}
       </section>)}
       {ids.length > 0 && !repos.some(repo => repo.files.some(file => file.path.toLocaleLowerCase().includes(query.toLocaleLowerCase()))) && <p className="pad muted">Bu filtreyle eşleşen dosya yok.</p>}

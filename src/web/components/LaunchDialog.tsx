@@ -129,7 +129,7 @@ export function LaunchDialog({ session, busy, error, onCancel, onLaunch }: Props
         )}
         <div className="dialog-actions">
           <button type="button" disabled={busy} onClick={onCancel}>
-            vazgeç
+            Vazgeç
           </button>
           <button type="submit" className="primary" disabled={busy || !ready}>
             {busy ? 'Başlatılıyor…' : running ? 'Durdur ve çalıştır' : 'Çalıştır'}

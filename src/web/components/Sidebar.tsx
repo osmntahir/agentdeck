@@ -20,7 +20,6 @@ interface Props {
   onHome: () => void
   healthy: boolean
   onNewSession: (project: ProjectView) => void
-  onAddProject: () => void
   onDeleteProject: (id: string) => void
   /** Oturumu olan projenin silme önizlemesi; onay bu projede gösterilir. */
   projectDelete: ProjectDeletePreview | null
@@ -45,7 +44,6 @@ export function Sidebar({
   onHome,
   healthy,
   onNewSession,
-  onAddProject,
   onDeleteProject,
   projectDelete,
   onPreviewProjectDelete,
@@ -81,11 +79,11 @@ export function Sidebar({
       </div>
       <nav className="main-nav">
         <button className={`home-nav${activeId === null && view === 'sessions' ? ' selected' : ''}`} onClick={onHome}>
-          <span>▦</span> Tüm oturumlar{' '}
+          <Icon name="list" /> Tüm oturumlar{' '}
           <span className="nav-count">{state.sessions.filter((s) => s.archivedAt === null).length}</span>
         </button>
         <button className={`home-nav${activeId === null && view === 'grid' ? ' selected' : ''}`} onClick={onGrid}>
-          <span>⊞</span> Terminal grid <span className="nav-count">{gridCount}</span>
+          <Icon name="grid" /> Terminal grid <span className="nav-count">{gridCount}</span>
         </button>
       </nav>
       <div className="sidebar-label">
@@ -123,7 +121,7 @@ export function Sidebar({
                           onDeleteProject(project.id)
                         }}
                       >
-                        kaldır?
+                        Kaldır?
                       </button>
                       <button title="Vazgeç" onClick={() => setConfirmId(null)}>
                         ×
@@ -135,6 +133,7 @@ export function Sidebar({
                         +
                       </button>
                       <button
+                        className="project-remove"
                         title="Projeyi kaldır"
                         // Oturumu olan projede önce neyin silineceği gösterilir.
                         onClick={() => (owned.length > 0 ? onPreviewProjectDelete(project.id) : setConfirmId(project.id))}
@@ -160,8 +159,8 @@ export function Sidebar({
                       ))}
                   </ul>
                   <div className="project-actions">
-                    <button onClick={onConfirmProjectDelete}>sil (branch'ler kalır)</button>
-                    <button onClick={onCancelProjectDelete}>vazgeç</button>
+                    <button className="danger" onClick={onConfirmProjectDelete}>Sil (branch'ler kalır)</button>
+                    <button onClick={onCancelProjectDelete}>Vazgeç</button>
                   </div>
                 </div>
               )}
@@ -185,7 +184,7 @@ export function Sidebar({
         })}
       </div>
 
-      {projectMenu && <ActionMenu position={projectMenu.position} onClose={() => setProjectMenu(null)} actions={[{ label: 'Proje rengi…', icon: 'settings', run: () => setColorProject(projectMenu) }]} />}
+      {projectMenu && <ActionMenu label="Proje işlemleri" position={projectMenu.position} onClose={() => setProjectMenu(null)} actions={[{ label: 'Proje rengi…', icon: 'settings', run: () => setColorProject(projectMenu) }]} />}
       {colorProject && <ColorDialog {...colorProject} onClose={() => setColorProject(null)} />}
       {colorError && <p className="error">{colorError}</p>}
       <OrphanList scan={orphans} onRefresh={onRefreshOrphans} />
@@ -197,11 +196,6 @@ export function Sidebar({
       <div className="sidebar-tools">
         <button className="settings-button" onClick={onSettings}>⚙ Ayarlar</button>
         {notifications}
-      </div>
-      <div className="add-project">
-        <button className="sidebar-add-project" onClick={onAddProject}>
-          + Proje ekle
-        </button>
       </div>
     </aside>
   )
@@ -262,9 +256,10 @@ function OrphanList({ scan, onRefresh }: { scan: OrphanScanResult | null; onRefr
 export function stateLabel(session: SessionView): string {
   if (session.lifecycle === 'live') return session.activity === 'idle' ? 'Sessiz · 30 sn' : 'Çalışıyor'
   if (session.lifecycle === 'orphaned') return 'Bağlantı yok'
-  if (session.exitCode !== null) return `Çıktı · kod ${session.exitCode}`
-  if (session.exitSignal !== null) return `Çıktı · sinyal ${session.exitSignal}`
-  return 'Çıktı'
+  if (session.exitCode === 0) return 'Bitti'
+  if (session.exitCode !== null) return `Hata · kod ${session.exitCode}`
+  if (session.exitSignal !== null) return `Durduruldu · ${session.exitSignal}`
+  return 'Bitti'
 }
 
 function SessionRow({
@@ -325,7 +320,7 @@ function SessionRow({
         aria-label={`${session.name} oturumunu terminal grid'e ekle`}
         onClick={onAddToGrid}
       >
-        ⊞
+        <Icon name="grid" />
       </button>
     </div>
   )

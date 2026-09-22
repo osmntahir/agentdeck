@@ -149,6 +149,8 @@ const COMBINING_MARKS = /[\u0300-\u036f]/g
 function slugify(input: string): string {
   const s = input
     .toLowerCase()
+    // Noktasız ı NFD ile ayrışmaz; eşlenmezse harf branch adından düşer.
+    .replace(/ı/g, 'i')
     .normalize('NFD')
     .replace(COMBINING_MARKS, '')
     .replace(/[^a-z0-9]+/g, '-')

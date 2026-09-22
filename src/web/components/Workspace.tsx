@@ -10,7 +10,6 @@ import { ProtectedBranches } from './ProtectedBranches'
 
 interface Props {
   state: StateResponse
-  healthy: boolean
   /** Sunucu zamanı + istemci monotonic ilerlemesi (spec §5). */
   now: number
   /** Tarama görünür değilken önizleme istenmez; mount kaydırma için kalır. */
@@ -39,7 +38,6 @@ function sessionAge(session: SessionView, now: number): string {
 
 export function Workspace({
   state,
-  healthy,
   now,
   previewsEnabled,
   focusId,
@@ -111,9 +109,11 @@ export function Workspace({
           <span className="breadcrumb">Çalışma alanı</span>
           <h1>Oturumlar</h1>
         </div>
-        <button className="primary" onClick={onAddProject}>
-          + Proje ekle
-        </button>
+        {state.projects.length > 0 && (
+          <button className="primary" onClick={onAddProject}>
+            + Proje ekle
+          </button>
+        )}
       </header>
       <div className="workspace-scroll">
         <div className="workspace-tools">
@@ -289,8 +289,6 @@ export function Workspace({
                           <footer>
                             <span>
                               {session.archivedAt !== null && 'Arşivde · '}
-                              {session.isolation === 'worktree' ? 'İzole worktree' : 'Ortak klasör'}
-                              {' · '}
                               <span className="card-age">{sessionAge(session, now)}</span>
                             </span>
                             <span className="card-actions">
@@ -312,11 +310,13 @@ export function Workspace({
                         </div>
                       )
                     })}
-                    <button className="new-session-card" onClick={() => onNewSession(project)}>
-                      <span>+</span>
-                      <strong>Yeni bir işe başla</strong>
-                      <small>Bu projede bir oturum aç</small>
-                    </button>
+                    {filter !== 'archived' && (
+                      <button className="new-session-card" onClick={() => onNewSession(project)}>
+                        <span>+</span>
+                        <strong>Yeni bir işe başla</strong>
+                        <small>Bu projede bir oturum aç</small>
+                      </button>
+                    )}
                   </div>
                 </section>
               )
@@ -340,11 +340,10 @@ export function Workspace({
       </div>
       <footer className="workspace-footer">
         <span>
-          <span className={`dot ${healthy ? 'live' : 'orphaned'}`} />
-          {healthy ? 'Yerel daemon bağlı' : 'Daemon bağlantısı bekleniyor'}
-        </span>
-        <span>
-          {state.projects.length} proje · {state.sessions.length} / 256 kayıt (arşivler dahil; otomatik silme yok)
+          {state.projects.length} proje · {state.sessions.length - archivedCount} oturum
+          {archivedCount > 0 && ` · ${archivedCount} arşivde`}
+          {/* Kayıt tavanı yalnız yaklaşınca söylenir; arşivler de sayılır. */}
+          {state.sessions.length >= 200 && ` · en çok 256 kayıt (arşivler dahil)`}
         </span>
         <span>Oturumlar pencere kapansa da çalışır.</span>
       </footer>

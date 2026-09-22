@@ -439,6 +439,11 @@ select:focus {
   flex-wrap: wrap;
   gap: 6px;
 }
+.command-fills button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .command-fills button.on {
   border-color: var(--accent);
   color: var(--accent);
@@ -577,9 +582,6 @@ button.primary {
 .home-nav.selected {
   background: #252a39;
   color: #c2d0ff;
-}
-.home-nav > span:first-child {
-  font-size: 19px;
 }
 .nav-count {
   margin-left: auto;
@@ -858,6 +860,26 @@ button.primary {
 .project-delete-confirm ul {
   margin: 0;
   padding-left: 16px;
+  max-height: 120px;
+  overflow: auto;
+  font-size: 11px;
+}
+.project-delete-confirm .danger {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
+}
+/* Kaldırma "+" düğmesinin yanında hep görünmesin; üzerine gelince veya odakta çıkar. */
+.project-remove {
+  opacity: 0;
+}
+.project-head:hover .project-remove,
+.project-remove:focus-visible {
+  opacity: 1;
+}
+@media (hover: none), (max-width: 800px) {
+  .project-remove {
+    opacity: 1;
+  }
 }
 .project-delete-confirm code,
 .delete-target code {
@@ -966,8 +988,15 @@ button.primary {
 }
 .card-preview {
   margin: 0 12px;
-  padding: 12px;
-  height: 115px;
+  /* Taşan eski satırlar dolguya değil saydam kenarlığa düşer ve kırpılır;
+     yükseklik tam satır sayısıdır, son satırlar altta kalır. */
+  padding: 0 12px;
+  border-block: 10px solid transparent;
+  height: calc(6lh + 20px);
+  display: flex;
+  /* Sığan kısa çıktı üstte durur; taşarsa "safe" hizası alta yaslar, eski satırlar üstten kırpılır. */
+  flex-direction: column-reverse;
+  justify-content: safe flex-end;
   overflow: hidden;
   background: #111216;
   color: #aeb4c1;
@@ -984,9 +1013,6 @@ button.primary {
   padding: 12px 16px;
   color: var(--muted);
   font-size: 10px;
-}
-.session-card footer span:last-child {
-  color: #bdcbf6;
 }
 .new-session-card {
   min-height: 235px;
@@ -1165,14 +1191,22 @@ button.primary {
 .session-row-wrap {
   position: relative;
 }
-.row-grid-add {
+/* Satır eylemleri adın üstünde yüzer; yer ayırıp adı erkenden kısaltmaz. */
+.row-grid-add,
+.session-row-wrap .row-menu {
   position: absolute;
   top: 50%;
-  right: 18px;
   transform: translateY(-50%);
   min-height: 0;
   padding: 1px 6px;
+  background: var(--panel-2);
   opacity: 0;
+}
+.row-grid-add {
+  right: 18px;
+}
+.session-row-wrap .row-menu {
+  right: 48px;
 }
 .session-row-wrap:hover .row-grid-add,
 .row-grid-add:focus-visible {
@@ -1275,6 +1309,8 @@ button.primary {
   white-space: nowrap;
 }
 .grid-group-actions button {
+  flex: none;
+  white-space: nowrap;
   min-height: 24px;
   padding: 2px 9px;
   border-color: transparent;
@@ -1292,11 +1328,11 @@ button.primary {
   flex-direction: column;
   background: #0e1116;
 }
-/* Grid'de durum şeridi terminalin üstünde yüzer; dikkat gerekince veya üzerine gelince görünür. */
+/* Durum şeridi terminalin üstünde yüzer; dikkat gerekince veya üzerine gelince görünür. */
 .terminal-pane {
   position: relative;
 }
-.terminal-status.compact {
+.terminal-status.floating {
   position: absolute;
   top: 8px;
   right: 14px;
@@ -1313,20 +1349,20 @@ button.primary {
   pointer-events: none;
   transition: opacity 0.15s;
 }
-.terminal-status.compact span {
+.terminal-status.floating span {
   flex: none;
 }
-.terminal-pane:hover > .terminal-status.compact,
-.terminal-status.compact:focus-within,
-.terminal-status.compact.attention {
+.terminal-pane:hover > .terminal-status.floating,
+.terminal-status.floating:focus-within,
+.terminal-status.floating.attention {
   opacity: 1;
   pointer-events: auto;
 }
-.terminal-status.compact.attention {
+.terminal-status.floating.attention {
   color: var(--text);
   border-color: #3b496b;
 }
-.terminal-status.compact button {
+.terminal-status.floating button {
   min-height: 22px;
   padding: 1px 8px;
   font-size: 11px;
@@ -1618,7 +1654,7 @@ button.primary {
 .session-card { border-top: 2px solid var(--project-color); }
 .compact-ui .workspace-header { padding-top: 18px; padding-bottom: 16px; }
 .compact-ui .session-card { padding: 14px; }
-.compact-ui .card-preview { height: 90px; min-height: 0; }
+.compact-ui .card-preview { height: calc(4lh + 20px); min-height: 0; }
 .compact-ui .project-section { margin-top: 18px; }
 .card-heading { gap: 8px; }
 .action-menu { position: fixed; z-index: 80; width: min(300px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; padding: 6px; background: #1b1e24; border: 1px solid #383d48; border-radius: 9px; box-shadow: 0 12px 40px #0008; }
@@ -1627,7 +1663,7 @@ button.primary {
 .action-menu .danger { color: var(--red); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 .branch-control { position: relative; min-width: 0; }
-.branch-trigger { max-width: 230px; border-color: transparent; background: color-mix(in srgb, var(--project-color, #9aaad4) 8%, transparent); }
+.branch-trigger { display: inline-flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; max-width: 230px; border-color: transparent; background: color-mix(in srgb, var(--project-color, #9aaad4) 8%, transparent); }
 .branch-trigger > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dirty-dot { color: var(--warn); font-size: 9px; }
 .branch-popover { position: absolute; z-index: 50; top: calc(100% + 8px); right: 0; width: min(360px, calc(100vw - 30px)); max-height: 70dvh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; padding: 16px; background: #191c23; box-shadow: 0 15px 35px #0008; }
@@ -1664,7 +1700,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .wrap-lines .diff-line code { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
 .git-status-details { color: var(--muted); margin: 0 0 12px; font-size: 12px; }
 .git-status-details pre { overflow: auto; max-height: 180px; padding: 12px; background: var(--panel); }
-.setting-row { display: flex; align-items: center; gap: 20px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.setting-row, .dialog .setting-row { display: flex; flex-direction: row; align-items: center; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--line); color: var(--text); }
+.setting-row select { width: 160px; flex: none; }
 .setting-row > span { flex: 1; }
 .setting-row strong { display: block; font-size: 13px; }
 .setting-row small { display: block; color: var(--muted); margin-top: 5px; font-size: 12px; }
@@ -1687,7 +1724,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   .clean-topbar .tabs { order: 2; }
   .branch-popover { position: fixed; right: 12px; top: 140px; }
   .file-review .diff-bar input { width: 130px; }
-  .row-menu { opacity: 1; }
+  .session-row-wrap .row-menu { opacity: 1; right: 18px; }
+  .session-row-wrap .session-row { padding-right: 40px; }
   .review-scroll { padding: 4px 8px 20px; }
   .line-number { width: 32px; flex-basis: 32px; padding: 0 4px; }
 }
@@ -1715,6 +1753,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .grid-cursor-off .grid-dock .xterm .xterm-cursor::before { visibility: hidden; }
 .branch-popover, .grid-group-actions .branch-popover { position: fixed; inset: 0; margin: auto; height: fit-content; max-height: calc(100dvh - 32px); width: min(420px, calc(100vw - 32px)); color: var(--text); background: var(--panel); }
 .branch-popover::backdrop { background: #0006; }
+.branch-popover-actions { display: flex; gap: 6px; }
+/* Uzun worktree yolu tek satırda kalır; sonu görünür, tamamı title'da. */
+.branch-popover-path { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.branch-popover-path::before { content: '\200e'; }
 .branch-popover > .primary { display: block; width: 100%; min-height: 36px; position: sticky; bottom: 0; background: var(--accent); color: var(--bg); }
 .session-row-wrap { border-left: 2px solid var(--project-color, transparent); }
 :root { --terminal-bg: #0e1116; }
@@ -1729,3 +1771,4 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .agent-codex img, .agent-grok img, .agent-opencode img { filter: brightness(0) invert(1); }
 .program-choice { display: flex; align-items: center; gap: 8px; }
 .program-choice select { flex: 1; min-width: 0; }
+.dialog input[type=color] { width: 72px; height: 40px; padding: 3px; cursor: pointer; }

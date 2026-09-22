@@ -235,12 +235,13 @@ test('state kalıcı lifecycle yerine canlılık tahmini yayımlamaz', async () 
 
 test('oturum açılır, canlı görünür ve gerçek çıkış kaydedilir', { timeout: 30000 }, async () => {
   await withDaemon(async ({ api, projectId }) => {
-    const created = await api.post<SessionView>('/api/sessions', createBody(projectId, { name: 'ölçüm işi' }))
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId, { name: 'ölçüm ışığı' }))
     assert.equal(created.status, 200, JSON.stringify(created.body))
     assert.equal(created.body.lifecycle, 'live')
     assert.ok(created.body.runId)
     assert.match(created.body.baseCommit ?? '', /^[0-9a-f]{40,64}$/, 'baseCommit çözümlenmiş OID olmalı')
-    assert.match(created.body.branch ?? '', /^agentdeck\/olcum-isi-[0-9a-f]{32}$/)
+    // Noktasız ı branch adında i olur, düşmez.
+    assert.match(created.body.branch ?? '', /^agentdeck\/olcum-isigi-[0-9a-f]{32}$/)
     assert.equal(fs.existsSync(created.body.cwd), true)
     assert.deepEqual(created.body.lastLaunch, { mode: 'command', command: 'sleep 300' })
 

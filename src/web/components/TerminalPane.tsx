@@ -245,7 +245,7 @@ export function TerminalPane({
       event.preventDefault(); event.stopPropagation()
       setMenuPosition({ x: event.clientX, y: event.clientY, origin: document.activeElement as HTMLElement })
     }}>
-      {menuPosition && <ActionMenu position={menuPosition} onClose={closeMenu} actions={[
+      {menuPosition && <ActionMenu label="Terminal işlemleri" position={menuPosition} onClose={closeMenu} actions={[
         ...(onLayout ? [{ label: 'Böl / panel yerleşimi…', icon: 'grid' as const, run: onLayout }] : []),
         { label: 'Terminal rengi…', icon: 'settings', run: () => setColorOpen(true) },
         { label: 'Seçimi kopyala', icon: 'copy', disabled: !termRef.current?.hasSelection(), run: () => { navigator.clipboard.writeText(termRef.current?.getSelection() ?? '').catch(() => setClipboardError('Pano erişimi reddedildi. Ctrl+Shift+C ile kopyalayabilirsiniz.')) } },
@@ -258,7 +258,7 @@ export function TerminalPane({
       ]} />}
       {colorOpen && <ColorDialog id={session.id} projectId={session.projectId} name={session.name} onClose={() => setColorOpen(false)} />}
       {clipboardError && <div className="error" role="alert">{clipboardError}<button onClick={() => setClipboardError(null)}>×</button></div>}
-      <div className={`terminal-status${compact ? ' compact' : ''}${attention ? ' attention' : ''}`} role="status">
+      <div className={`terminal-status floating${attention ? ' attention' : ''}`} role="status">
         <span title="F6 uygulama çubuğuna geçer; menü gerçek F6'yı terminale gönderir.">
           {!stateHealthy
             ? 'Durum güncel değil · girdi kapalı'

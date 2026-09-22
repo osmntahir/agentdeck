@@ -1,4 +1,4 @@
-export type IconName = 'settings' | 'more' | 'play' | 'stop' | 'branch' | 'copy' | 'archive' | 'trash' | 'grid' | 'terminal' | 'diff' | 'refresh' | 'plus' | 'back'
+export type IconName = 'settings' | 'more' | 'play' | 'stop' | 'branch' | 'copy' | 'archive' | 'trash' | 'grid' | 'terminal' | 'diff' | 'refresh' | 'plus' | 'back' | 'list'
 const paths: Record<IconName, string> = {
   settings: 'M4 7h16M4 17h16M8 4v6M16 14v6',
   more: 'M5 12h.01M12 12h.01M19 12h.01',
@@ -9,7 +9,7 @@ const paths: Record<IconName, string> = {
   trash: 'M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7',
   grid: 'M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z',
   terminal: 'm4 6 6 6-6 6M13 18h7', diff: 'M14 3h7M17.5 0v6M3 16h7M13 10l-3 4M5 3v7M19 14v7',
-  refresh: 'M20 8a8 8 0 1 0 0 8M20 3v5h-5', plus: 'M12 4v16M4 12h16', back: 'm10 5-7 7 7 7M3 12h18',
+  refresh: 'M20 8a8 8 0 1 0 0 8M20 3v5h-5', plus: 'M12 4v16M4 12h16', back: 'm10 5-7 7 7 7M3 12h18', list: 'M4 6h16M4 12h16M4 18h16',
 }
 export function Icon({ name }: { name: IconName }) {
   return <svg className="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>

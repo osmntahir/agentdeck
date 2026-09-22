@@ -136,7 +136,7 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
         )}
         <div className="dialog-actions">
           <button type="button" disabled={busy} onClick={onCancel}>
-            vazgeç
+            Vazgeç
           </button>
           <button type="submit" className="primary" disabled={busy || !ready}>
             {busy ? 'Başlatılıyor…' : 'Oturumu başlat'}
