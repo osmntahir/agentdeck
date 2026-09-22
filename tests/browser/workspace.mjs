@@ -192,6 +192,18 @@ try {
   await confirm.getByRole('button', { name: 'Kaydı kaldır', exact: true }).click()
   await card.waitFor({ state: 'detached' })
   console.log('PASS: project removal and session deletion confirm in a modal without leaving the scan')
+  // Mouse-tracking TUIs (Grok) must still receive SGR clicks after the screen is rebuilt from a snapshot.
+  const mouseApp = await post('sessions', { projectId: project.id, name: 'Fare TUI', command: "printf '\\033[?1003h\\033[?1006hFARE-HAZIR\\n'; exec cat", isolation: 'shared' })
+  await new Promise(resolve => setTimeout(resolve, 500))
+  await page.reload()
+  await page.locator(`#session-row-${mouseApp.id}`).click()
+  await page.waitForFunction(() => document.querySelector('.terminals .terminal-status span')?.textContent === 'Kontrol sizde')
+  await page.waitForFunction(() => document.querySelector('.terminals .xterm-rows')?.textContent?.includes('FARE-HAZIR'))
+  const mouseBox = await page.locator('.terminals .xterm-screen').boundingBox()
+  await page.mouse.click(mouseBox.x + 120, mouseBox.y + 80)
+  // The tty echoes the report; an X10 report would be dropped by the client and never echo.
+  await page.waitForFunction(() => /\^\[\[<0;\d+;\d+M/.test(document.querySelector('.terminals .xterm-rows')?.textContent ?? ''))
+  console.log('PASS: mouse-tracking TUI receives SGR clicks after snapshot replay')
   assert.deepEqual(errors, [])
   console.log('PASS: themes, project color inheritance, terminal override; no browser errors')
 } finally {

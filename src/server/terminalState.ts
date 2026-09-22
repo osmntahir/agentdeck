@@ -263,6 +263,12 @@ export class TerminalState {
   private readonly serializer: Serializer
   private readonly scanner = new CutScanner()
   private failed: TerminalFailure | null = null
+  /**
+   * Fare raporu kodlaması. SerializeAddon izleme modunu (?1000/1002/1003) kurar
+   * ama kodlamayı (?1006 SGR, ?1016 SGR piksel) taşımaz; kurulmazsa istemci
+   * raporu eski X10 biçiminde üretir ve TUI'lar tıklama/tekerlek alamaz.
+   */
+  private mouseEncoding: 'default' | 'sgr' | 'sgr-pixels' = 'default'
 
   constructor(options: TerminalStateOptions) {
     this.term = new Terminal({
@@ -273,6 +279,22 @@ export class TerminalState {
     })
     this.serializer = new SerializeAddon()
     this.term.loadAddon(this.serializer)
+    // Gözlem yalnız okur; false dönerek emülatörün kendi işlemesine bırakır.
+    const trackEncoding = (enabled: boolean) => (params: (number | number[])[]) => {
+      for (const param of params) {
+        const encoding = param === 1006 ? 'sgr' : param === 1016 ? 'sgr-pixels' : null
+        if (!encoding) continue
+        if (enabled) this.mouseEncoding = encoding
+        else if (this.mouseEncoding === encoding) this.mouseEncoding = 'default'
+      }
+      return false
+    }
+    this.term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, trackEncoding(true))
+    this.term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, trackEncoding(false))
+    this.term.parser.registerEscHandler({ final: 'c' }, () => {
+      this.mouseEncoding = 'default'
+      return false
+    })
     if (options.onReply) {
       const onReply = options.onReply
       this.term.onData((data) => onReply(data))
@@ -326,7 +348,8 @@ export class TerminalState {
 
   snapshot(scope: SnapshotScope): Snapshot {
     if (this.failed) throw new TerminalRepresentationError(this.failed)
-    const text = this.serializer.serialize({ scrollback: scope === 'screen' ? 0 : SCROLLBACK_LINES })
+    const encoding = this.mouseEncoding === 'sgr' ? '\x1b[?1006h' : this.mouseEncoding === 'sgr-pixels' ? '\x1b[?1016h' : ''
+    const text = this.serializer.serialize({ scrollback: scope === 'screen' ? 0 : SCROLLBACK_LINES }) + encoding
     return {
       text,
       scope,

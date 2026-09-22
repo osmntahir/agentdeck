@@ -176,6 +176,27 @@ test('yalnız ekran snapshot ı alternate buffer, imleç ve modları kurar', asy
   state.dispose()
 })
 
+/** İstemci xterm'inin fare raporu kodlaması; public API bunu açmaz. */
+const mouseEncoding = (t: Terminal): string => (t as unknown as { _core: { coreMouseService: { activeEncoding: string } } })._core.coreMouseService.activeEncoding
+
+test('snapshot fare raporu kodlamasını da kurar; SGR olmadan tıklama ve tekerlek kaybolur', async () => {
+  const state = new TerminalState({ cols: 60, rows: 6 })
+  // Grok gibi TUI'lar: alternate ekran, tüm fare hareketi, SGR kodlaması, odak raporu.
+  await state.write('\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1015h\x1b[?1006h\x1b[?1004hTUI')
+  for (const scope of ['screen', 'scrollback'] as const) {
+    const restored = await restore(state.snapshot(scope).text, '')
+    assert.equal(restored.modes.mouseTrackingMode, 'any')
+    assert.equal(mouseEncoding(restored), 'SGR', `${scope} katmanı SGR kodlamasını kurmalı`)
+  }
+  await state.write('\x1b[?1006l')
+  assert.equal(mouseEncoding(await restore(state.snapshot('screen').text, '')), 'DEFAULT', 'kapatılan kodlama geri gelmemeli')
+  await state.write('\x1b[?1016h')
+  assert.equal(mouseEncoding(await restore(state.snapshot('screen').text, '')), 'SGR_PIXELS')
+  await state.write('\x1bc')
+  assert.equal(mouseEncoding(await restore(state.snapshot('screen').text, '')), 'DEFAULT', 'RIS kodlamayı sıfırlar')
+  state.dispose()
+})
+
 test('resize emülatöre uygulanır ve snapshot yeni boyutu taşır', async () => {
   const state = new TerminalState({ cols: 60, rows: 6 })
   await state.write('merhaba')
