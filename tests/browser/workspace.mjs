@@ -81,10 +81,13 @@ try {
   console.log('PASS: independent grids persist and sidebar navigates to containing grid')
   for (const width of [900, 1500, 1100, 1280]) {
     await page.setViewportSize({ width, height: 800 })
+    // Son satır kırpılmamalı: ekran, kutunun iç boşluğu düşülmüş alanında kalır.
     await page.waitForFunction(() => [...document.querySelectorAll('.term-host')].every(host => {
       const screen = host.querySelector('.xterm-screen')?.getBoundingClientRect()
       const box = host.getBoundingClientRect()
-      return screen && screen.width <= box.width && screen.height <= box.height && screen.height > box.height - 40
+      const style = getComputedStyle(host)
+      const bottom = box.bottom - parseFloat(style.paddingBottom) - parseFloat(style.borderBottomWidth)
+      return screen && screen.right <= box.right && screen.bottom <= bottom + 0.5 && screen.height > box.height - 40
     }))
   }
   const top = await page.locator('.grid-stage').boundingBox()

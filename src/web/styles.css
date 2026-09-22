@@ -843,8 +843,12 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
 
 .terminal-pane { position: relative; display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; }
 /* Kabın kaydırma çubuğu sığdırma hesabını taşırıyordu; geçmiş xterm'in kendi alanında gezilir. */
-.term-host { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 10px 4px 6px 14px; background: var(--terminal-bg); }
-.term-host > .xterm { height: 100%; }
+.term-host { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--terminal-bg); }
+/* Boşluk xterm elemanında durur: FitAddon yalnız bu elemanın padding'ini düşer, üst kutununkini
+   düşmez. Boşluk .term-host'ta olsaydı satır sayısı fazla hesaplanır, son satır kırpılırdı. */
+.term-host > .xterm { height: 100%; padding: 10px 4px 6px 14px; }
+/* Kaydırma alanı padding dahil tüm kutuyu kaplar; xterm.css onu siyah boyar. */
+.term-host .xterm .xterm-viewport { background-color: var(--terminal-bg); }
 .terminal-empty { padding: 28px; color: var(--text-3); }
 .terminal-pane > .error { position: absolute; top: 0; right: 0; left: 0; z-index: 6; }
 .terminal-status {
