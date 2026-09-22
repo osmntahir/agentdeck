@@ -84,7 +84,7 @@ export function GridLayoutDialog({ projects, healthy, onRefresh, api, panelId, s
     >
       <div className="dialog">
         <h2 id="grid-layout-title">Panel yerleşimi</h2>
-        <p>{label(panelId)}</p>
+        <p className="dialog-sub">{label(panelId)} · Sürükle-bırak ile de yapılabilir; Ctrl basılı bırakmak kopya açar.</p>
         <fieldset className="grid-size-actions"><legend>Bu terminali böl</legend>
           <label htmlFor="grid-add">Eklenecek terminal</label>
           <select id="grid-add" value={addId} onChange={e => setAddId(e.target.value)}>
@@ -102,6 +102,7 @@ export function GridLayoutDialog({ projects, healthy, onRefresh, api, panelId, s
           <label>Proje<select value={newProjectId} onChange={e => setNewProjectId(e.target.value)}>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
           <div className="command-fills">{(['right', 'below'] as const).map(direction => <button type="button" key={direction} disabled={!healthy || !project || api.panels.length >= MAX_GRID_PANELS} onClick={() => { setNewDirection(direction); setCreatingNew(true) }}>{direction === 'right' ? 'Yeni terminal · sağa' : 'Yeni terminal · alta'}</button>)}</div>
         </fieldset>
+        <fieldset className="grid-size-actions"><legend>Başka panelin yanına taşı</legend>
         <label htmlFor="grid-target">Hedef panel</label>
         <select
           id="grid-target"
@@ -135,6 +136,7 @@ export function GridLayoutDialog({ projects, healthy, onRefresh, api, panelId, s
         >
           Paneli taşı
         </button>
+        </fieldset>
         <fieldset className="grid-size-actions">
           <legend>Grup boyutu</legend>
           <p className="dialog-note muted">40 piksel adımlarla değişir; komşu gruplar ve kullanılabilir alan sınırlar.</p>

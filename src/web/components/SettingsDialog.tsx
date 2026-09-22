@@ -22,7 +22,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       </div>
     </fieldset>
     {([
-      ['notifications', 'Bildirimler', 'İş bittiğinde, hata oluştuğunda veya terminal yanıt/onay beklediğinde uygulama popup’ı ve Linux masaüstü bildirimi göster.'],
+      ['notifications', 'Bildirimler', 'Bakmadığın bir ajan onay beklediğinde, uzun bir çalışmadan sonra çıktıyı durdurduğunda veya bittiğinde haber ver. Uygulama öndeyken köşede kısa kart, arka plandayken masaüstü bildirimi çıkar.'],
       ['previews', 'Oturum önizlemeleri', 'Oturum kartlarında terminal çıktısını göster.'],
       ['compact', 'Kompakt görünüm', 'Kartları ve gezinmeyi daha sıkı yerleştir.'],
     ] as const).map(([key, label, description]) => <label className="setting-row" key={key}><span><strong>{label}</strong><small>{description}</small></span><input type="checkbox" role="switch" className="switch" checked={preferences[key]} onChange={async e => {
@@ -36,7 +36,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       <button type="button" className="ghost-button" onClick={async () => {
         try {
           await enableDesktopNotifications()
-          await showDesktopNotification({ id: 'test', sessionId: '', title: 'AgentDeck', detail: 'Masaüstü bildirimleri hazır. Terminal sonlandığında burada göreceksiniz.' })
+          await showDesktopNotification({ id: 'test', sessionId: '', title: 'AgentDeck', detail: 'Masaüstü bildirimleri hazır. Uygulama arka plandayken ajanlar sizi buradan çağırır.' })
           setError(null)
         } catch (e) { setError((e as Error).message) }
       }}>Test bildirimi gönder</button>
@@ -50,6 +50,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         <dt><kbd>Ctrl+PgUp</kbd> / <kbd>Ctrl+PgDn</kbd></dt><dd>Önceki / sonraki oturum</dd>
         <dt><kbd>Ctrl+Shift+N</kbd></dt><dd>Yeni oturum</dd>
         <dt><kbd>Ctrl+Shift+Enter</kbd></dt><dd>Grid panelini büyüt / geri al</dd>
+        <dt><kbd>Ctrl+Shift+B</kbd></dt><dd>Kenar çubuğunu daralt / genişlet</dd>
+        <dt><kbd>Ctrl</kbd> + sürükle</dt><dd>Oturumu grid’e aynı programın yeni kopyası olarak bırak</dd>
         <dt><kbd>Esc</kbd> · <kbd>F6</kbd></dt><dd>Taramaya dön · terminalden çık</dd>
       </dl>
     </div>

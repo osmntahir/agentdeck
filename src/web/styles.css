@@ -441,6 +441,7 @@ legend { padding: 0; }
 }
 .session-row.active + .row-actions { background: linear-gradient(90deg, transparent, var(--surface-4) 14px); }
 .session-row-wrap:hover .row-actions, .row-actions:focus-within { opacity: 1; }
+.session-row-wrap:hover .session-row > :is(.row-flag, .status-dot, .row-key) { visibility: hidden; }
 .row-actions .icon-button { width: 24px; min-width: 24px; min-height: 24px; }
 
 .orphans { margin: 0 8px 8px; border: 1px solid var(--border); border-radius: 8px; }
@@ -1391,6 +1392,8 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
   text-align: left;
 }
 .action-menu button .icon { color: var(--text-3); }
+.action-menu .agent-mark { width: 16px; height: 16px; }
+.action-menu .agent-mark img { width: 15px; height: 15px; }
 .action-menu button:hover:not(:disabled), .action-menu button:focus-visible { background: var(--surface-4); outline: none; }
 .action-menu button:hover .icon, .action-menu button:focus-visible .icon { color: var(--text); }
 .action-menu .danger, .action-menu .danger .icon { color: var(--red) !important; }

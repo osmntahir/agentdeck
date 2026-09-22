@@ -1,7 +1,7 @@
 import { ColorDialog } from './components/ColorDialog'
 import { ActionMenu, type MenuAction, type MenuPosition } from './components/ActionMenu'
 import { Icon } from './components/Icon'
-import { AgentMark } from './components/AgentMark'
+import { AgentMark, ProgramIcon } from './components/AgentMark'
 import { BranchPicker } from './components/BranchPicker'
 import { SettingsDialog } from './components/SettingsDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
@@ -787,7 +787,7 @@ export function App() {
             {active.attention && active.lifecycle === 'live' && (
               <div className="attention-note" role="status">
                 <Icon name="alert" size={14} />
-                <span>{active.attention.kind === 'approval' ? 'Ajan onayınızı bekliyor' : 'Ajan yanıtınızı bekliyor'}{active.attention.message ? `: ${active.attention.message}` : ''}</span>
+                <span>{active.attention.kind === 'approval' ? 'Terminal onayınızı bekliyor; aşağıdan yanıtlayın.' : `Terminal yanıtınızı bekliyor: ${active.attention.message}`}</span>
               </div>
             )}
             {state.terminals?.[active.id]?.outputPressure && <div className="review-note" role="status">Çıktı işleniyor…</div>}
@@ -866,7 +866,7 @@ export function App() {
         const focusProject = state.projects.find((p) => p.id === gridFocusSession()?.projectId) ?? state.projects[0]
         const live = navigationIds(state).filter((id) => !gridIds.includes(id)).length
         return <ActionMenu label="Grid'e terminal ekle" position={addMenu} onClose={closeAddMenu} actions={[
-          ...(focusProject ? PRESETS.map((preset) => ({ label: `${preset.label} · ${focusProject.name}`, icon: 'terminal' as const, disabled: !stateHealthy || creating || gridIds.length >= MAX_GRID_PANELS, run: () => quickCreate(focusProject, preset) })) : []),
+          ...(focusProject ? PRESETS.map((preset) => ({ label: `${preset.label} · ${focusProject.name}`, icon: 'terminal' as const, leading: <ProgramIcon command={preset.command} />, disabled: !stateHealthy || creating || gridIds.length >= MAX_GRID_PANELS, run: () => quickCreate(focusProject, preset) })) : []),
           { label: live > 0 ? `Çalışan ${live} oturumu ekle` : 'Çalışan oturumların hepsi grid’de', icon: 'layout', disabled: live === 0 || gridIds.length >= MAX_GRID_PANELS, run: addLiveToGrid },
           { label: 'Başka proje veya program…', icon: 'command', run: () => setPaletteOpen(true) },
         ]} />

@@ -150,8 +150,8 @@ export function Workspace({
                   <span className="status-dot" data-tone="attention" /> {counts.attention} onay/yanıt bekliyor
                 </button>
               )}
-              <span className="stat"><span className="status-dot" data-tone="active" /> {counts.running} çalışıyor</span>
-              <span className="stat"><span className="status-dot" data-tone="done" /> {counts.finished} sonlandı</span>
+              {counts.running > 0 && <span className="stat"><span className="status-dot" data-tone="active" /> {counts.running} çalışıyor</span>}
+              {counts.finished > 0 && <span className="stat"><span className="status-dot" data-tone="done" /> {counts.finished} sonlandı</span>}
             </div>
           )}
         </div>

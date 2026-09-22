@@ -140,7 +140,8 @@ export function Sidebar({
               <div className="project-head" onContextMenu={e => { e.preventDefault(); setProjectMenu({ id: project.id, name: project.name, position: { x: e.clientX, y: e.clientY, origin: e.currentTarget } }) }}>
                 <button className="project-tile" title={`${project.name} · proje işlemleri`} aria-label={`${project.name} proje işlemleri`}
                   onClick={e => { const rect = e.currentTarget.getBoundingClientRect(); setProjectMenu({ id: project.id, name: project.name, position: { x: rect.left, y: rect.bottom + 4, origin: e.currentTarget } }) }}>
-                  {project.name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toLocaleUpperCase('tr') || '•'}
+                  {/* Proje adları çoğunlukla İngilizce; Türkçe büyük harf "ki" → "Kİ" yapardı. */}
+                  {project.name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '•'}
                 </button>
                 <div className="project-name" title={project.degraded ?? project.path}>
                   <span>{project.name}</span>
@@ -271,8 +272,11 @@ function SessionRow({
         className={`session-row${active ? ' active' : ''}`}
         tabIndex={tabbable ? 0 : -1}
         onClick={onSelect}
+        // Orta tık tarayıcı sekmesi gibi: açmadan grid'e ekler.
+        onMouseDown={(e) => { if (e.button === 1) e.preventDefault() }}
+        onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onAddToGrid() } }}
         onFocus={onFocusRow}
-        title={`${session.name} · ${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''}\nGrid'e sürükle · Ctrl basılı sürükle: aynı programdan kopya`}
+        title={`${session.name} · ${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''}\nOrta tık veya sürükle: grid'e ekle · Ctrl basılı sürükle: aynı programdan kopya`}
         aria-keyshortcuts={shortcut ? `Alt+${shortcut}` : undefined}
         draggable
         onDragStart={(e) => { e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id); e.dataTransfer.effectAllowed = 'copyMove' }}
