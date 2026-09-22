@@ -27,4 +27,7 @@ test('Ctrl+PgUp/PgDn sıradaki oturuma geçer; sıradan tuşlar terminalde kalı
 test('yeni oturum ve panel büyütme Ctrl+Shift ailesindedir', () => {
   assert.deepEqual(appShortcut(key({ code: 'KeyN', key: 'N', ctrlKey: true, shiftKey: true }), true), { kind: 'new-session' })
   assert.deepEqual(appShortcut(key({ code: 'Enter', key: 'Enter', ctrlKey: true, shiftKey: true }), true), { kind: 'maximize' })
+  assert.deepEqual(appShortcut(key({ code: 'KeyB', key: 'B', ctrlKey: true, shiftKey: true }), true), { kind: 'sidebar' })
+  // Ctrl+B kabukta imleci geri alır; terminalde kalır.
+  assert.equal(appShortcut(key({ code: 'KeyB', key: 'b', ctrlKey: true }), true), null)
 })

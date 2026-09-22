@@ -155,6 +155,7 @@ function createWindow(token) {
     if (new URL(url).origin !== BASE) event.preventDefault()
   })
   win.loadURL(`${BASE}/?token=${encodeURIComponent(token)}`)
+  win.on('focus', () => win?.flashFrame(false))
   win.on('closed', () => {
     win = null
   })
@@ -248,6 +249,8 @@ if (!app.requestSingleInstanceLock()) {
         oldest.close(); activeNotifications.delete(oldest)
       }
       notification.show()
+      // Arka plandaki pencere görev çubuğunda dikkat ister; odak gelince söner.
+      if (!win.isFocused()) win.flashFrame(true)
     })
 
     buildMenu()

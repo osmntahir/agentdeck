@@ -9,6 +9,10 @@ import { usePreferences, terminalStyle, updatePreferences, THEMES, type ThemeNam
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette'
 import { appShortcut, SHORTCUT_LABELS, type AppShortcut } from '../shared/shortcuts'
 import { stateLabel, statusTone, StatusDot } from './sessionStatus'
+import { duplicateCommand } from '../shared/workspacePolicy'
+import { MAX_GRID_PANELS } from './gridLayout'
+import type { NoticeKind } from '../shared/notices'
+import type { IconName } from './components/Icon'
 import { useWorkspaceLifecycle } from './useWorkspaceLifecycle'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as api from './api'
@@ -25,7 +29,9 @@ import { loadGridWorkspaces, saveGridWorkspaces, clearGridLayout, savedGridSessi
 import { createStatePoller, pollPreviewIds } from '../shared/statePoll'
 import { sessionWorkActions, sessionWorkCli } from '../shared/sessionActions'
 import {
+  formatAge,
   hasRunningProcesses,
+  PRESETS,
   type Isolation,
   type Preset,
   type ProjectView,
@@ -33,6 +39,13 @@ import {
   type StateResponse,
   type SessionView,
 } from '../shared/types'
+
+const NOTICE_ICONS: Record<NoticeKind, IconName> = { attention: 'alert', quiet: 'terminal', finished: 'check', failed: 'alert', terminal: 'alert' }
+
+function noticeAge(at: number): string {
+  const age = formatAge(Date.now() - at)
+  return age === 'az önce' ? age : `${age} önce`
+}
 
 const TRUST_NOTE = 'Ajan klasör güveni veya giriş onayı isteyebilir; terminalden tamamlayın.'
 
@@ -102,7 +115,9 @@ export function App() {
   const [grids, setGrids] = useState(loadGridWorkspaces)
   const [gridId, setGridId] = useState(() => loadGridWorkspaces()[0].id)
   const [gridIds, setGridIds] = useState<string[]>(() => savedGridSessionIds(loadGridWorkspaces()[0].id))
-  const [pendingGridAdd, setPendingGridAdd] = useState<{ id: string; focus: boolean } | null>(null)
+  const [pendingGridAdd, setPendingGridAdd] = useState<{ ids: string[]; focus: boolean } | null>(null)
+  const [addMenu, setAddMenu] = useState<MenuPosition | null>(null)
+  const closeAddMenu = useCallback(() => setAddMenu(null), [])
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [renamingGrid, setRenamingGrid] = useState<string | null>(null)
   const [gridMenu, setGridMenu] = useState<MenuPosition | null>(null)
@@ -136,7 +151,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
 
   const refresh = () => pollerRef.current?.refresh() ?? Promise.resolve()
-  const lifecycle = useWorkspaceLifecycle(state, stateHealthy, preferences)
+  // Kullanıcının o an gördüğü oturumlar bildirim üretmez.
+  const lifecycle = useWorkspaceLifecycle(state, stateHealthy, preferences, activeId ? [activeId] : view === 'grid' ? gridIds : [])
 
   // Yetim keşfi salt okunurdur ve poll edilmez: açılışta ve istenince okunur.
   const refreshOrphans = () =>
@@ -306,14 +322,14 @@ export function App() {
   }, [activeId, addingProject, launchOpen, launching])
 
   useEffect(() => {
-    const pending = lifecycle.notices.filter((notice) => !toastsHidden.has(notice.id))
+    const pending = lifecycle.notices.filter((notice) => notice.toast && !toastsHidden.has(notice.id))
     if (pending.length === 0) return
     const timer = window.setTimeout(() => {
       setToastsHidden((hidden) => new Set([...hidden, ...pending.map((notice) => notice.id)]))
-    }, 9000)
+    }, 7000)
     return () => window.clearTimeout(timer)
   }, [lifecycle.notices, toastsHidden])
-  const toasts = lifecycle.notices.filter((notice) => !toastsHidden.has(notice.id)).slice(0, 3)
+  const toasts = lifecycle.notices.filter((notice) => notice.toast && !toastsHidden.has(notice.id)).slice(0, 3)
 
   const run = (promise: Promise<unknown>) => {
     setError(null)
@@ -346,7 +362,7 @@ export function App() {
     const owner = grids.find(g => (g.id === gridId ? gridIds : savedGridSessionIds(g.id)).includes(id))
     if (owner) {
       if (owner.id !== gridId) setGridIds(savedGridSessionIds(owner.id))
-      setGridId(owner.id); setPendingGridAdd({ id, focus }); setActiveId(null); setView('grid')
+      setGridId(owner.id); setPendingGridAdd({ ids: [id], focus }); setActiveId(null); setView('grid')
     }
     else openSession(id)
     setPendingDelete(null)
@@ -363,22 +379,27 @@ export function App() {
       .createSession({ name: '', command: preset.command, isolation: 'shared', projectId: project.id })
       .then(async (session) => {
         await refresh()
-        if (intoGrid) { setPendingGridAdd({ id: session.id, focus: true }); setView('grid') }
+        if (intoGrid) { setPendingGridAdd({ ids: [session.id], focus: true }); setView('grid') }
         else openSession(session.id)
       })
       .catch((e) => setError(e.message))
       .finally(() => setCreating(false))
   }
 
+  const toggleSidebar = () => {
+    try { updatePreferences({ sidebarCollapsed: !preferences.sidebarCollapsed }) } catch { setError('Tercih kaydedilemedi.') }
+  }
+
   const shortcutRef = useRef<(shortcut: AppShortcut) => void>(() => {})
   shortcutRef.current = (shortcut) => {
     if (shortcut.kind === 'palette') { setPaletteOpen((open) => !open); return }
+    if (shortcut.kind === 'sidebar') { toggleSidebar(); return }
     if (shortcut.kind === 'maximize') {
       if (view === 'grid' && !active) window.dispatchEvent(new Event('agentdeck:grid-maximize'))
       return
     }
     if (shortcut.kind === 'new-session') {
-      const project = state.projects.find((p) => p.id === (active?.projectId ?? state.sessions.find((s) => s.id === pendingGridAdd?.id)?.projectId)) ?? state.projects[0]
+      const project = state.projects.find((p) => p.id === (active?.projectId ?? gridFocusSession()?.projectId)) ?? state.projects[0]
       if (project) setDialogProject(project)
       else setAddingProject(true)
       return
@@ -413,8 +434,40 @@ export function App() {
   }
 
   // Grid'e ekleme grid'i açar. Tek görünüm kapanır; aynı Run için iki terminal açık kalmaz.
+  /** Grid'de odaktaki (yoksa öndeki grubun) oturumu. */
+  const gridFocusSession = () => {
+    const element = document.activeElement?.closest<HTMLElement>('[data-session-id]') ?? document.querySelector<HTMLElement>('.dv-active-group [data-session-id]')
+    return state.sessions.find((s) => s.id === element?.dataset.sessionId) ?? null
+  }
+
+  // Grid'de olmayan canlı oturumlar panel sınırına kadar eklenir.
+  const addLiveToGrid = () => {
+    const ids = navigationIds(state).filter((id) => !gridIds.includes(id)).slice(0, Math.max(0, MAX_GRID_PANELS - gridIds.length))
+    if (ids.length === 0) return
+    setPendingGridAdd({ ids, focus: false })
+    setActiveId(null)
+    setView('grid')
+  }
+
+  // Aynı programdan yeni oturum: proje klasöründe açılır, grid'deysen grid'e girer.
+  const duplicateSession = (session: SessionView) => {
+    if (creating) return
+    setCreating(true)
+    setError(null)
+    const intoGrid = view === 'grid' && !active
+    api
+      .createSession({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared' })
+      .then(async (created) => {
+        await refresh()
+        if (intoGrid) setPendingGridAdd({ ids: [created.id], focus: true })
+        else openSession(created.id)
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setCreating(false))
+  }
+
   const addToGrid = (id: string) => {
-    setPendingGridAdd({ id, focus: false })
+    setPendingGridAdd({ ids: [id], focus: false })
     setActiveId(null)
     setPendingDelete(null)
     setView('grid')
@@ -546,12 +599,15 @@ export function App() {
     ...(active ? [
       { id: 'active-diff', label: `Değişiklikleri incele · ${active.name}`, icon: 'diff' as const, keywords: 'diff fark', run: () => setTab('diff') },
       { id: 'active-grid', label: `Grid’e ekle · ${active.name}`, icon: 'grid' as const, run: () => addToGrid(active.id) },
+      { id: 'active-copy', label: `Aynı programla yeni oturum · ${active.name}`, icon: 'copy' as const, keywords: 'kopya çoğalt duplicate', run: () => duplicateSession(active) },
       { id: 'active-launch', label: `Komut çalıştır… · ${active.name}`, icon: 'play' as const, keywords: 'resume devam', run: () => setLaunchOpen(true) },
     ] : []),
     { id: 'home', label: 'Tüm oturumlar', icon: 'list', keywords: 'pano ana sayfa', hint: 'Esc', run: goHome },
     { id: 'grid', label: 'Terminal grid', icon: 'grid', keywords: 'bölünmüş yan yana', run: goGrid },
     ...grids.filter(() => grids.length > 1).map(g => ({ id: `grid:${g.id}`, label: `Grid’e geç · ${g.name}`, icon: 'layout' as const, run: () => { leaveToScan(); setGridId(g.id); setGridIds(savedGridSessionIds(g.id)); setPendingGridAdd(null); setView('grid') } })),
     { id: 'new-grid', label: 'Yeni grid oluştur', icon: 'plus', run: () => { createGrid(); goGrid() } },
+    { id: 'grid-live', label: 'Çalışan oturumları grid’e ekle', icon: 'layout', keywords: 'hepsi tümü canlı', run: addLiveToGrid },
+    { id: 'sidebar', label: preferences.sidebarCollapsed ? 'Kenar çubuğunu genişlet' : 'Kenar çubuğunu daralt', icon: 'sidebar', hint: SHORTCUT_LABELS.sidebar, keywords: 'panel gizle', run: toggleSidebar },
     { id: 'new-session', label: 'Yeni oturum…', icon: 'plus', hint: SHORTCUT_LABELS.newSession, keywords: 'ajan terminal başlat', run: () => shortcutRef.current({ kind: 'new-session' }) },
     { id: 'add-project', label: 'Proje ekle…', icon: 'folder', keywords: 'klasör depo', run: () => setAddingProject(true) },
     { id: 'settings', label: 'Ayarlar', icon: 'settings', keywords: 'tercih', run: () => setSettingsOpen(true) },
@@ -563,6 +619,7 @@ export function App() {
     { label: 'Değişiklikleri incele', icon: 'diff', run: () => { openSession(menuSession.id); setTab('diff') } },
     { label: 'Terminal rengi…', icon: 'palette', run: () => setColorSession(menuSession) },
     { label: 'Grid’e ekle', icon: 'grid', run: () => addToGrid(menuSession.id) },
+    { label: 'Aynı programla yeni oturum', icon: 'copy', description: 'Ctrl basılı tutup grid’e sürüklemek de kopya açar.', disabled: !stateHealthy || creating, run: () => duplicateSession(menuSession) },
     ...(menuSession.archivedAt === null ? sessionWorkActions(menuSession).map(action => ({ label: action.label[0].toLocaleUpperCase('tr') + action.label.slice(1), description: action.description, icon: action.kind === 'stop' ? 'stop' as const : action.kind === 'restart' ? 'refresh' as const : 'play' as const, disabled: !stateHealthy || Boolean(menuSession.degraded && action.kind !== 'stop'), run: () => executeAction(menuSession, action) })) : []),
     { label: menuSession.archivedAt !== null ? 'Arşivden çıkar' : hasRunningProcesses(menuSession) ? 'Durdur ve arşivle' : 'Arşivle', icon: 'archive', disabled: !stateHealthy, run: () => toggleArchive(menuSession) },
     { label: 'Çalışma klasörünün yolunu kopyala', icon: 'copy', run: () => { navigator.clipboard.writeText(menuSession.cwd).catch(() => setError(`Yol kopyalanamadı: ${menuSession.cwd}`)) } },
@@ -573,9 +630,8 @@ export function App() {
     <div className={`app${preferences.compact ? ' compact-ui' : ''}`}>
       {preferences.notifications && toasts.length > 0 && <aside className="notification-toasts" aria-live="polite" aria-label="Yeni bildirimler">
         {toasts.map(notice => {
-          const session = state.sessions.find((item) => item.id === notice.sessionId)
-          return <article className="notification-toast" key={notice.id} data-tone={session ? statusTone(session) : 'done'}>
-            <span className="toast-icon" aria-hidden="true"><Icon name={notice.title.includes('müdahale') ? 'alert' : 'bell'} size={16} /></span>
+          return <article className="notification-toast" key={notice.id} data-kind={notice.kind}>
+            <span className="toast-icon" aria-hidden="true"><Icon name={NOTICE_ICONS[notice.kind]} size={16} /></span>
             <button className="notification-toast-open" onClick={() => { lifecycle.dismissNotice(notice.id); selectSession(notice.sessionId, true) }}>
               <strong>{notice.title}</strong><span>{notice.detail}</span>
             </button>
@@ -584,7 +640,7 @@ export function App() {
         })}
       </aside>}
 
-      <SidebarShell>{(navigate) => <Sidebar
+      <SidebarShell>{(navigate, narrow) => <Sidebar
         state={state}
         onSessionMenu={showMenu}
         onSettings={() => setSettingsOpen(true)}
@@ -596,8 +652,12 @@ export function App() {
           </button>
           {notificationsOpen && <div className="notification-list">
             <header><strong>Bildirimler</strong>{lifecycle.notices.length > 0 && <button className="ghost-button" onClick={lifecycle.clearNotices}>Temizle</button>}</header>
-            {lifecycle.notices.length === 0 && <p className="muted">Yeni bildirim yok. Bir terminal bittiğinde veya onay beklediğinde burada görünür.</p>}
-            {lifecycle.notices.map(notice => <button key={notice.id} onClick={() => { setNotificationsOpen(false); navigate(() => selectSession(notice.sessionId, true)) }}><strong>{notice.title}</strong><span>{notice.detail}</span></button>)}
+            {lifecycle.notices.length === 0 && <p className="muted">Yeni bildirim yok. Bakmadığın bir ajan onay beklediğinde, çıktıyı durdurduğunda veya bittiğinde burada görünür.</p>}
+            {lifecycle.notices.map(notice => <button key={notice.id} data-kind={notice.kind} onClick={() => { setNotificationsOpen(false); lifecycle.dismissNotice(notice.id); navigate(() => selectSession(notice.sessionId, true)) }}>
+              <span className="toast-icon" aria-hidden="true"><Icon name={NOTICE_ICONS[notice.kind]} size={14} /></span>
+              <span className="notice-text"><strong>{notice.title}</strong><span>{notice.detail}</span></span>
+              <time>{noticeAge(notice.at)}</time>
+            </button>)}
           </div>}
         </div>}
         healthy={stateHealthy}
@@ -614,6 +674,8 @@ export function App() {
         onAddToGrid={(id) => navigate(() => addToGrid(id))}
         activeId={activeId}
         gridSessionIds={view === 'grid' && !active ? gridIds : []}
+        collapsed={preferences.sidebarCollapsed && !narrow}
+        onToggleCollapsed={toggleSidebar}
         onSelect={(id) => navigate(() => {
           selectSession(id)
         })}
@@ -670,6 +732,11 @@ export function App() {
             onOpen={openSession}
             onSessionMenu={showMenu}
             onPanelsChange={setGridIds}
+            onAddLive={addLiveToGrid}
+            actions={<button className="ghost-button grid-add-button" title="Grid'e terminal ekle" aria-label="Grid'e terminal ekle" onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect()
+              setAddMenu({ x: rect.right - 280, y: rect.bottom + 4, origin: event.currentTarget })
+            }}><Icon name="plus" size={14} /> Terminal</button>}
             toolbar={<div className="grid-workspace-tabs" role="navigation" aria-label="Grid çalışma alanları">
               {grids.map(g => renamingGrid === g.id
                 ? <input key={g.id} className="grid-rename" aria-label="Grid adı" autoFocus defaultValue={g.name} maxLength={60}
@@ -795,6 +862,15 @@ export function App() {
       </main>
 
       {menu && menuSession && <ActionMenu position={menu.position} actions={menuActions} onClose={closeMenu} />}
+      {addMenu && (() => {
+        const focusProject = state.projects.find((p) => p.id === gridFocusSession()?.projectId) ?? state.projects[0]
+        const live = navigationIds(state).filter((id) => !gridIds.includes(id)).length
+        return <ActionMenu label="Grid'e terminal ekle" position={addMenu} onClose={closeAddMenu} actions={[
+          ...(focusProject ? PRESETS.map((preset) => ({ label: `${preset.label} · ${focusProject.name}`, icon: 'terminal' as const, disabled: !stateHealthy || creating || gridIds.length >= MAX_GRID_PANELS, run: () => quickCreate(focusProject, preset) })) : []),
+          { label: live > 0 ? `Çalışan ${live} oturumu ekle` : 'Çalışan oturumların hepsi grid’de', icon: 'layout', disabled: live === 0 || gridIds.length >= MAX_GRID_PANELS, run: addLiveToGrid },
+          { label: 'Başka proje veya program…', icon: 'command', run: () => setPaletteOpen(true) },
+        ]} />
+      })()}
       {gridMenu && <ActionMenu label="Grid işlemleri" position={gridMenu} onClose={closeGridMenu} actions={[
         { label: 'Yeniden adlandır', icon: 'edit', run: () => setRenamingGrid(gridId) },
         { label: 'Yeni grid', icon: 'plus', run: createGrid },

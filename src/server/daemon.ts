@@ -45,7 +45,10 @@ const MAX_LIVE_RUNS = 32
 /** Açılışta çok sayıda CLI'ın aynı anda profil/önbellek açmasını önler. */
 const STARTUP_RESTORE_CONCURRENCY = 3
 /** Kısa devam çıktısı soru gibi görünse de bildirim oluşturmaz. */
-const ATTENTION_SETTLE_MS = 800
+/** Çıktı bu kadar durulunca ekran onay/soru için değerlendirilir. */
+const ATTENTION_QUIET_MS = 900
+/** Kesintisiz çıktıda en geç bu aralıkla yeniden bakılır; o sırada yalnız eski dikkat kalkar. */
+const ATTENTION_MAX_WAIT_MS = 4000
 
 /** Silme onayı daemon ömrüne bağlıdır ve 60 sn sonra düşer. */
 const CONFIRMATION_TTL_MS = 60_000
@@ -338,7 +341,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   }
 
   const attentionBySession = new Map<string, { runId: string; attention: TerminalAttention }>()
-  const pendingAttention = new Map<string, NodeJS.Timeout>()
+  const pendingAttention = new Map<string, { timer: NodeJS.Timeout; firstAt: number }>()
 
   function terminalAttention(sessionId: string, runId: string | null): TerminalAttention | null {
     const entry = attentionBySession.get(sessionId)
@@ -347,32 +350,53 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
   function clearTerminalAttention(sessionId: string, runId?: string): void {
     if (runId) {
-      const timer = pendingAttention.get(runId)
-      if (timer) clearTimeout(timer)
+      const pending = pendingAttention.get(runId)
+      if (pending) clearTimeout(pending.timer)
       pendingAttention.delete(runId)
     }
     const current = attentionBySession.get(sessionId)
     if (!current || runId === undefined || current.runId === runId) attentionBySession.delete(sessionId)
   }
 
-  function scheduleTerminalAttention(sessionId: string, runId: string, tail: string): void {
-    const candidate = terminalAttentionFromText(tail)
-    const active = terminalAttention(sessionId, runId)
-    if (!candidate) {
-      clearTerminalAttention(sessionId, runId)
-      return
-    }
-    if (active && active.kind === candidate.kind && active.message === candidate.message) return
-    clearTerminalAttention(sessionId, runId)
+  /**
+   * Ajan TUI'leri ekranı imleç hareketleriyle yeniden çizer; ham akışın son
+   * satırları ekranın son satırları değildir. Bu yüzden karar, çıktı durulduktan
+   * sonra headless ekranın son satırlarından verilir. Kesintisiz çıktıda (spinner,
+   * akan metin) yeni dikkat açılmaz, yalnız artık görünmeyen dikkat kalkar.
+   */
+  function scheduleTerminalAttention(sessionId: string, runId: string): void {
+    const now = Date.now()
+    const pending = pendingAttention.get(runId)
+    if (pending) clearTimeout(pending.timer)
+    const firstAt = pending?.firstAt ?? now
+    const forced = now - firstAt + ATTENTION_QUIET_MS >= ATTENTION_MAX_WAIT_MS
     const timer = setTimeout(() => {
       pendingAttention.delete(runId)
-      // Timer boyunca yeni çıktı geldiyse yalnız güncel tail değerlendirilir.
-      const current = terminalAttentionFromText(resumeOutputTails.get(runId) ?? '')
-      if (!current || !sessions.isLive(sessionId, runId)) return
-      attentionBySession.set(sessionId, { runId, attention: { ...current, detectedAt: Date.now() } })
-    }, ATTENTION_SETTLE_MS)
+      void evaluateTerminalAttention(sessionId, runId, !forced)
+    }, forced ? Math.max(0, firstAt + ATTENTION_MAX_WAIT_MS - now) : ATTENTION_QUIET_MS)
     timer.unref?.()
-    pendingAttention.set(runId, timer)
+    pendingAttention.set(runId, { timer, firstAt })
+  }
+
+  async function evaluateTerminalAttention(sessionId: string, runId: string, quiet: boolean): Promise<void> {
+    if (!sessions.isLive(sessionId, runId)) return
+    const screen = await host.preview(runId).catch(() => null)
+    // Değerlendirme sürerken yeni çıktı geldiyse karar sıradaki durulmaya kalır.
+    if (!sessions.isLive(sessionId, runId) || pendingAttention.has(runId)) return
+    const text = screen?.state === 'ready' ? screen.preview.text : (resumeOutputTails.get(runId) ?? '')
+    const candidate = terminalAttentionFromText(text)
+    const active = terminalAttention(sessionId, runId)
+    if (!candidate) {
+      if (active) attentionBySession.delete(sessionId)
+      return
+    }
+    // Aynı istem yeniden çizildiğinde veya metni değiştiğinde yeni bir dikkat anı sayılmaz.
+    if (active && active.kind === candidate.kind) {
+      if (active.message !== candidate.message) attentionBySession.set(sessionId, { runId, attention: { ...candidate, detectedAt: active.detectedAt } })
+      return
+    }
+    if (!quiet) return
+    attentionBySession.set(sessionId, { runId, attention: { ...candidate, detectedAt: Date.now() } })
   }
 
   /** Resume footer'ı parçalı PTY çıktısında bölünebilir; son 8 KiB yeterlidir. */
@@ -401,7 +425,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     host.feed(runId, chunk)
     const tail = `${resumeOutputTails.get(runId) ?? ''}${chunk}`.slice(-8192)
     resumeOutputTails.set(runId, tail)
-    scheduleTerminalAttention(sessionId, runId, tail)
+    scheduleTerminalAttention(sessionId, runId)
     const target = resumeTargetFromTerminalText(tail)
     if (!target || observedResumeCommands.get(runId) === target.command) return
     observedResumeCommands.set(runId, target.command)

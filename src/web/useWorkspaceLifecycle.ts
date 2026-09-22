@@ -1,66 +1,92 @@
 import { showDesktopNotification } from './notifications'
 import { useEffect, useRef, useState } from 'react'
 import type { StateResponse } from '../shared/types'
+import { detectNotices, type NoticeKind, type WorkSpan } from '../shared/notices'
 import type { Preferences } from './preferences'
 
-export interface Notice { id: string; sessionId: string; title: string; detail: string }
+export interface Notice {
+  id: string
+  sessionId: string
+  kind: NoticeKind
+  title: string
+  detail: string
+  at: number
+  /** Uygulama öndeyken köşede kısa süre görünür; arka plandayken masaüstü bildirimi gider. */
+  toast: boolean
+}
 
-/** Daemon olaylarını uygulama içi ve masaüstü bildirimlerine dönüştürür. */
-export function useWorkspaceLifecycle(state: StateResponse, healthy: boolean, preferences: Preferences) {
+/** Aynı oturum ve türde bu süre içinde ikinci bildirim gönderilmez. */
+const COOLDOWN_MS = 20_000
+
+function foreground(): boolean {
+  return document.visibilityState === 'visible' && document.hasFocus()
+}
+
+/**
+ * Daemon olaylarını bildirime dönüştürür. Kullanıcının o an baktığı oturum
+ * bildirim üretmez; oturum başına tek kayıt tutulur ve açılınca okunmuş sayılıp kalkar.
+ */
+export function useWorkspaceLifecycle(state: StateResponse, healthy: boolean, preferences: Preferences, visibleIds: string[]) {
   const previous = useRef<StateResponse | null>(null)
+  const spans = useRef(new Map<string, WorkSpan>())
+  const lastSent = useRef(new Map<string, number>())
+  const visible = useRef(visibleIds)
+  visible.current = visibleIds
   const [notices, setNotices] = useState<Notice[]>([])
+  const [focused, setFocused] = useState(foreground)
+
+  useEffect(() => {
+    const sync = () => setFocused(foreground())
+    window.addEventListener('focus', sync)
+    window.addEventListener('blur', sync)
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      window.removeEventListener('focus', sync)
+      window.removeEventListener('blur', sync)
+      document.removeEventListener('visibilitychange', sync)
+    }
+  }, [])
+
+  // Görülen oturumun bildirimi okunmuş sayılır.
+  useEffect(() => {
+    if (!focused) return
+    setNotices((items) => (items.some((n) => visibleIds.includes(n.sessionId)) ? items.filter((n) => !visibleIds.includes(n.sessionId)) : items))
+  }, [focused, visibleIds.join(',')])
 
   useEffect(() => {
     if (!healthy || !state.daemonId) return
     const before = previous.current
     previous.current = state
-    if (!preferences.notifications || before?.daemonId !== state.daemonId) return
-
-    const emit = (notice: Notice) => {
-      setNotices(items => [notice, ...items.filter(item => item.id !== notice.id)].slice(0, 20))
-      void showDesktopNotification(notice).catch(error => console.error('Masaüstü bildirimi gösterilemedi:', error))
+    if (!before || before.daemonId !== state.daemonId) {
+      spans.current.clear()
+      return
     }
+    const events = detectNotices(before, state, spans.current)
 
-    for (const session of state.sessions) {
-      const old = before.sessions.find(candidate => candidate.id === session.id)
-      if (session.lifecycle === 'exited' && old?.lifecycle === 'live' && old.runId === session.runId) {
-        const detail = session.exitCode === 0
-          ? 'İş bitti'
-          : session.exitCode !== null
-            ? `İş hata ile bitti · çıkış kodu ${session.exitCode}`
-            : session.exitSignal !== null
-              ? `Terminal sonlandı · sinyal ${session.exitSignal}`
-              : 'Terminal sonlandı'
-        emit({ id: `${session.id}:${session.runId}:exit`, sessionId: session.id, title: session.name, detail })
-      }
-
-      if (session.attention && old?.attention?.detectedAt !== session.attention.detectedAt) {
-        const detail = session.attention.kind === 'approval'
-          ? 'İzin veya onay bekliyor'
-          : `Yanıt bekliyor · ${session.attention.message}`
-        emit({
-          id: `${session.id}:${session.runId}:attention:${session.attention.detectedAt}`,
-          sessionId: session.id,
-          title: `${session.name} · müdahale gerekli`,
-          detail,
-        })
-      }
-    }
-
-    for (const [sessionId, terminal] of Object.entries(state.terminals ?? {})) {
-      if (!terminal.failure || before.terminals?.[sessionId]?.failure?.code === terminal.failure.code) continue
-      const session = state.sessions.find(candidate => candidate.id === sessionId)
-      if (!session) continue
-      emit({
-        id: `${sessionId}:${session.runId}:terminal:${terminal.failure.code}`,
-        sessionId,
-        title: `${session.name} · terminal hatası`,
-        detail: terminal.failure.message,
+    // Kalkan dikkat ve silinen oturumun kaydı listeden düşer.
+    setNotices((items) => {
+      const next = items.filter((notice) => {
+        const session = state.sessions.find((s) => s.id === notice.sessionId)
+        return session && (notice.kind !== 'attention' || session.attention)
       })
+      return next.length === items.length ? items : next
+    })
+    if (!preferences.notifications) return
+
+    const now = Date.now()
+    const front = foreground()
+    for (const event of events) {
+      if (front && visible.current.includes(event.sessionId)) continue
+      const key = `${event.sessionId}:${event.kind}`
+      if (now - (lastSent.current.get(key) ?? 0) < COOLDOWN_MS) continue
+      lastSent.current.set(key, now)
+      const notice: Notice = { ...event, id: `${key}:${now}`, at: now, toast: front }
+      setNotices((items) => [notice, ...items.filter((item) => item.sessionId !== notice.sessionId)].slice(0, 20))
+      if (!front) void showDesktopNotification(notice).catch((error) => console.error('Masaüstü bildirimi gösterilemedi:', error))
     }
   }, [state, healthy, preferences.notifications])
 
   const clearNotices = () => setNotices([])
-  const dismissNotice = (id: string) => setNotices(items => items.filter(item => item.id !== id))
+  const dismissNotice = (id: string) => setNotices((items) => items.filter((item) => item.id !== id))
   return { notices, clearNotices, dismissNotice }
 }

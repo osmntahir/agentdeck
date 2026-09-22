@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import type { ProjectView, SessionView, StateResponse } from '../../shared/types'
 import type { OrphanScanResult } from '../api'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
+import { SHORTCUT_LABELS } from '../../shared/shortcuts'
 import { stateLabel, StatusDot } from '../sessionStatus'
 
 /** Kenar çubuğundaki oturum sırası; Alt+rakam ve Ctrl+PgUp/PgDn bu sırayı izler. */
@@ -22,6 +23,9 @@ interface Props {
   activeId: string | null
   /** Grid görünümünde açık grid'deki oturumlar; tek oturumdaki gibi vurgulanır. */
   gridSessionIds: string[]
+  /** Yalnız simgelerden oluşan dar şerit. */
+  collapsed: boolean
+  onToggleCollapsed: () => void
   onSelect: (id: string) => void
   onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onSettings: () => void
@@ -46,6 +50,8 @@ export function Sidebar({
   state,
   activeId,
   gridSessionIds,
+  collapsed,
+  onToggleCollapsed,
   onSelect,
   onSessionMenu,
   onSettings,
@@ -93,24 +99,29 @@ export function Sidebar({
   const waiting = active.filter((s) => s.lifecycle === 'live' && s.attention).length
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
       <div className="brand">
         <span className="brand-mark" aria-hidden="true"><Icon name="terminal" size={15} /></span>
         <span className="brand-name">agentdeck</span>
+        <button className="icon-button ghost sidebar-toggle" onClick={onToggleCollapsed}
+          aria-label={collapsed ? 'Kenar çubuğunu genişlet' : 'Kenar çubuğunu daralt'}
+          title={`${collapsed ? 'Genişlet' : 'Daralt'} · ${SHORTCUT_LABELS.sidebar}`}>
+          <Icon name="sidebar" size={16} />
+        </button>
       </div>
-      <button className="palette-trigger" onClick={onPalette} aria-keyshortcuts="Control+K Control+Shift+P">
+      <button className="palette-trigger" onClick={onPalette} aria-keyshortcuts="Control+K Control+Shift+P" title="Ara, geç, başlat · Ctrl+K">
         <Icon name="search" size={15} />
         <span>Ara, geç, başlat…</span>
         <kbd>Ctrl K</kbd>
       </button>
       <nav className="main-nav">
-        <button className={`home-nav${activeId === null && view === 'sessions' ? ' selected' : ''}`} onClick={onHome}>
-          <Icon name="list" /> Tüm oturumlar
+        <button className={`home-nav${activeId === null && view === 'sessions' ? ' selected' : ''}`} onClick={onHome} title="Tüm oturumlar">
+          <Icon name="list" /> <span className="nav-label">Tüm oturumlar</span>
           {waiting > 0 && <span className="nav-attention" title={`${waiting} oturum onay veya yanıt bekliyor`}>{waiting}</span>}
           <span className="nav-count">{active.length}</span>
         </button>
-        <button className={`home-nav${activeId === null && view === 'grid' ? ' selected' : ''}`} onClick={onGrid}>
-          <Icon name="grid" /> Terminal grid <span className="nav-count">{gridCount}</span>
+        <button className={`home-nav${activeId === null && view === 'grid' ? ' selected' : ''}`} onClick={onGrid} title="Terminal grid">
+          <Icon name="grid" /> <span className="nav-label">Terminal grid</span> <span className="nav-count">{gridCount}</span>
         </button>
       </nav>
       <div className="sidebar-label">
@@ -127,10 +138,14 @@ export function Sidebar({
           return (
             <div key={project.id} className="project" style={projectStyle(project.id, preferences)}>
               <div className="project-head" onContextMenu={e => { e.preventDefault(); setProjectMenu({ id: project.id, name: project.name, position: { x: e.clientX, y: e.clientY, origin: e.currentTarget } }) }}>
-                <button className="project-swatch" title={`${project.name} proje rengi`} aria-label={`${project.name} proje rengi`} onClick={() => setColorProject({ id: project.id, name: project.name })} />
+                <button className="project-tile" title={`${project.name} · proje işlemleri`} aria-label={`${project.name} proje işlemleri`}
+                  onClick={e => { const rect = e.currentTarget.getBoundingClientRect(); setProjectMenu({ id: project.id, name: project.name, position: { x: rect.left, y: rect.bottom + 4, origin: e.currentTarget } }) }}>
+                  {project.name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toLocaleUpperCase('tr') || '•'}
+                </button>
                 <div className="project-name" title={project.degraded ?? project.path}>
                   <span>{project.name}</span>
                   {project.degraded && <span className="badge warn" title={project.degraded}>!</span>}
+                  {rows.length > 0 && <span className="project-count">{rows.length}</span>}
                 </div>
                 <div className="project-actions">
                   <button className="icon-button ghost" title="Yeni oturum" aria-label={`${project.name} içinde yeni oturum`} onClick={() => onNewSession(project)}>
@@ -143,6 +158,7 @@ export function Sidebar({
               </div>
 
               {/* Arşivlenen ve biten oturum gezinmede görünmez (ADR 0014); taramada durur. */}
+              <div className="project-sessions">
               {rows.map((session) => {
                 const index = visibleIds.indexOf(session.id)
                 return (
@@ -161,10 +177,11 @@ export function Sidebar({
                 )
               })}
               {rows.length === 0 && (
-                <button className="project-idle" onClick={() => onNewSession(project)}>
-                  {owned.length > 0 ? 'Çalışan oturum yok · başlat' : 'Oturum başlat'}
+                <button className="project-idle" onClick={() => onNewSession(project)} title={`${project.name} içinde oturum başlat`}>
+                  <Icon name="plus" size={12} /><span>{owned.length > 0 ? 'Çalışan oturum yok · başlat' : 'Oturum başlat'}</span>
                 </button>
               )}
+              </div>
             </div>
           )
         })}
@@ -181,7 +198,7 @@ export function Sidebar({
       <footer className="sidebar-footer">
         <span className={`connection${healthy ? ' ok' : ''}`} title={healthy ? 'Yerel daemon bağlı' : 'Daemon bağlantısı bekleniyor'}>
           <span className="connection-dot" />
-          {healthy ? 'Bağlı' : 'Bağlanıyor…'}
+          <span className="connection-label">{healthy ? 'Bağlı' : 'Bağlanıyor…'}</span>
         </span>
         {notifications}
         <button className="icon-button ghost" onClick={onSettings} aria-label="Ayarlar" title="Ayarlar"><Icon name="settings" /></button>
@@ -255,10 +272,10 @@ function SessionRow({
         tabIndex={tabbable ? 0 : -1}
         onClick={onSelect}
         onFocus={onFocusRow}
-        title={`${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''} · terminal grid'e sürüklenebilir`}
+        title={`${session.name} · ${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''}\nGrid'e sürükle · Ctrl basılı sürükle: aynı programdan kopya`}
         aria-keyshortcuts={shortcut ? `Alt+${shortcut}` : undefined}
         draggable
-        onDragStart={(e) => e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id)}
+        onDragStart={(e) => { e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id); e.dataTransfer.effectAllowed = 'copyMove' }}
         onKeyDown={(e) => {
           if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
           e.preventDefault()

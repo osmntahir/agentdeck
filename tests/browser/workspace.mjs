@@ -154,11 +154,21 @@ try {
     command: "printf 'Proceed? [y/N]\n'; sleep 300",
     isolation: 'shared',
   })
-  await page.waitForFunction(id => window.testNotices.some(n => n.sessionId === id), attention.id)
-  await page.waitForFunction(() => [...document.querySelectorAll('.notification-toast')].some(el => el.textContent?.includes('müdahale gerekli')))
-  assert.equal(await page.locator('.notification-toast').filter({ hasText: 'müdahale gerekli' }).count(), 1)
+  // Pencere öndeyken bildirim köşe kartıdır; masaüstü bildirimi gitmez.
+  await page.evaluate(() => { document.hasFocus = () => true; window.dispatchEvent(new Event('focus')) })
+  await page.waitForFunction(() => [...document.querySelectorAll('.notification-toast')].some(el => el.textContent?.includes('Onayınızı bekliyor')))
+  assert.equal(await page.locator('.notification-toast').filter({ hasText: 'Onayınızı bekliyor' }).count(), 1)
+  assert.equal(await page.evaluate(id => window.testNotices.filter(n => n.sessionId === id).length, attention.id), 0)
+  // Bildirimli oturumu açmak onu okunmuş sayar; kayıt listeden kalkar.
+  await page.locator('.notification-toast-open').filter({ hasText: 'Onayınızı bekliyor' }).click()
+  await page.waitForFunction(name => document.querySelector('.clean-topbar .title')?.textContent === name, attention.name)
+  await page.waitForFunction(() => document.querySelectorAll('.notification-toast').length === 0)
+  await page.keyboard.press('Escape')
+  // Arka plandaki pencerede masaüstü bildirimi gider ve oturum başına bir kez gelir.
+  await page.evaluate(() => { document.hasFocus = () => false; window.dispatchEvent(new Event('blur')) })
   await post(`sessions/${automatic.id}/stop`, { expectedRunId: automatic.runId })
   await page.waitForFunction(id => window.testNotices.some(n => n.sessionId === id), automatic.id)
+  await new Promise(resolve => setTimeout(resolve, 2500))
   assert.equal(await page.evaluate(id => window.testNotices.filter(n => n.sessionId === id).length, automatic.id), 1)
   // Hidden windows must keep polling when desktop notifications are enabled.
   await page.evaluate(() => {
@@ -168,7 +178,13 @@ try {
   })
   await post(`sessions/${sessions[0].id}/stop`, { expectedRunId: sessions[0].runId })
   await page.waitForFunction(id => window.testNotices.some(n => n.sessionId === id), sessions[0].id)
-  console.log('PASS: native notification bridge receives test and terminal-exit notifications, including hidden windows')
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+    document.hasFocus = () => true
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  console.log('PASS: foreground notices toast once and clear when opened; background and hidden windows get one desktop notice')
   // Deletions confirm in a modal where they were asked; the scan never navigates to the session.
   const spare = path.join(root, 'spare')
   fs.mkdirSync(spare)
@@ -237,6 +253,27 @@ try {
   await page.keyboard.press('Control+PageDown')
   await page.waitForFunction(id => document.querySelector(`#session-row-${id}.active`) || document.querySelector(`.grid-panel[data-session-id="${id}"]`), next)
   console.log('PASS: palette quick-starts a shell and Ctrl+PgDn cycles to the next session')
+  // Ctrl basılı sürükleme özgün oturumu taşımaz; aynı komutla yeni oturum açıp grid'e koyar.
+  await page.getByRole('button', { name: /Terminal grid/ }).click()
+  await page.locator('.grid-stage').waitFor()
+  const panelsBefore = await page.locator('.grid-panel').count()
+  const sessionsBefore = (await (await fetch(`${daemon.url}/api/state`, { headers: { 'X-Agentdeck-Token': daemon.token } })).json()).sessions.length
+  await page.keyboard.down('Control')
+  await page.locator(`#session-row-${mouseApp.id}`).dragTo(page.locator('.grid-panel').first())
+  await page.keyboard.up('Control')
+  await page.waitForFunction(count => document.querySelectorAll('.grid-panel').length === count + 1, panelsBefore)
+  const after = (await (await fetch(`${daemon.url}/api/state`, { headers: { 'X-Agentdeck-Token': daemon.token } })).json()).sessions
+  assert.equal(after.length, sessionsBefore + 1)
+  const copy = after.find(s => !sessions.concat([automatic, attention, mouseApp]).some(o => o.id === s.id) && s.command === mouseApp.command)
+  assert(copy, 'kopya aynı komutla açılmalı')
+  console.log('PASS: Ctrl+drag from the sidebar opens a copy of the same program in the grid')
+  await page.keyboard.press('Control+Shift+B')
+  await page.waitForFunction(() => document.querySelector('.sidebar')?.classList.contains('collapsed') && document.querySelector('.sidebar').getBoundingClientRect().width < 80)
+  await page.locator(`#session-row-${mouseApp.id}`).click()
+  await page.waitForFunction(id => document.querySelector(`#session-row-${id}.active`) || document.querySelector(`.grid-panel[data-session-id="${id}"]`), mouseApp.id)
+  await page.getByRole('button', { name: 'Kenar çubuğunu genişlet' }).click()
+  await page.waitForFunction(() => !document.querySelector('.sidebar')?.classList.contains('collapsed'))
+  console.log('PASS: sidebar collapses to an icon rail and stays navigable')
   assert.deepEqual(errors, [])
   console.log('PASS: themes, project color inheritance, terminal override; no browser errors')
 } finally {

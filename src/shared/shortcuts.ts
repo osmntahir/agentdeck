@@ -9,6 +9,7 @@ export type AppShortcut =
   | { kind: 'cycle'; delta: 1 | -1 }
   | { kind: 'new-session' }
   | { kind: 'maximize' }
+  | { kind: 'sidebar' }
 
 export interface KeyLike {
   key: string
@@ -29,6 +30,7 @@ export function appShortcut(event: KeyLike, inTerminal: boolean): AppShortcut | 
   if (ctrl && !alt && !meta && !shift && (key === 'PageDown' || key === 'PageUp')) return { kind: 'cycle', delta: key === 'PageDown' ? 1 : -1 }
   if (mod && shift && !alt && code === 'KeyN') return { kind: 'new-session' }
   if (mod && shift && !alt && key === 'Enter') return { kind: 'maximize' }
+  if (mod && shift && !alt && code === 'KeyB') return { kind: 'sidebar' }
   return null
 }
 
@@ -39,4 +41,5 @@ export const SHORTCUT_LABELS = {
   cycle: 'Ctrl+PgUp / PgDn',
   newSession: 'Ctrl+Shift+N',
   maximize: 'Ctrl+Shift+Enter',
+  sidebar: 'Ctrl+Shift+B',
 } as const

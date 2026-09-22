@@ -8,6 +8,7 @@ import {
   type Direction,
   type DockviewApi,
   type DockviewDidDropEvent,
+  type DockviewWillDropEvent,
   type DockviewGroupPanel,
   type DockviewReadyEvent,
   type DockviewTheme,
@@ -18,6 +19,8 @@ import {
 } from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
 import type { SessionView, StateResponse } from '../../shared/types'
+import { duplicateCommand } from '../../shared/workspacePolicy'
+import * as client from '../api'
 import { clearGridLayout, loadGridLayout, MAX_GRID_PANELS, saveGridLayout, SESSION_DRAG_TYPE } from '../gridLayout'
 import { stateLabel, statusTone, StatusDot } from '../sessionStatus'
 import { Icon } from './Icon'
@@ -35,6 +38,8 @@ interface GridContextValue {
   onLayout: (sessionId: string) => void
   maximized: boolean
   onToggleMaximize: (sessionId: string) => void
+  onAddLive: () => void
+  liveOutside: number
 }
 
 /** Paneller dockview portallarında çizilir; güncel state bağlamdan okunur. */
@@ -59,7 +64,7 @@ const DIRECTION: Record<Position, Direction> = {
  */
 function addSession(
   api: DockviewApi,
-  session: SessionView,
+  session: Pick<SessionView, 'id' | 'name'>,
   drop?: { group?: DockviewGroupPanel; position: Position },
 ): string | null {
   const existing = api.getPanel(session.id)
@@ -158,6 +163,7 @@ function SessionTab(props: IDockviewPanelHeaderProps) {
 }
 
 function EmptyGrid() {
+  const grid = useContext(GridContext)
   return (
     <div className="grid-empty">
       <div className="grid-empty-mark" aria-hidden="true">
@@ -168,7 +174,10 @@ function EmptyGrid() {
         Kenar çubuğundan bir oturumu buraya sürükleyin ya da satırdaki grid simgesine tıklayın. Sekmeyi bir
         panelin kenarına bırakırsanız ekran bölünür.
       </span>
-      <span className="grid-empty-keys"><kbd>{SHORTCUT_LABELS.maximize}</kbd> paneli büyüt · <kbd>Alt+1…9</kbd> oturuma geç</span>
+      {grid && grid.liveOutside > 0 && (
+        <button className="primary" onClick={grid.onAddLive}><Icon name="grid" size={14} /> Çalışan {grid.liveOutside} oturumu ekle</button>
+      )}
+      <span className="grid-empty-keys"><kbd>Ctrl</kbd> basılı sürükle: aynı programdan kopya · <kbd>{SHORTCUT_LABELS.maximize}</kbd> paneli büyüt</span>
     </div>
   )
 }
@@ -183,17 +192,21 @@ interface Props {
   onRefresh: () => Promise<void>
   state: StateResponse
   healthy: boolean
-  /** Başka görünümden eklenmek istenen oturum; grid hazır olunca işlenir. focus klavyeyle gelindiğini söyler. */
-  pendingAdd: { id: string; focus: boolean } | null
+  /** Başka görünümden eklenmek istenen oturumlar; grid hazır olunca işlenir. focus klavyeyle gelindiğini söyler. */
+  pendingAdd: { ids: string[]; focus: boolean } | null
   onPendingHandled: () => void
   onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onOpen: (sessionId: string) => void
   onPanelsChange: (sessionIds: string[]) => void
   /** Grid seçici; panel gezinmesiyle aynı satırda çizilir. */
   toolbar: ReactNode
+  /** Çubuğun sağ ucundaki eylemler. */
+  actions: ReactNode
+  /** Grid'de olmayan canlı oturumları ekler. */
+  onAddLive: () => void
 }
 
-export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, onPendingHandled, onOpen, onSessionMenu, onPanelsChange, toolbar }: Props) {
+export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, onPendingHandled, onOpen, onSessionMenu, onPanelsChange, toolbar, actions, onAddLive }: Props) {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
     const tick = () => {
@@ -249,16 +262,52 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
     if (event.getData() || !(event.nativeEvent instanceof DragEvent)) return
     const id = event.nativeEvent.dataTransfer?.getData(SESSION_DRAG_TYPE)
     const session = latest.current.sessions.find((s) => s.id === id)
-    if (session) setNotice(addSession(event.api, session, { group: event.group, position: event.position }))
+    if (!session) return
+    // Ctrl basılı bırakma aynı programdan yeni bir terminal açar; özgün oturum yerinde kalır.
+    if (event.nativeEvent.ctrlKey) void duplicateInto(session, { group: event.group, position: event.position })
+    else setNotice(addSession(event.api, session, { group: event.group, position: event.position }))
+  }
+
+  // Grid içindeki sekme Ctrl ile sürüklenirse taşınmaz; bırakılan yere kopyası açılır.
+  const onWillDrop = (event: DockviewWillDropEvent) => {
+    const panelId = event.getData()?.panelId
+    if (!panelId || !event.nativeEvent.ctrlKey) return
+    const session = latest.current.sessions.find((s) => s.id === panelId)
+    if (!session) return
+    event.preventDefault()
+    void duplicateInto(session, { group: event.group, position: event.position })
+  }
+
+  const duplicateInto = async (session: SessionView, drop: { group?: DockviewGroupPanel; position: Position }) => {
+    if (!api) return
+    if (api.panels.length >= MAX_GRID_PANELS) {
+      setNotice(`Grid'de en çok ${MAX_GRID_PANELS} terminal açık tutulur; önce bir paneli kapatın.`)
+      return
+    }
+    setNotice(null)
+    try {
+      const created = await client.createSession({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared' })
+      await onRefresh()
+      // Kopya özgün terminalin arkasına sekme olarak gizlenmesin; ortaya bırakılınca grup bölünür.
+      const position: Position = drop.position !== 'center' ? drop.position : drop.group && drop.group.width < drop.group.height ? 'bottom' : 'right'
+      setNotice(addSession(api, created, { ...drop, position }))
+    } catch (e) {
+      setNotice(`Kopya açılamadı: ${(e as Error).message}`)
+    }
   }
 
   useEffect(() => {
     if (!api || !pendingAdd || !healthy) return
-    const session = state.sessions.find((s) => s.id === pendingAdd.id)
-    setNotice(session ? addSession(api, session) : 'Eklenmek istenen oturum artık yok.')
+    let problem: string | null = null
+    for (const id of pendingAdd.ids) {
+      const session = state.sessions.find((s) => s.id === id)
+      problem = (session ? addSession(api, session) : 'Eklenmek istenen oturum artık yok.') ?? problem
+    }
+    setNotice(problem)
     // Kısayolla gelinen panel yazmaya hazır olur; tıklamayla eklenen panel odağı çalmaz.
-    if (session && pendingAdd.focus && api.getPanel(session.id) && document.activeElement instanceof HTMLElement) {
-      setFocusRequest({ sessionId: session.id, sequence: ++focusSequence.current, origin: document.activeElement })
+    const target = pendingAdd.ids.at(-1)
+    if (target && pendingAdd.focus && api.getPanel(target) && document.activeElement instanceof HTMLElement) {
+      setFocusRequest({ sessionId: target, sequence: ++focusSequence.current, origin: document.activeElement })
     }
     onPendingHandled()
   }, [api, pendingAdd, healthy])
@@ -295,7 +344,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
   }, [api, healthy, state.sessions])
 
   return (
-    <GridContext.Provider value={{ state, healthy, onOpen, onSessionMenu, onLayout: setLayoutPanel, focusRequest, onFocusHandled: () => setFocusRequest(null), maximized, onToggleMaximize: toggleMaximize }}>
+    <GridContext.Provider value={{ state, healthy, onOpen, onSessionMenu, onLayout: setLayoutPanel, focusRequest, onFocusHandled: () => setFocusRequest(null), maximized, onToggleMaximize: toggleMaximize, onAddLive, liveOutside: state.sessions.filter((s) => s.archivedAt === null && s.lifecycle === 'live' && !panelIds.includes(s.id)).length }}>
       <section className="terminal-grid">
         <div className="grid-toolbar">
         {toolbar}
@@ -340,6 +389,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
             ))}
           </div>
         )}
+        {actions}
         </div>
 
         {layoutPanel && api && <GridLayoutDialog projects={state.projects} healthy={healthy} onRefresh={onRefresh} api={api} panelId={layoutPanel} sessions={state.sessions}
@@ -360,6 +410,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
             disableFloatingGroups
             onReady={onReady}
             onDidDrop={onDidDrop}
+            onWillDrop={onWillDrop}
           />
         </div>
       </section>

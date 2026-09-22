@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 /** Native dialog dar ekranda odak tuzağını ve tetikleyene dönüşü sahiplenir. */
-export function SidebarShell({ children }: { children: (navigate: (action: () => void) => void) => ReactNode }) {
+export function SidebarShell({ children }: { children: (navigate: (action: () => void) => void, narrow: boolean) => ReactNode }) {
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 700px)').matches)
   const [open, setOpen] = useState(false)
   const dialog = useRef<HTMLDialogElement>(null)
@@ -25,7 +25,7 @@ export function SidebarShell({ children }: { children: (navigate: (action: () =>
     action()
   }
 
-  if (!narrow) return children(navigate)
+  if (!narrow) return children(navigate, false)
   return (
     <>
       <div className="mobile-navigation">
@@ -49,7 +49,7 @@ export function SidebarShell({ children }: { children: (navigate: (action: () =>
         }}
         onCancel={(event) => { event.preventDefault(); close() }}>
         <button className="drawer-close" type="button" aria-label="Gezinmeyi kapat" title="Gezinmeyi kapat" onClick={close}>×</button>
-        {children(navigate)}
+        {children(navigate, true)}
       </dialog>
     </>
   )

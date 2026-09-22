@@ -20,3 +20,18 @@ export function recoveryLaunch(session: SessionView): { command: string | null; 
   const agent = agentFor(command)
   return agent ? { command: agent.command, mode: 'command' } : null
 }
+
+/**
+ * "Kopya" oturumun başlangıç komutu: aynı programın yeni bir çalıştırması.
+ * Ajanda konuşma kimliği veya seçici bayrakları taşınmaz; aynı konuşma iki
+ * terminalde birden sürdürülmez. Tanınmayan komut aynen, kabuk kabuk olarak kopyalanır.
+ */
+export function duplicateCommand(session: Pick<SessionView, 'command' | 'lastLaunch' | 'foregroundAgent'>): string | null {
+  const agent = agentFor(session.foregroundAgent) ?? agentFor(firstWord(repeatLaunchCommand(session) ?? session.command))
+  if (agent) return agent.command
+  return session.command
+}
+
+function firstWord(command: string | null | undefined): string | undefined {
+  return command?.trim().split(/\s+/)[0]
+}

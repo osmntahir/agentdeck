@@ -259,7 +259,7 @@ export function Workspace({
                           draggable
                           aria-current={selected ? 'true' : undefined}
                           onFocus={() => setCandidate(session.id)}
-                          onDragStart={(e) => e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id)}
+                          onDragStart={(e) => { e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id); e.dataTransfer.effectAllowed = 'copyMove' }}
                           onClick={() => onSelect(session.id)}
                           onContextMenu={event => onSessionMenu(session.id, event)}
                           onKeyDown={(e) => {
