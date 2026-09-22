@@ -20,6 +20,8 @@ export function navigationIds(state: StateResponse): string[] {
 interface Props {
   state: StateResponse
   activeId: string | null
+  /** Grid görünümünde açık grid'deki oturumlar; tek oturumdaki gibi vurgulanır. */
+  gridSessionIds: string[]
   onSelect: (id: string) => void
   onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onSettings: () => void
@@ -43,6 +45,7 @@ interface Props {
 export function Sidebar({
   state,
   activeId,
+  gridSessionIds,
   onSelect,
   onSessionMenu,
   onSettings,
@@ -147,7 +150,7 @@ export function Sidebar({
                     key={session.id}
                     session={session}
                     shortcut={index < 9 ? index + 1 : null}
-                    active={session.id === activeId}
+                    active={session.id === activeId || gridSessionIds.includes(session.id)}
                     tabbable={session.id === tabbableId}
                     ids={visibleIds}
                     onFocusRow={() => setRowFocus(session.id)}

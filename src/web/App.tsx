@@ -613,6 +613,7 @@ export function App() {
         })}
         onAddToGrid={(id) => navigate(() => addToGrid(id))}
         activeId={activeId}
+        gridSessionIds={view === 'grid' && !active ? gridIds : []}
         onSelect={(id) => navigate(() => {
           selectSession(id)
         })}
