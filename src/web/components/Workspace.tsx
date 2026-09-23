@@ -1,4 +1,4 @@
-import { projectStyle, usePreferences } from '../preferences'
+import { projectStyle, toggleWorkCollapsed, usePreferences } from '../preferences'
 import { AgentMark } from './AgentMark'
 import { Icon } from './Icon'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -483,16 +483,20 @@ function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen
   children: React.ReactNode
 }) {
   const [showConversations, setShowConversations] = useState(false)
+  const collapsed = usePreferences().collapsedWorks.includes(work.id)
   const load = useCallback(() => getWorkConversations(work.id), [work.id])
   const current = sessions.filter((s) => s.archivedAt === null)
   const live = current.filter((s) => s.lifecycle === 'live').length
   const waiting = current.filter((s) => statusTone(s) === 'attention').length + claude.filter((a) => a.state === 'blocked').length
   const lastActive = Math.max(0, ...sessions.map((s) => s.lastActivityAt ?? s.conversation?.updatedAt ?? s.endedAt ?? s.createdAt))
   return (
-    <div className="work-block">
+    <div className={`work-block${collapsed ? ' collapsed' : ''}`}>
       <header className="work-block-head" onContextMenu={onMenu}>
-        <span className="work-block-icon" aria-hidden="true"><Icon name="work" size={15} /></span>
-        <h3 title={work.name}>{work.name}</h3>
+        <button className="work-block-toggle" aria-expanded={!collapsed} onClick={() => toggleWorkCollapsed(work.id)} title={collapsed ? 'İşi aç' : 'İşi kapat'}>
+          <span className="work-chevron" aria-hidden="true"><Icon name="chevron" size={13} /></span>
+          <span className="work-block-icon" aria-hidden="true"><Icon name="work" size={15} /></span>
+          <h3 title={work.name}>{work.name}</h3>
+        </button>
         <span className="work-block-stats">
           {waiting > 0 && <span className="stat stat-attention"><span className="status-dot" data-tone="attention" /> {waiting} bekliyor</span>}
           {live > 0 && <span className="stat"><span className="status-dot" data-tone="active" /> {live} çalışıyor</span>}
@@ -500,16 +504,16 @@ function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen
           {lastActive > 0 && <span className="stat muted">{formatAge(now - lastActive)}</span>}
         </span>
         <span className="topbar-spacer" />
-        <button className="ghost-button" aria-expanded={showConversations} onClick={() => setShowConversations(!showConversations)}>
+        <button className="ghost-button" aria-expanded={showConversations && !collapsed} onClick={() => { if (collapsed) toggleWorkCollapsed(work.id); setShowConversations(collapsed || !showConversations) }}>
           <Icon name="chat" size={14} /> Konuşmalar{conversationCount > 0 && <span className="count">{conversationCount}</span>}
         </button>
         <button className="ghost-button" onClick={onLinkClaude} title="Claude'un arka plan oturumlarını bu işe bağla"><Icon name="plus" size={14} /> Claude oturumu</button>
         <button className="ghost-button" onClick={onNewSession}><Icon name="plus" size={14} /> Terminal</button>
         <button className="icon-button ghost" title="İş işlemleri" aria-label={`${work.name} iş işlemleri`} onClick={onMenu}><Icon name="more" size={14} /></button>
       </header>
-      {claude.length > 0 && <ClaudeSessionRows agents={claude} projectPath={projectPath} now={now} onOpen={onOpenClaude} onUnlink={onUnlinkClaude} />}
-      {showConversations && <ConversationList load={load} sessions={sessions} claude={claude} works={works} currentWorkId={work.id} now={now} onResume={onResume} onOpen={onOpen} onMove={onMove} onUnmove={onUnmove} />}
-      {children}
+      {!collapsed && claude.length > 0 && <ClaudeSessionRows agents={claude} projectPath={projectPath} now={now} onOpen={onOpenClaude} onUnlink={onUnlinkClaude} />}
+      {!collapsed && showConversations && <ConversationList load={load} sessions={sessions} claude={claude} works={works} currentWorkId={work.id} now={now} onResume={onResume} onOpen={onOpen} onMove={onMove} onUnmove={onUnmove} />}
+      {!collapsed && children}
     </div>
   )
 }

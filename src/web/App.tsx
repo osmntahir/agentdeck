@@ -435,7 +435,7 @@ export function App() {
       else setAddingProject(true)
       return
     }
-    const ids = navigationIds(state)
+    const ids = navigationIds(state, preferences.collapsedWorks)
     if (ids.length === 0) return
     if (shortcut.kind === 'jump') {
       const id = ids[shortcut.index]

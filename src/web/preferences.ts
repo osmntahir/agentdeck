@@ -28,18 +28,21 @@ export interface Preferences {
   terminalColors: Record<string, string>
   /** Projede en son seçilen program (preset etiketi); yeni oturum bununla açılır. */
   lastProgram: Record<string, string>
+  /** Başlığına tıklanarak kapatılmış işler; kenar çubuğu ve taramada birlikte kapanır. */
+  collapsedWorks: string[]
 }
-const defaults: Preferences = { theme: 'graphite', terminalColors: {}, notifications: true, previews: true, compact: true, sidebarCollapsed: false, colors: {}, lastProgram: {} }
+const defaults: Preferences = { theme: 'graphite', terminalColors: {}, notifications: true, previews: true, compact: true, sidebarCollapsed: false, colors: {}, lastProgram: {}, collapsedWorks: [] }
 const KEY = 'agentdeck.preferences.v1'
 function read(): Preferences {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}')
-    const result: Preferences = { ...defaults, colors: {}, terminalColors: {}, lastProgram: {} }
+    const result: Preferences = { ...defaults, colors: {}, terminalColors: {}, lastProgram: {}, collapsedWorks: [] }
     for (const key of ['notifications', 'previews', 'compact', 'sidebarCollapsed'] as const) if (typeof raw[key] === 'boolean') result[key] = raw[key]
     if (typeof raw.theme === 'string' && Object.hasOwn(THEMES, raw.theme)) result.theme = raw.theme as ThemeName
     for (const key of ['colors', 'terminalColors'] as const)
       for (const [id, color] of Object.entries(raw[key] ?? {})) if (typeof color === 'string' && /^#[a-f0-9]{6}$/i.test(color)) result[key][id] = color
     for (const [id, label] of Object.entries(raw.lastProgram ?? {})) if (typeof label === 'string' && label.length <= 80) result.lastProgram[id] = label
+    if (Array.isArray(raw.collapsedWorks)) result.collapsedWorks = raw.collapsedWorks.filter((id: unknown): id is string => typeof id === 'string' && id.length <= 64).slice(0, 500)
     return result
   } catch { return defaults }
 }
@@ -69,4 +72,12 @@ export function projectStyle(id: string, preferences: Preferences): CSSPropertie
 
 export function terminalStyle(session: { id: string; projectId: string }, preferences: Preferences): CSSProperties {
   return { '--project-color': preferences.terminalColors[session.id] ?? projectColor(session.projectId, preferences) } as CSSProperties
+}
+
+/** İşi açar veya kapatır; tercih yazılamazsa yalnız bu açılışta geçerli olur. */
+export function toggleWorkCollapsed(workId: string): void {
+  const collapsed = current.collapsedWorks.includes(workId)
+    ? current.collapsedWorks.filter((id) => id !== workId)
+    : [...current.collapsedWorks, workId]
+  try { updatePreferences({ collapsedWorks: collapsed }) } catch { current = { ...current, collapsedWorks: collapsed }; listeners.forEach(fn => fn()) }
 }

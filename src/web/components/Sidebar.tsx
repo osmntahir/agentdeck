@@ -1,7 +1,7 @@
 import { ColorDialog } from './ColorDialog'
 import { ActionMenu, type MenuPosition } from './ActionMenu'
 import { inProjectNavigation } from '../../shared/workspacePolicy'
-import { projectStyle, terminalStyle, usePreferences } from '../preferences'
+import { projectStyle, terminalStyle, toggleWorkCollapsed, usePreferences } from '../preferences'
 import { AgentMark } from './AgentMark'
 import { AccountsPanel } from './AccountsPanel'
 import { Icon } from './Icon'
@@ -29,11 +29,14 @@ export function sidebarGroups(state: StateResponse, projectId: string): { works:
   return { works, loose }
 }
 
-/** Kenar çubuğundaki oturum sırası; Alt+rakam ve Ctrl+PgUp/PgDn bu sırayı izler. */
-export function navigationIds(state: StateResponse): string[] {
+/**
+ * Kenar çubuğundaki oturum sırası; Alt+rakam ve Ctrl+PgUp/PgDn bu sırayı izler.
+ * Kapalı işin satırları görünmediği için sıraya girmez.
+ */
+export function navigationIds(state: StateResponse, collapsedWorks: readonly string[] = []): string[] {
   return state.projects.flatMap((project) => {
     const { works, loose } = sidebarGroups(state, project.id)
-    return [...works.flatMap((group) => group.rows), ...loose].map((s) => s.id)
+    return [...works.filter((group) => !collapsedWorks.includes(group.work.id)).flatMap((group) => group.rows), ...loose].map((s) => s.id)
   })
 }
 
@@ -97,7 +100,7 @@ export function Sidebar({
   const [colorProject, setColorProject] = useState<{ id: string; name: string } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ id: string; name: string; position: MenuPosition } | null>(null)
   const [rowFocus, setRowFocus] = useState<string | null>(null)
-  const visibleIds = navigationIds(state)
+  const visibleIds = navigationIds(state, preferences.collapsedWorks)
   const tabbableId =
     rowFocus && visibleIds.includes(rowFocus)
       ? rowFocus
@@ -207,11 +210,15 @@ export function Sidebar({
                 // Zaten bir terminalde açık olan Claude oturumu ikinci satır olarak gösterilmez.
                 const detached = claude.filter((agent) => !workRows.some((s) => s.command === `claude attach ${agent.id}` || (s.lastLaunch?.mode === 'command' && s.lastLaunch.command === `claude attach ${agent.id}`)))
                 const waitingInWork = workRows.filter((s) => s.lifecycle === 'live' && s.attention).length + claude.filter((a) => a.state === 'blocked').length
+                const collapsed = preferences.collapsedWorks.includes(work.id)
                 return (
-                  <div key={work.id} className="work-group">
-                    <div className="work-head" onContextMenu={(e) => onWorkMenu(work, e)} title={work.name}>
-                      <Icon name="work" size={12} />
-                      <span className="work-name">{work.name}</span>
+                  <div key={work.id} className={`work-group${collapsed ? ' collapsed' : ''}`}>
+                    <div className="work-head" onContextMenu={(e) => onWorkMenu(work, e)}>
+                      <button className="work-toggle" aria-expanded={!collapsed} onClick={() => toggleWorkCollapsed(work.id)}
+                        title={`${work.name} · ${collapsed ? 'aç' : 'kapat'}`}>
+                        <span className="work-chevron" aria-hidden="true"><Icon name="chevron" size={11} /></span>
+                        <span className="work-name">{work.name}</span>
+                      </button>
                       {waitingInWork > 0 && <span className="row-flag" title={`${waitingInWork} terminal onay veya yanıt bekliyor`}>{waitingInWork}</span>}
                       {workRows.length > 0 && <span className="project-count">{workRows.length}</span>}
                       <span className="work-actions">
@@ -219,7 +226,7 @@ export function Sidebar({
                         <button className="icon-button ghost" title="İş işlemleri" aria-label={`${work.name} iş işlemleri`} onClick={(e) => onWorkMenu(work, e)}><Icon name="more" size={13} /></button>
                       </span>
                     </div>
-                    <div className="work-sessions">
+                    {!collapsed && <div className="work-sessions">
                       {workRows.map(renderRow)}
                       {detached.map((agent) => (
                         <div key={agent.id} className="session-row-wrap claude-row">
@@ -237,7 +244,7 @@ export function Sidebar({
                           <Icon name="plus" size={12} /><span>Bu işte oturum başlat</span>
                         </button>
                       )}
-                    </div>
+                    </div>}
                   </div>
                 )
               })}
