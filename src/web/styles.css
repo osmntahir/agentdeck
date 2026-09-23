@@ -54,6 +54,24 @@
   --bg: #0f0b13; --surface: #150f1a; --surface-2: #1b1421; --surface-3: #231a2b; --surface-4: #2c2136; --overlay: #1b1422;
   --terminal-bg: #120d18; --text: #efe6f5; --text-2: #b3a2c2; --text-3: #7c6b8c; --accent: #c79bff; --accent-2: #d8b9ff; --accent-ink: #1b0b2c;
 }
+:root[data-theme='ember'] {
+  --bg: #120d0a; --surface: #18110d; --surface-2: #1f1611; --surface-3: #281c16; --surface-4: #32231b; --overlay: #1f1611;
+  --terminal-bg: #130d0a; --text: #f3e9e2; --text-2: #bba595; --text-3: #84705f; --accent: #ff9a5a; --accent-2: #ffb584; --accent-ink: #2a1104;
+}
+:root[data-theme='ocean'] {
+  --bg: #081113; --surface: #0c171a; --surface-2: #101e22; --surface-3: #15272c; --surface-4: #1b3137; --overlay: #0f1d21;
+  --terminal-bg: #081315; --text: #e2f1f2; --text-2: #98b8bb; --text-3: #62838a; --accent: #3fd0c9; --accent-2: #72dfd9; --accent-ink: #03201e;
+}
+:root[data-theme='nord'] {
+  --bg: #1e222a; --surface: #242933; --surface-2: #2b303b; --surface-3: #323845; --surface-4: #3b4252; --overlay: #2b303b;
+  --terminal-bg: #1f232b; --text: #eceff4; --text-2: #b3bccb; --text-3: #7b869a; --accent: #88c0d0; --accent-2: #a3d3e0; --accent-ink: #0f2530;
+}
+/* Sarı-kırmızı: bordo zemin, sarı vurgu; kırmızı ikinci renk olarak ışıkta ve markada. */
+:root[data-theme='galatasaray'] {
+  --bg: #140709; --surface: #1b0a0d; --surface-2: #220d11; --surface-3: #2b1116; --surface-4: #36161c; --overlay: #200c10;
+  --terminal-bg: #12060a; --text: #f6ece6; --text-2: #c9aaa4; --text-3: #8e6a66; --accent: #fdb912; --accent-2: #fecd4f; --accent-ink: #2a0508;
+  --gs-red: #d1113f;
+}
 
 /* --- temel ---------------------------------------------------------------- */
 * { box-sizing: border-box; }
@@ -275,6 +293,7 @@ legend { padding: 0; }
   color: var(--accent-ink);
   box-shadow: 0 1px 0 #ffffff50 inset, 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent);
 }
+:root[data-theme='galatasaray'] .brand-mark { background: linear-gradient(135deg, var(--accent) 0 50%, var(--gs-red) 50% 100%); }
 .brand-name { font-size: 15px; font-weight: 650; letter-spacing: -0.02em; }
 .palette-trigger {
   justify-content: flex-start;
@@ -460,6 +479,53 @@ legend { padding: 0; }
 .orphan-row { display: flex; gap: 6px; align-items: center; color: var(--text-2); font: 11px var(--font-mono); word-break: break-all; }
 .orphans-body button { justify-self: start; min-height: 26px; }
 
+.accounts { margin: 0 8px 8px; border: 1px solid var(--border); border-radius: 8px; }
+.accounts summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.accounts summary::-webkit-details-marker { display: none; }
+.accounts summary > .icon { margin-left: auto; transition: transform var(--fast); }
+.accounts[open] summary > .icon { transform: rotate(90deg); }
+.accounts-mark { width: 14px; height: 14px; flex: none; }
+.accounts-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.accounts-body { display: grid; gap: 4px; padding: 0 6px 8px; font-size: 12px; }
+.accounts-body > .ghost-button { justify-self: start; min-height: 26px; margin-left: 4px; }
+.accounts-body > p { margin: 2px 4px; font-size: 11.5px; }
+.account-row { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+.account-row > button:first-child {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+}
+.account-row > button:first-child:not(:disabled):hover { background: var(--surface-3); color: var(--text); }
+.account-row.active > button:first-child { background: var(--accent-soft); color: var(--text); opacity: 1; cursor: default; }
+.account-check { display: grid; place-items: center; width: 14px; flex: none; color: var(--accent); }
+.account-text { display: grid; min-width: 0; }
+.account-text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-text small { color: var(--text-3); font-size: 10.5px; }
+.account-remove { width: 24px; min-width: 24px; min-height: 24px; opacity: 0; }
+.account-row:hover .account-remove, .account-remove:focus-visible { opacity: 1; }
+.account-unsaved { display: grid; gap: 6px; margin: 2px 4px; padding: 8px; border-radius: 6px; background: var(--amber-soft); color: var(--amber); font-size: 11.5px; }
+.account-unsaved button { justify-self: start; min-height: 26px; }
+.login-code { display: flex; align-items: flex-end; gap: 8px; }
+.login-code label { flex: 1; }
+.login-output pre { max-height: 160px; overflow: auto; margin-top: 6px; padding: 8px; border-radius: 6px; background: var(--terminal-bg); font: 11px var(--font-mono); white-space: pre-wrap; word-break: break-all; }
+
 .sidebar-footer {
   display: flex;
   align-items: center;
@@ -532,7 +598,7 @@ legend { padding: 0; }
 .sidebar.collapsed .brand-name, .sidebar.collapsed .nav-label, .sidebar.collapsed .nav-count, .sidebar.collapsed .sidebar-label span,
 .sidebar.collapsed .project-name, .sidebar.collapsed .project-actions, .sidebar.collapsed .session-name, .sidebar.collapsed .row-flag,
 .sidebar.collapsed .row-actions, .sidebar.collapsed .project-idle span, .sidebar.collapsed .palette-trigger span, .sidebar.collapsed .palette-trigger kbd,
-.sidebar.collapsed .connection-label, .sidebar.collapsed .orphans, .sidebar.collapsed .badge { display: none; }
+.sidebar.collapsed .connection-label, .sidebar.collapsed .orphans, .sidebar.collapsed .accounts, .sidebar.collapsed .badge { display: none; }
 .sidebar.collapsed .sidebar-toggle { margin: 0; }
 .sidebar.collapsed .palette-trigger { justify-content: center; width: 40px; margin: 0 auto 10px; padding: 0; }
 .sidebar.collapsed .main-nav { justify-items: center; }
@@ -1127,6 +1193,27 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
   transition: border-color var(--fast), box-shadow var(--fast);
 }
 .terminal-grid .dv-groupview.dv-active-group { border-color: color-mix(in srgb, var(--accent) 45%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent); }
+/* Öndeki grubun çerçevesinde yavaşça dolaşan soluk ışık; yalnız kenar çizgisine maskelenir. */
+@property --frame-glow-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+.terminal-grid .dv-groupview { position: relative; }
+.terminal-grid .dv-groupview.dv-active-group::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  padding: 1.5px;
+  border-radius: inherit;
+  background: conic-gradient(from var(--frame-glow-angle), transparent 0deg 250deg, color-mix(in srgb, var(--accent-2) 35%, transparent) 300deg, color-mix(in srgb, var(--accent-2) 90%, transparent) 340deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: frame-glow 9s linear infinite;
+}
+@keyframes frame-glow { to { --frame-glow-angle: 360deg; } }
+:root[data-theme='galatasaray'] .terminal-grid .dv-groupview.dv-active-group::after {
+  background: conic-gradient(from var(--frame-glow-angle), transparent 0deg 240deg, color-mix(in srgb, var(--gs-red) 70%, transparent) 295deg, color-mix(in srgb, var(--accent) 90%, transparent) 340deg, transparent 360deg);
+}
 .terminal-grid .dv-tabs-and-actions-container { border-bottom: 1px solid var(--border); }
 .terminal-grid .dv-tab { margin: 4px 0 4px 4px; padding: 0 4px 0 10px; border-radius: 7px; line-height: 1.4; }
 .terminal-grid .dv-default-tab { gap: 8px; font-weight: 500; }
@@ -1448,4 +1535,5 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .terminal-grid .dv-groupview.dv-active-group::after { display: none; }
 }

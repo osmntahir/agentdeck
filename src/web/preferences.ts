@@ -11,6 +11,10 @@ export const THEMES = {
   midnight: { label: 'Midnight', swatch: '#5eb1ff', terminal: { ...ANSI, background: '#0a111d', foreground: '#dbe6f7', cursor: '#7dc0ff', cursorAccent: '#0a111d', selectionBackground: '#274a7aaa' } },
   forest: { label: 'Forest', swatch: '#6fd49c', terminal: { ...ANSI, background: '#0a1210', foreground: '#dbe9e0', cursor: '#8be0b0', cursorAccent: '#0a1210', selectionBackground: '#2c5a44aa' } },
   plum: { label: 'Plum', swatch: '#c79bff', terminal: { ...ANSI, background: '#120d18', foreground: '#ebdff4', cursor: '#d4afff', cursorAccent: '#120d18', selectionBackground: '#5a3c78aa' } },
+  ember: { label: 'Ember', swatch: '#ff9a5a', terminal: { ...ANSI, background: '#130d0a', foreground: '#efe3da', cursor: '#ffb584', cursorAccent: '#130d0a', selectionBackground: '#6a3a1eaa' } },
+  ocean: { label: 'Ocean', swatch: '#3fd0c9', terminal: { ...ANSI, background: '#081315', foreground: '#dcedee', cursor: '#72dfd9', cursorAccent: '#081315', selectionBackground: '#1d5357aa' } },
+  nord: { label: 'Nord', swatch: '#88c0d0', terminal: { ...ANSI, background: '#1f232b', foreground: '#e5e9f0', cursor: '#a3d3e0', cursorAccent: '#1f232b', selectionBackground: '#434c5eaa' } },
+  galatasaray: { label: 'Galatasaray', swatch: '#fdb912', terminal: { ...ANSI, background: '#12060a', foreground: '#f6ece6', cursor: '#fdb912', cursorAccent: '#12060a', selectionBackground: '#a9043266' } },
 } as const satisfies Record<string, { label: string; swatch: string; terminal: ITheme }>
 export type ThemeName = keyof typeof THEMES
 export interface Preferences {

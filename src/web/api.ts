@@ -1,4 +1,6 @@
 import type {
+  ClaudeAccountsResponse,
+  ClaudeLoginView,
   DiffResult,
   DiffScope,
   Isolation,
@@ -225,3 +227,15 @@ export const getGitWorkspaces = (id: string, branches = false) =>
   call<import('../shared/types').GitWorkspaces>(`/api/sessions/${id}/git?branches=${branches ? '1' : '0'}`)
 export const switchBranch = (id: string, input: { repo: string; branch: string; create: boolean; expectedHead: string | null; expectedBranch: string | null; expectedRunId: string | null }) =>
   call<import('../shared/types').GitWorkspace>(`/api/sessions/${id}/git/switch`, { method: 'POST', body: JSON.stringify(input) })
+
+/** Claude hesapları (ADR 0017); etkinleştirme canlı kimlik dosyalarını değiştirir. */
+export const getClaudeAccounts = () => call<ClaudeAccountsResponse>('/api/claude-accounts')
+export const saveLiveClaudeAccount = () => call('/api/claude-accounts/save-live', { method: 'POST' })
+export const activateClaudeAccount = (id: string) =>
+  call(`/api/claude-accounts/${encodeURIComponent(id)}/activate`, { method: 'POST' })
+export const removeClaudeAccount = (id: string) =>
+  call(`/api/claude-accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const startClaudeLogin = () => call<{ login: ClaudeLoginView }>('/api/claude-accounts/login', { method: 'POST' })
+export const sendClaudeLoginInput = (text: string) =>
+  call('/api/claude-accounts/login/input', { method: 'POST', body: JSON.stringify({ text }) })
+export const cancelClaudeLogin = () => call('/api/claude-accounts/login/cancel', { method: 'POST' })

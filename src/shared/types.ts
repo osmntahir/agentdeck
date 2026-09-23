@@ -214,3 +214,35 @@ export interface GitWorkspace {
   truncated: boolean
 }
 export interface GitWorkspaces { repos: GitWorkspace[]; truncated: boolean }
+
+/** Kayıtlı Claude hesabı; token taşımaz. Etkin: canlı kimlik dosyasındaki hesaptır. */
+export interface ClaudeAccountView {
+  id: string
+  email: string | null
+  displayName: string | null
+  organization: string | null
+  subscription: string | null
+  active: boolean
+  savedAt: number
+}
+
+export interface ClaudeAccountsResponse {
+  /** Kimliği dosyada tutmayan platformda (macOS anahtar zinciri) veya yapılandırılmamış daemon'da false. */
+  supported: boolean
+  accounts: ClaudeAccountView[]
+  /** Canlı dosyada oturum var ama kayıtlı değilse kimliği; kayıtlıysa veya oturum yoksa null. */
+  unsaved: { email: string | null } | null
+  login: ClaudeLoginView | null
+}
+
+/** Geçici yapılandırma dizininde yürüyen `claude auth login` işi. */
+export interface ClaudeLoginView {
+  id: string
+  state: 'running' | 'done' | 'failed' | 'cancelled'
+  /** Çıktıda görülen ilk giriş adresi; tarayıcı açılmazsa kullanıcı buradan gider. */
+  url: string | null
+  /** ANSI'den arındırılmış çıktı kuyruğu. */
+  output: string
+  message: string | null
+  account: ClaudeAccountView | null
+}

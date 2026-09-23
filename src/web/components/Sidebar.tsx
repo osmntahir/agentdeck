@@ -3,6 +3,7 @@ import { ActionMenu, type MenuPosition } from './ActionMenu'
 import { inProjectNavigation } from '../../shared/workspacePolicy'
 import { projectStyle, terminalStyle, usePreferences } from '../preferences'
 import { AgentMark } from './AgentMark'
+import { AccountsPanel } from './AccountsPanel'
 import { Icon } from './Icon'
 import { useEffect, useState } from 'react'
 import type { ProjectView, SessionView, StateResponse } from '../../shared/types'
@@ -195,6 +196,7 @@ export function Sidebar({
       ]} />}
       {colorProject && <ColorDialog {...colorProject} onClose={() => setColorProject(null)} />}
       <OrphanList scan={orphans} onRefresh={onRefreshOrphans} />
+      <AccountsPanel />
 
       <footer className="sidebar-footer">
         <span className={`connection${healthy ? ' ok' : ''}`} title={healthy ? 'Yerel daemon bağlı' : 'Daemon bağlantısı bekleniyor'}>

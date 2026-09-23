@@ -1,6 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import { startDaemon } from './daemon'
+import { claudePaths } from './claudeAccounts'
 import { StateError } from './store'
 import { LockError } from './lock'
 
@@ -14,6 +15,8 @@ async function main(): Promise<void> {
     port: PORT,
     serveWeb: true,
     environmentFile: path.join(os.homedir(), '.config', 'agentdeck', 'environment.json'),
+    // macOS'ta kimlik anahtar zincirindedir; dosya geçişi yalnız diğer platformlarda açılır.
+    claudeAccounts: process.platform === 'darwin' ? undefined : { live: claudePaths() },
   })
   console.log(`agentdeck hazır:  ${daemon.url}/?token=${daemon.token}`)
   console.log(`vite ile geliştirme: http://127.0.0.1:4710/?token=${daemon.token}`)

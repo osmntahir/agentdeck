@@ -18,7 +18,9 @@ import * as git from './git'
 import { isCheckpointId, openCheckpointStore } from './checkpoints'
 import { createTerminalHost, type TerminalEvent, type PreviewResult } from './terminalHost'
 import { chunkText, type SnapshotScope } from './terminalState'
-import { readUserEnvironment } from './env'
+import { readUserEnvironment, runEnv } from './env'
+import { AccountError, openClaudeAccounts, type ClaudePaths } from './claudeAccounts'
+import { startClaudeLogin, type ClaudeLogin } from './claudeLogin'
 import { lastLaunchFor, repeatLaunchCommand } from '../shared/launchPolicy'
 import { resumeTargetFromTerminalText } from '../shared/resumeDetection'
 import { terminalAttentionFromText } from '../shared/terminalAttention'
@@ -81,6 +83,8 @@ export interface DaemonOptions {
   serveWeb?: boolean
   /** Her Run öncesi okunan kullanıcı ortam dosyası; verilmezse kullanıcı değeri eklenmez. */
   environmentFile?: string
+  /** Claude hesap geçişi (ADR 0017). Verilmezse panel desteklenmez; canlı kimlik dosyalarına dokunulmaz. */
+  claudeAccounts?: { live: ClaudePaths; command?: string }
 }
 
 export interface Daemon {
@@ -702,6 +706,56 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const known = new Set(store.get().sessions.map((s) => s.cwd))
     res.json(scanOrphanWorktrees(store.worktreeRoot, known))
   })
+
+  // Claude hesapları (ADR 0017). Yanıtlar token taşımaz.
+  const claudeAccounts = options.claudeAccounts
+    ? openClaudeAccounts(path.join(options.dataDir, 'claude-accounts.json'), options.claudeAccounts.live)
+    : null
+  let claudeLogin: ClaudeLogin | null = null
+
+  const accountRoute = (handler: (req: express.Request) => unknown) => (req: express.Request, res: express.Response) => {
+    if (!claudeAccounts) return jsonError(res, 404, 'unsupported', 'Hesap geçişi bu daemon için açık değil')
+    try {
+      res.json(handler(req) ?? {})
+    } catch (err) {
+      if (err instanceof AccountError) {
+        return jsonError(res, err.code === 'not_found' ? 404 : err.code === 'unreadable' ? 500 : 409, err.code, err.message)
+      }
+      sendError(res, err)
+    }
+  }
+
+  app.get('/api/claude-accounts', (req, res) => {
+    if (!claudeAccounts) return res.json({ supported: false, accounts: [], unsaved: null, login: null })
+    accountRoute(() => ({ supported: true, ...claudeAccounts.list(), login: claudeLogin?.view() ?? null }))(req, res)
+  })
+  app.post('/api/claude-accounts/save-live', accountRoute(() => ({ account: claudeAccounts!.saveLive() })))
+  app.post('/api/claude-accounts/:id/activate', accountRoute((req) => ({ account: claudeAccounts!.activate(String(req.params.id)) })))
+  app.delete('/api/claude-accounts/:id', accountRoute((req) => claudeAccounts!.remove(String(req.params.id))))
+  app.post('/api/claude-accounts/login', accountRoute(() => {
+    if (claudeLogin?.view().state === 'running') throw new HttpError(409, 'login_running', 'Süren bir giriş var')
+    claudeLogin = startClaudeLogin({
+      dataDir: options.dataDir,
+      command: options.claudeAccounts!.command ?? 'claude',
+      env: runEnv(process.env, { sessionId: 'claude-login', runId: 'claude-login' }, userEnvironment()),
+      onSuccess: (source) => {
+        // Hesap eklenince mevcut hesap da listeye girer; ikisi arasında hemen geçilebilir.
+        try {
+          claudeAccounts!.saveLive()
+        } catch (err) {
+          if (!(err instanceof AccountError)) throw err
+        }
+        return claudeAccounts!.importFrom(source)
+      },
+    })
+    return { login: claudeLogin.view() }
+  }))
+  app.post('/api/claude-accounts/login/input', accountRoute((req) => {
+    const text = req.body?.text
+    if (typeof text !== 'string' || text.length > 4096) throw new HttpError(400, 'validation', 'Girdi metni gerekli')
+    claudeLogin?.input(text)
+  }))
+  app.post('/api/claude-accounts/login/cancel', accountRoute(() => claudeLogin?.cancel()))
 
   app.post('/api/projects', async (req, res) => {
     const raw = String(req.body?.path ?? '').trim()
@@ -2125,6 +2179,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (closed) return closed
       closed = (async () => {
         shuttingDown = true
+        claudeLogin?.cancel()
         for (const client of wss.clients) client.close(1001, 'kapanıyor')
         await new Promise<void>((resolve) => wss.close(() => resolve()))
         await new Promise<void>((resolve) => server.close(() => resolve()))
