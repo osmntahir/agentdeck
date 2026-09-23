@@ -232,3 +232,54 @@ printf '[{"id":"66b8d668","cwd":"%s","name":"ceviri","state":"blocked"}]' "$5"
     removeDir(bin)
   }
 })
+
+test('Claude oturumunun konuşma zinciri işte görünür; konuşma başka işe taşınıp geri alınabilir, dosyalar değişmez', { timeout: 30000 }, async () => {
+  const dataDir = tempDir()
+  const project = tempDir()
+  const claudeDir = tempDir()
+  const fake = path.join(claudeDir, 'claude')
+  const a = '11111111-1111-4111-8111-111111111111'
+  const b = '22222222-2222-4222-8222-222222222222'
+  fs.writeFileSync(fake, `#!/bin/sh\nprintf '[{"id":"93befcf9","cwd":"%s","name":"ekran yirtilmasi","state":"done","sessionId":"${b}"}]' "$5"\n`, { mode: 0o755 })
+  const dir = path.join(claudeDir, 'projects', project.replace(/[^A-Za-z0-9]/g, '-'))
+  fs.mkdirSync(dir, { recursive: true })
+  const marker = 'Use `$CLAUDE_JOB_DIR/tmp` (`/x/.claude/jobs/93befcf9/tmp`) for temp files'
+  const transcript = (prompt: string) => [
+    JSON.stringify({ type: 'user', isMeta: true, cwd: project, message: { content: marker } }),
+    JSON.stringify({ type: 'user', cwd: project, message: { content: prompt } }),
+    '',
+  ].join('\n')
+  fs.writeFileSync(path.join(dir, `${a}.jsonl`), transcript('Çoklu dil spec yaz'))
+  fs.writeFileSync(path.join(dir, `${b}.jsonl`), transcript('ekran yırtılmasını incele'))
+  const before = fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), 'utf8'))
+
+  const daemon = await startDaemon({ dataDir, port: 0, claudeAgents: { command: fake, claudeDir } })
+  const api = client(daemon)
+  try {
+    const projectId = (await api.post<{ id: string }>('/api/projects', { path: project })).body.id
+    const screen = (await api.post<Work>('/api/works', { projectId, name: 'Ekran' })).body
+    const i18n = (await api.post<Work>('/api/works', { projectId, name: 'Çeviri' })).body
+    await api.post(`/api/works/${screen.id}/claude-sessions`, { ids: ['93befcf9'] })
+
+    const list = async (work: Work) => (await api.get<{ conversations: ConversationView[] }>(`/api/works/${work.id}/conversations`)).body.conversations
+    const chain = await list(screen)
+    assert.deepEqual(chain.map((c) => [c.id, c.origin, c.current, c.claudeSessionId]).sort(), [[a, 'claude-session', false, '93befcf9'], [b, 'claude-session', true, '93befcf9']])
+    assert.equal(chain.find((c) => c.id === a)?.firstPrompt, 'Çoklu dil spec yaz')
+    assert.equal(chain.find((c) => c.id === a)?.cwd, project)
+
+    assert.equal((await api.post(`/api/works/${i18n.id}/conversation-refs`, { ids: ['33333333-3333-4333-8333-333333333333'] })).status, 404)
+    await api.post(`/api/works/${i18n.id}/conversation-refs`, { ids: [a] })
+    assert.deepEqual((await list(screen)).map((c) => c.id), [b], 'taşınan konuşma asıl işte görünmez')
+    assert.deepEqual((await list(i18n)).map((c) => [c.id, c.origin]), [[a, 'reference']])
+
+    await api.del(`/api/works/${i18n.id}/conversation-refs/${a}`)
+    assert.equal((await list(screen)).length, 2)
+    assert.equal((await list(i18n)).length, 0)
+    assert.deepEqual(fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), 'utf8')), before, 'Claude dosyalarına yazılmaz')
+  } finally {
+    await daemon.close()
+    removeDir(dataDir)
+    removeDir(project)
+    removeDir(claudeDir)
+  }
+})

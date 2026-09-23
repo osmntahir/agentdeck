@@ -83,6 +83,11 @@ export interface Work {
   createdAt: number
   /** İşe bağlanmış Claude arka plan oturumlarının kısa kimlikleri (`claude agents`). */
   claudeSessions?: string[]
+  /**
+   * Başka yerden bu işe taşınmış Claude konuşmaları (UUID). Konuşma Claude'da
+   * yerinde kalır; yalnız AgentDeck'te bu işin altında görünür.
+   */
+  conversationRefs?: string[]
 }
 
 /**
@@ -131,9 +136,24 @@ export interface ConversationSummary {
   updatedAt: number | null
 }
 
-export interface ConversationView extends ConversationRecord, ConversationSummary {
-  sessionId: string
-  /** Oturumun canlı Run'ında şu an bu konuşma sürüyor. */
+/**
+ * Bir işin konuşması. terminal: bu işin terminalinde kancayla görüldü;
+ * claude-session: işe bağlı Claude arka plan oturumunun zincirinde;
+ * reference: başka yerden bu işe taşındı.
+ */
+export interface ConversationView extends ConversationSummary {
+  id: string
+  origin: 'terminal' | 'claude-session' | 'reference'
+  /** Görüldüğü AgentDeck oturumu (yalnız terminal). */
+  sessionId: string | null
+  /** Ait olduğu Claude arka plan oturumu. */
+  claudeSessionId: string | null
+  source: ConversationSource | null
+  lastSeenAt: number
+  transcriptPath: string | null
+  /** Konuşmanın açıldığı klasör; sürdürme burada yapılır. */
+  cwd: string | null
+  /** Şu an bir terminalde veya Claude oturumunda açık olan konuşma. */
   current: boolean
 }
 
@@ -188,6 +208,8 @@ export interface StateResponse {
   works?: Work[]
   /** İş kimliği → bağlı Claude arka plan oturumları; liste henüz okunmadıysa durum unknown'dur. */
   claudeSessions?: Record<string, ClaudeAgentView[]>
+  /** İş kimliği → konuşma sayısı (önbellekten; tarama sürerken eksik olabilir). */
+  workConversationCounts?: Record<string, number>
   /** Claude konuşma takibinin durumu; kanca kurulamadıysa nedeni. */
   conversationTracking?: { active: boolean; message: string | null }
   serviceError: string | null

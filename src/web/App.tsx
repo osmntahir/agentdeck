@@ -521,27 +521,56 @@ export function App() {
    * konuşma başka klasörde açılamaz.
    */
   const resumeConversation = (conversation: ConversationView) => {
-    const session = state.sessions.find((s) => s.id === conversation.sessionId)
-    if (!session) return setError('Konuşmanın görüldüğü oturum artık yok.')
-    const command = `claude --resume ${conversation.id}`
     setError(null)
-    if (!hasRunningProcesses(session)) {
+    // Claude oturumunun güncel konuşması o oturuma attach edilerek açılır.
+    if (conversation.current && conversation.claudeSessionId) {
+      const work = works.find((w) => w.claudeSessions?.includes(conversation.claudeSessionId!))
+      const agent = work && state.claudeSessions?.[work.id]?.find((a) => a.id === conversation.claudeSessionId)
+      if (work && agent) return openClaudeSession(work, agent)
+    }
+    const command = `claude --resume ${conversation.id}`
+    const session = conversation.sessionId ? state.sessions.find((s) => s.id === conversation.sessionId) : undefined
+    if (session && !hasRunningProcesses(session)) {
       api
         .launchSession(session.id, session.runId, command)
         .then(async () => { await refresh(); openSession(session.id) })
         .catch((e) => setError(e.message))
       return
     }
-    if (session.isolation !== 'shared') {
+    if (session && session.isolation !== 'shared') {
       return setError(`${session.name} izole çalışma kopyasında ve şu an çalışıyor. Konuşmayı sürdürmek için önce oradaki programı durdurun.`)
     }
+    // Claude konuşmaları klasöre bağlıdır: konuşma alt klasörde açıldıysa orada sürdürülür.
+    const work = works.find((w) => w.id === session?.workId) ??
+      works.find((w) => w.conversationRefs?.includes(conversation.id) || (conversation.claudeSessionId !== null && w.claudeSessions?.includes(conversation.claudeSessionId)))
+    const projectId = session?.projectId ?? work?.projectId
+    const project = state.projects.find((p) => p.id === projectId)
+    if (!project) return setError('Konuşmanın projesi bulunamadı.')
+    const cwd = conversation.cwd ?? session?.cwd ?? project.path
+    const inProject = cwd === project.path
+    if (!inProject && !cwd.startsWith(`${project.path}/`)) return setError(`Konuşma proje dışında bir klasörde açılmış: ${cwd}`)
     if (creating) return
     setCreating(true)
     api
-      .createSession({ projectId: session.projectId, name: '', command, isolation: 'shared', workId: session.workId ?? null })
+      .createSession({
+        projectId: project.id,
+        name: (conversation.firstPrompt ?? '').slice(0, 60),
+        command: inProject ? command : `cd '${cwd.replace(/'/g, `'\\''`)}' && ${command}`,
+        isolation: 'shared',
+        workId: work?.id ?? null,
+      })
       .then(async (created) => { await refresh(); openSession(created.id) })
       .catch((e) => setError(e.message))
       .finally(() => setCreating(false))
+  }
+
+  const moveConversation = async (conversation: ConversationView, _from: Work, toWorkId: string) => {
+    setError(null)
+    try { await api.moveConversations(toWorkId, [conversation.id]); await refresh() } catch (e) { setError((e as Error).message) }
+  }
+  const unmoveConversation = async (conversation: ConversationView, work: Work) => {
+    setError(null)
+    try { await api.unmoveConversation(work.id, conversation.id); await refresh() } catch (e) { setError((e as Error).message) }
   }
 
   const submitWorkName = (name: string) => {
@@ -860,6 +889,8 @@ export function App() {
             onOpenClaude={openClaudeSession}
             onUnlinkClaude={unlinkClaude}
             onLinkClaude={(work) => { setError(null); setClaudePicker(work) }}
+            onMoveConversation={moveConversation}
+            onUnmoveConversation={unmoveConversation}
             onAddProject={() => setAddingProject(true)}
             onPalette={() => setPaletteOpen(true)}
             onAddToGrid={addToGrid}

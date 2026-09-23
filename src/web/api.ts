@@ -282,3 +282,9 @@ export async function createSessionInWork(input: Parameters<typeof createSession
   }
   return createSession(input)
 }
+
+/** Konuşmayı işe taşır; Claude dosyası değişmez. */
+export const moveConversations = (workId: string, ids: string[]) =>
+  call<Work>(`/api/works/${workId}/conversation-refs`, { method: 'POST', body: JSON.stringify({ ids }) })
+export const unmoveConversation = (workId: string, id: string) =>
+  call<Work>(`/api/works/${workId}/conversation-refs/${id}`, { method: 'DELETE' })

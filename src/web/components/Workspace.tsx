@@ -30,6 +30,8 @@ interface Props {
   onOpenClaude: (work: Work, agent: ClaudeAgentView) => void
   onUnlinkClaude: (work: Work, agent: ClaudeAgentView) => void
   onLinkClaude: (work: Work) => void
+  onMoveConversation: (conversation: ConversationView, fromWork: Work, toWorkId: string) => Promise<void>
+  onUnmoveConversation: (conversation: ConversationView, work: Work) => Promise<void>
   onAddProject: () => void
   onPalette: () => void
   onPreviewIds: (ids: string[]) => void
@@ -68,6 +70,8 @@ export function Workspace({
   onOpenClaude,
   onUnlinkClaude,
   onLinkClaude,
+  onMoveConversation,
+  onUnmoveConversation,
   onAddProject,
   onPalette,
   onPreviewIds,
@@ -374,6 +378,10 @@ export function Workspace({
                       onOpenClaude={(agent) => onOpenClaude(work, agent)}
                       onUnlinkClaude={(agent) => onUnlinkClaude(work, agent)}
                       onLinkClaude={() => onLinkClaude(work)}
+                      works={(state.works ?? []).filter((w) => w.projectId === project.id)}
+                      conversationCount={state.workConversationCounts?.[work.id] ?? 0}
+                      onMove={(conversation, to) => onMoveConversation(conversation, work, to)}
+                      onUnmove={(conversation) => onUnmoveConversation(conversation, work)}
                     >
                       <div className="session-grid" role="list">
                         {cards.map(renderCard)}
@@ -453,7 +461,7 @@ function projectGroups(state: StateResponse, owned: SessionView[], projectId: st
 }
 
 /** Bir iş: terminalleri ve istenince Claude konuşma geçmişi. */
-function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen, claude, projectPath, onOpenClaude, onUnlinkClaude, onLinkClaude, children }: {
+function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen, claude, projectPath, onOpenClaude, onUnlinkClaude, onLinkClaude, works, conversationCount, onMove, onUnmove, children }: {
   work: Work
   /** İşin tüm oturumları (arşiv ve filtre dışı dahil); özet ve konuşmalar bunlardan okunur. */
   sessions: SessionView[]
@@ -468,6 +476,10 @@ function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen
   onOpenClaude: (agent: ClaudeAgentView) => void
   onUnlinkClaude: (agent: ClaudeAgentView) => void
   onLinkClaude: () => void
+  works: Work[]
+  conversationCount: number
+  onMove: (conversation: ConversationView, toWorkId: string) => Promise<void>
+  onUnmove: (conversation: ConversationView) => Promise<void>
   children: React.ReactNode
 }) {
   const [showConversations, setShowConversations] = useState(false)
@@ -475,7 +487,6 @@ function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen
   const current = sessions.filter((s) => s.archivedAt === null)
   const live = current.filter((s) => s.lifecycle === 'live').length
   const waiting = current.filter((s) => statusTone(s) === 'attention').length + claude.filter((a) => a.state === 'blocked').length
-  const conversationCount = new Set(sessions.flatMap((s) => (s.conversations ?? []).map((c) => c.id))).size
   const lastActive = Math.max(0, ...sessions.map((s) => s.lastActivityAt ?? s.conversation?.updatedAt ?? s.endedAt ?? s.createdAt))
   return (
     <div className="work-block">
@@ -497,7 +508,7 @@ function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen
         <button className="icon-button ghost" title="İş işlemleri" aria-label={`${work.name} iş işlemleri`} onClick={onMenu}><Icon name="more" size={14} /></button>
       </header>
       {claude.length > 0 && <ClaudeSessionRows agents={claude} projectPath={projectPath} now={now} onOpen={onOpenClaude} onUnlink={onUnlinkClaude} />}
-      {showConversations && <ConversationList load={load} sessions={sessions} now={now} onResume={onResume} onOpen={onOpen} />}
+      {showConversations && <ConversationList load={load} sessions={sessions} claude={claude} works={works} currentWorkId={work.id} now={now} onResume={onResume} onOpen={onOpen} onMove={onMove} onUnmove={onUnmove} />}
       {children}
     </div>
   )

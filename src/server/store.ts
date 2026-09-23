@@ -124,7 +124,16 @@ function work(raw: unknown): Work {
     name: str(raw.name, 'work.name'),
     createdAt: num(raw.createdAt, 'work.createdAt'),
     ...(raw.claudeSessions !== undefined ? { claudeSessions: claudeSessionIds(raw.claudeSessions) } : {}),
+    ...(raw.conversationRefs !== undefined ? { conversationRefs: conversationRefIds(raw.conversationRefs) } : {}),
   }
+}
+
+function conversationRefIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) corrupt('work.conversationRefs')
+  return raw.map((id) => {
+    if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) corrupt('work.conversationRefs kaydı')
+    return id
+  })
 }
 
 function claudeSessionIds(raw: unknown): string[] {

@@ -24,6 +24,7 @@ import { startClaudeLogin, type ClaudeLogin } from './claudeLogin'
 import { installClaudeHook, openHookInbox, type HookEvent } from './claudeHooks'
 import { createTranscriptSummaries } from './transcripts'
 import { createClaudeAgents, isClaudeAgentId } from './claudeAgents'
+import { createTranscriptIndex, type TranscriptEntry } from './claudeTranscripts'
 import { lastLaunchFor, repeatLaunchCommand } from '../shared/launchPolicy'
 import { resumeTargetFromTerminalText } from '../shared/resumeDetection'
 import { terminalAttentionFromText } from '../shared/terminalAttention'
@@ -459,11 +460,80 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   function conversationView(session: Session, record: ConversationRecord): ConversationView {
     const latest = session.conversations?.at(-1)
     return {
-      ...record,
       ...(record.transcriptPath ? transcripts.get(record.transcriptPath) : EMPTY_SUMMARY),
+      id: record.id,
+      origin: 'terminal',
       sessionId: session.id,
+      claudeSessionId: null,
+      source: record.source,
+      lastSeenAt: record.lastSeenAt,
+      transcriptPath: record.transcriptPath,
+      cwd: session.cwd,
       current: latest === record && session.lifecycle === 'live' && record.runId === session.runId,
     }
+  }
+
+  function transcriptView(entry: TranscriptEntry, origin: 'claude-session' | 'reference', current: boolean): ConversationView {
+    return {
+      ...transcripts.get(entry.path),
+      id: entry.id,
+      origin,
+      sessionId: null,
+      claudeSessionId: entry.job,
+      source: null,
+      lastSeenAt: entry.mtimeMs,
+      transcriptPath: entry.path,
+      cwd: entry.cwd,
+      current,
+    }
+  }
+
+  /**
+   * Bir işin konuşmaları: terminallerinde görülenler, bağlı Claude
+   * oturumlarının zincirleri ve bu işe taşınanlar. Başka bir işe taşınmış
+   * konuşma burada görünmez. Aynı konuşma birden çok yoldan gelirse açık
+   * olan, yoksa taşınan, yoksa en yeni görülen kalır.
+   */
+  function workConversations(work: Work, entries: TranscriptEntry[]): ConversationView[] {
+    const state = store.get()
+    const project = state.projects.find((p) => p.id === work.projectId)
+    const movedAway = new Set((state.works ?? []).filter((w) => w.id !== work.id).flatMap((w) => w.conversationRefs ?? []))
+    const agents = project ? (claudeAgents?.cached(project.path)?.agents ?? []) : []
+    const views: ConversationView[] = []
+    for (const session of state.sessions.filter((s) => s.workId === work.id)) {
+      for (const record of session.conversations ?? []) views.push(conversationView(session, record))
+    }
+    for (const job of work.claudeSessions ?? []) {
+      const agent = agents.find((a) => a.id === job)
+      for (const entry of entries.filter((e) => e.job === job)) views.push(transcriptView(entry, 'claude-session', agent?.sessionId === entry.id))
+    }
+    for (const id of work.conversationRefs ?? []) {
+      const entry = entries.find((e) => e.id === id)
+      if (entry) views.push(transcriptView(entry, 'reference', agents.some((a) => a.sessionId === id && a.state === 'working')))
+    }
+    const rank = (v: ConversationView) => (v.current ? 2 : v.origin === 'reference' ? 1 : 0)
+    const byId = new Map<string, ConversationView>()
+    for (const view of views) {
+      if (view.origin !== 'reference' && movedAway.has(view.id)) continue
+      const seen = byId.get(view.id)
+      if (!seen || rank(view) > rank(seen) || (rank(view) === rank(seen) && view.lastSeenAt > seen.lastSeenAt)) byId.set(view.id, view)
+    }
+    return [...byId.values()].sort((a, b) => Number(b.current) - Number(a.current) || b.lastSeenAt - a.lastSeenAt)
+  }
+
+  const transcriptIndex = options.claudeAgents ? createTranscriptIndex(path.join(options.claudeAgents.claudeDir, 'projects')) : null
+
+  /** Durum görünümü için iş başına konuşma sayısı; yalnız önbellekten okunur, tarama beklenmez. */
+  function workConversationCounts(): Record<string, number> {
+    const state = store.get()
+    const counts: Record<string, number> = {}
+    for (const work of state.works ?? []) {
+      const project = state.projects.find((p) => p.id === work.projectId)
+      const entries = project && transcriptIndex && (work.claudeSessions?.length || work.conversationRefs?.length) ? transcriptIndex.cached(project.path) : []
+      const count = workConversations(work, entries).length
+      if (count > 0) counts[work.id] = count
+    }
+    return counts
   }
 
   /** Oturumların konuşmaları, en yeni önce; aynı konuşma birden çok oturumda görüldüyse en son görüleni kalır. */
@@ -829,6 +899,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       sessions: state.sessions.map(sessionView),
       works: state.works ?? [],
       claudeSessions: workClaudeSessions(),
+      workConversationCounts: workConversationCounts(),
       conversationTracking,
       previews,
       terminals: Object.fromEntries(state.sessions.filter((s) => s.runId).map((s) => [s.id, {
@@ -1262,7 +1333,56 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   app.get('/api/works/:id/conversations', async (req, res) => {
     const work = findWork(req.params.id)
     if (!work) return jsonError(res, 404, 'not_found', 'İş yok')
-    res.json({ conversations: await conversationsOf(store.get().sessions.filter((s) => s.workId === work.id)) })
+    const project = store.get().projects.find((p) => p.id === work.projectId)
+    const entries = project && transcriptIndex ? await transcriptIndex.list(project.path) : []
+    if (project && claudeAgents && work.claudeSessions?.length) await claudeAgents.list(project.path)
+    const first = workConversations(work, entries)
+    await transcripts.settle(first.flatMap((c) => (c.transcriptPath ? [c.transcriptPath] : [])), 1500)
+    res.json({ conversations: workConversations(work, entries) })
+  })
+
+  /**
+   * Konuşmayı bu işe taşır: yalnız AgentDeck kaydı değişir, Claude dosyası
+   * yerinde kalır. Konuşma başka bir işe taşınmışsa oradan alınır.
+   */
+  app.post('/api/works/:id/conversation-refs', async (req, res) => {
+    try {
+      const work = findWork(req.params.id)
+      if (!work) throw new HttpError(404, 'not_found', 'İş yok')
+      const project = store.get().projects.find((p) => p.id === work.projectId)
+      if (!project || !transcriptIndex) throw new HttpError(409, 'unsupported', 'Bu daemon Claude konuşmalarını okumuyor')
+      const ids: unknown = req.body?.ids
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100 || !ids.every((id) => typeof id === 'string' && uuid.test(id))) {
+        throw new HttpError(400, 'validation', 'ids 1-100 konuşma kimliği (UUID) olmalı')
+      }
+      const entries = await transcriptIndex.list(project.path)
+      const missing = ids.filter((id) => !entries.some((e) => e.id === id))
+      if (missing.length > 0) throw new HttpError(404, 'not_found', `Projede bulunmayan konuşma: ${missing.join(', ')}`)
+      await store.commit((draft) => {
+        for (const other of draft.works ?? []) {
+          if (other.id !== work.id && other.conversationRefs) other.conversationRefs = other.conversationRefs.filter((id) => !ids.includes(id))
+        }
+        const target = (draft.works ?? []).find((w) => w.id === work.id)
+        if (target) target.conversationRefs = [...new Set([...(target.conversationRefs ?? []), ...(ids as string[])])]
+      })
+      res.json(findWork(work.id))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  app.delete('/api/works/:id/conversation-refs/:conversationId', async (req, res) => {
+    try {
+      if (!findWork(req.params.id)) throw new HttpError(404, 'not_found', 'İş yok')
+      await store.commit((draft) => {
+        const target = (draft.works ?? []).find((w) => w.id === req.params.id)
+        if (target?.conversationRefs) target.conversationRefs = target.conversationRefs.filter((id) => id !== req.params.conversationId)
+      })
+      res.json(findWork(req.params.id))
+    } catch (err) {
+      sendError(res, err)
+    }
   })
 
   app.get('/api/sessions/:id/conversations', async (req, res) => {
