@@ -29,8 +29,10 @@ Requirements: Linux, Node 22+, Git, and the agent CLIs you want to use on your `
 **One command:**
 
 ```bash
-git clone https://github.com/osmntahir/agentdeck.git && cd agentdeck && npm install && npm run install-desktop && npm run app
+git clone https://github.com/osmntahir/agentdeck.git && cd agentdeck && npm install && npm run build && npm run install-desktop -- --desktop && npm run app
 ```
+
+This also puts an **agentdeck** icon in your app menu and on your desktop; after that, open it like any other desktop app.
 
 **Step by step:**
 
@@ -38,9 +40,12 @@ git clone https://github.com/osmntahir/agentdeck.git && cd agentdeck && npm inst
 git clone https://github.com/osmntahir/agentdeck.git
 cd agentdeck
 npm install
-npm run install-desktop   # optional: adds agentdeck to your app menu
-npm run app               # builds and opens the window
+npm run build
+npm run install-desktop -- --desktop   # optional: app menu + desktop icon
+npm run app                            # opens the window
 ```
+
+Leave out `-- --desktop` to add it to the app menu only. If your desktop still asks before opening the icon, right-click it and choose **Allow Launching**.
 
 Prefer the browser? Run `npm run build && npm start` and open the `http://127.0.0.1:4711/?token=…` URL it prints.
 

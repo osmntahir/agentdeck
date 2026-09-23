@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 
 // Masaüstü ortamının PATH'i minimaldir ve nvm'in node'unu içermez. Bu script,
 // kendisini çalıştıran node'un mutlak yolunu .desktop dosyasına gömer;
@@ -41,3 +42,24 @@ fs.chmodSync(target, 0o755)
 console.log(`Kısayol yazıldı : ${target}`)
 console.log(`node yolu gömülü: ${process.execPath}`)
 console.log('Uygulama menüsünde "agentdeck" olarak görünecek.')
+
+// --desktop: aynı kısayol masaüstüne de konur.
+if (process.argv.includes('--desktop')) {
+  let desktopDir = path.join(os.homedir(), 'Desktop')
+  try {
+    desktopDir = execFileSync('xdg-user-dir', ['DESKTOP'], { encoding: 'utf8' }).trim() || desktopDir
+  } catch {
+    // xdg-user-dir yoksa ~/Desktop kullanılır.
+  }
+  fs.mkdirSync(desktopDir, { recursive: true })
+  const desktopTarget = path.join(desktopDir, 'agentdeck.desktop')
+  fs.copyFileSync(target, desktopTarget)
+  fs.chmodSync(desktopTarget, 0o755)
+  // GNOME masaüstü, güvenilir işaretlenmemiş kısayolu çift tıkla açmaz.
+  try {
+    execFileSync('gio', ['set', desktopTarget, 'metadata::trusted', 'true'], { stdio: 'ignore' })
+  } catch {
+    // gio yoksa masaüstü ortamı ilk açılışta izin ister.
+  }
+  console.log(`Masaüstü simgesi : ${desktopTarget}`)
+}
