@@ -23,6 +23,8 @@ import { SidebarShell } from './components/SidebarShell'
 import { TerminalPane } from './components/TerminalPane'
 import { DiffView } from './components/DiffView'
 import { NewSessionDialog } from './components/NewSessionDialog'
+import { AssignWorkDialog, WorkNameDialog, type WorkChoice } from './components/WorkDialogs'
+import { ClaudeSessionPicker } from './components/ClaudeSessions'
 import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
 import { loadGridWorkspaces, saveGridWorkspaces, clearGridLayout, savedGridSessionIds } from './gridLayout'
@@ -38,6 +40,9 @@ import {
   type Project,
   type StateResponse,
   type SessionView,
+  type ConversationView,
+  type ClaudeAgentView,
+  type Work,
 } from '../shared/types'
 
 const NOTICE_ICONS: Record<NoticeKind, IconName> = { attention: 'alert', quiet: 'terminal', finished: 'check', failed: 'alert', terminal: 'alert' }
@@ -126,6 +131,14 @@ export function App() {
   const [toastsHidden, setToastsHidden] = useState<ReadonlySet<string>>(new Set())
   const [addingProject, setAddingProject] = useState(false)
   const [dialogProject, setDialogProject] = useState<Project | null>(null)
+  /** Yeni oturum penceresinde önceden seçili iş: kimlik, 'new' veya ''. */
+  const [dialogWork, setDialogWork] = useState('')
+  const [workMenu, setWorkMenu] = useState<{ work: Work; position: MenuPosition } | null>(null)
+  const closeWorkMenu = useCallback(() => setWorkMenu(null), [])
+  const [workDialog, setWorkDialog] = useState<{ mode: 'rename'; work: Work } | { mode: 'create'; projectId: string } | null>(null)
+  const [assigning, setAssigning] = useState<SessionView | null>(null)
+  const [workBusy, setWorkBusy] = useState(false)
+  const [claudePicker, setClaudePicker] = useState<Work | null>(null)
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; preview: api.DeletePreview } | null>(null)
   const [projectDelete, setProjectDelete] = useState<api.ProjectDeletePreview | null>(null)
   const [projectRemove, setProjectRemove] = useState<{ id: string; name: string } | null>(null)
@@ -336,12 +349,30 @@ export function App() {
     promise.then(refresh).catch((e) => setError(e.message))
   }
 
-  const createSession = (input: { name: string; command: string | null; isolation: Isolation }) => {
+  const works = state.works ?? []
+  const workOf = (session: SessionView | null | undefined) => works.find((w) => w.id === session?.workId) ?? null
+
+  /** Yeni oturum penceresini açar; iş verilmezse görünen oturumun işi önceden seçilir. */
+  const openNewSession = (project: Project, work?: string) => {
+    const context = active ?? gridFocusSession()
+    setDialogWork(work ?? (context?.projectId === project.id ? (context.workId ?? '') : ''))
+    setDialogProject(project)
+  }
+
+  /** Seçilen iş kimliği; yeni iş önce oluşturulur. */
+  const resolveWork = async (choice: WorkChoice, projectId: string): Promise<string | null> => {
+    if (choice === null) return null
+    if ('id' in choice) return choice.id
+    return (await api.createWork(projectId, choice.name)).id
+  }
+
+  const createSession = (input: { name: string; command: string | null; isolation: Isolation; work: WorkChoice }) => {
     if (!dialogProject || creating) return
     setCreating(true)
     setError(null)
-    api
-      .createSession({ ...input, projectId: dialogProject.id })
+    const projectId = dialogProject.id
+    resolveWork(input.work, projectId)
+      .then((workId) => api.createSession({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId }))
       .then((session) => {
         setDialogProject(null)
         setActiveId(session.id)
@@ -376,7 +407,7 @@ export function App() {
     try { updatePreferences({ lastProgram: { ...preferences.lastProgram, [project.id]: preset.label } }) } catch { /* tercih yalnız bu açılışta kalır */ }
     const intoGrid = view === 'grid' && !active
     api
-      .createSession({ name: '', command: preset.command, isolation: 'shared', projectId: project.id })
+      .createSession({ name: '', command: preset.command, isolation: 'shared', projectId: project.id, workId: active?.projectId === project.id ? (active.workId ?? null) : null })
       .then(async (session) => {
         await refresh()
         if (intoGrid) { setPendingGridAdd({ ids: [session.id], focus: true }); setView('grid') }
@@ -400,7 +431,7 @@ export function App() {
     }
     if (shortcut.kind === 'new-session') {
       const project = state.projects.find((p) => p.id === (active?.projectId ?? gridFocusSession()?.projectId)) ?? state.projects[0]
-      if (project) setDialogProject(project)
+      if (project) openNewSession(project)
       else setAddingProject(true)
       return
     }
@@ -456,7 +487,7 @@ export function App() {
     setError(null)
     const intoGrid = view === 'grid' && !active
     api
-      .createSession({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared' })
+      .createSession({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared', workId: session.workId ?? null })
       .then(async (created) => {
         await refresh()
         if (intoGrid) setPendingGridAdd({ ids: [created.id], focus: true })
@@ -482,6 +513,109 @@ export function App() {
         ? api.unarchiveSession(active.id)
         : api.archiveSession(active.id, active.runId, hasRunningProcesses(active)),
     )
+  }
+
+  /**
+   * Konuşmayı sürdürür. Terminali boştaysa orada, meşgulse aynı klasörde yeni
+   * terminalde açılır. Claude konuşmaları klasöre bağlıdır: izole kopyadaki
+   * konuşma başka klasörde açılamaz.
+   */
+  const resumeConversation = (conversation: ConversationView) => {
+    const session = state.sessions.find((s) => s.id === conversation.sessionId)
+    if (!session) return setError('Konuşmanın görüldüğü oturum artık yok.')
+    const command = `claude --resume ${conversation.id}`
+    setError(null)
+    if (!hasRunningProcesses(session)) {
+      api
+        .launchSession(session.id, session.runId, command)
+        .then(async () => { await refresh(); openSession(session.id) })
+        .catch((e) => setError(e.message))
+      return
+    }
+    if (session.isolation !== 'shared') {
+      return setError(`${session.name} izole çalışma kopyasında ve şu an çalışıyor. Konuşmayı sürdürmek için önce oradaki programı durdurun.`)
+    }
+    if (creating) return
+    setCreating(true)
+    api
+      .createSession({ projectId: session.projectId, name: '', command, isolation: 'shared', workId: session.workId ?? null })
+      .then(async (created) => { await refresh(); openSession(created.id) })
+      .catch((e) => setError(e.message))
+      .finally(() => setCreating(false))
+  }
+
+  const submitWorkName = (name: string) => {
+    if (!workDialog || workBusy) return
+    setWorkBusy(true)
+    setError(null)
+    const request = workDialog.mode === 'rename' ? api.renameWork(workDialog.work.id, name) : api.createWork(workDialog.projectId, name)
+    const isNew = workDialog.mode === 'create'
+    request
+      .then(async (work) => {
+        setWorkDialog(null)
+        await refresh()
+        // Yeni işe hemen bağlanacak Claude oturumu varsa seçici açılır.
+        if (isNew) {
+          const listing = await api.getClaudeSessions(work.projectId).catch(() => null)
+          if (listing?.sessions.some((s) => s.workId === null)) setClaudePicker(work)
+        }
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setWorkBusy(false))
+  }
+
+  const submitAssign = (choice: WorkChoice) => {
+    if (!assigning || workBusy) return
+    setWorkBusy(true)
+    setError(null)
+    resolveWork(choice, assigning.projectId)
+      .then((workId) => api.assignWork(assigning.id, workId))
+      .then(() => { setAssigning(null); return refresh() })
+      .catch((e) => setError(e.message))
+      .finally(() => setWorkBusy(false))
+  }
+
+  const linkClaude = (ids: string[]) => {
+    if (!claudePicker || workBusy) return
+    setWorkBusy(true)
+    setError(null)
+    api
+      .linkClaudeSessions(claudePicker.id, ids)
+      .then(() => { setClaudePicker(null); return refresh() })
+      .catch((e) => setError(e.message))
+      .finally(() => setWorkBusy(false))
+  }
+
+  const unlinkClaude = (work: Work, agent: ClaudeAgentView) => run(api.unlinkClaudeSession(work.id, agent.id))
+
+  /**
+   * Claude arka plan oturumunu iş içinde açar. Aynı oturumu izleyen canlı
+   * terminal varsa ona geçilir; ikinci bir attach açılmaz.
+   */
+  const openClaudeSession = (work: Work, agent: ClaudeAgentView) => {
+    const command = `claude attach ${agent.id}`
+    const attached = state.sessions.find((s) => s.archivedAt === null && hasRunningProcesses(s) &&
+      (s.command === command || (s.lastLaunch?.mode === 'command' && s.lastLaunch.command === command)))
+    if (attached) return selectSession(attached.id, true)
+    if (creating) return
+    setCreating(true)
+    setError(null)
+    const intoGrid = view === 'grid' && !active
+    api
+      .createSession({ projectId: work.projectId, name: agent.name.slice(0, 80), command, isolation: 'shared', workId: work.id })
+      .then(async (created) => {
+        await refresh()
+        if (intoGrid) setPendingGridAdd({ ids: [created.id], focus: true })
+        else openSession(created.id)
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setCreating(false))
+  }
+
+  const showWorkMenu = (work: Work, event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault(); event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    setWorkMenu({ work, position: { x: event.clientX || rect.left, y: event.clientY || rect.bottom, origin: event.currentTarget } })
   }
 
   // Mevcut çalışma kopyasında yeni Run; başarılıysa terminal yeni Run'a bağlanır.
@@ -619,6 +753,7 @@ export function App() {
     { label: 'Değişiklikleri incele', icon: 'diff', run: () => { openSession(menuSession.id); setTab('diff') } },
     { label: 'Terminal rengi…', icon: 'palette', run: () => setColorSession(menuSession) },
     { label: 'Grid’e ekle', icon: 'grid', run: () => addToGrid(menuSession.id) },
+    { label: menuSession.workId ? 'Başka işe taşı…' : 'İşe bağla…', icon: 'work', description: workOf(menuSession) ? `Şu an: ${workOf(menuSession)!.name}` : undefined, disabled: !stateHealthy, run: () => { setError(null); setAssigning(menuSession) } },
     { label: 'Aynı programla yeni oturum', icon: 'copy', description: 'Ctrl basılı tutup grid’e sürüklemek de kopya açar.', disabled: !stateHealthy || creating, run: () => duplicateSession(menuSession) },
     ...(menuSession.archivedAt === null ? sessionWorkActions(menuSession).map(action => ({ label: action.label[0].toLocaleUpperCase('tr') + action.label.slice(1), description: action.description, icon: action.kind === 'stop' ? 'stop' as const : action.kind === 'restart' ? 'refresh' as const : 'play' as const, disabled: !stateHealthy || Boolean(menuSession.degraded && action.kind !== 'stop'), run: () => executeAction(menuSession, action) })) : []),
     { label: menuSession.archivedAt !== null ? 'Arşivden çıkar' : hasRunningProcesses(menuSession) ? 'Durdur ve arşivle' : 'Arşivle', icon: 'archive', disabled: !stateHealthy, run: () => toggleArchive(menuSession) },
@@ -679,7 +814,9 @@ export function App() {
         onSelect={(id) => navigate(() => {
           selectSession(id)
         })}
-        onNewSession={(project) => navigate(() => setDialogProject(project))}
+        onNewSession={(project, work) => navigate(() => openNewSession(project, work))}
+        onWorkMenu={showWorkMenu}
+        onOpenClaude={(work, agent) => navigate(() => openClaudeSession(work, agent))}
         onRemoveProject={(project) => {
           // Oturumu olan projede önce neyin silineceği gösterilir; olmayanda yalnız kayıt kalkar.
           if (state.sessions.some((s) => s.projectId === project.id)) askProjectDelete(project.id)
@@ -716,7 +853,13 @@ export function App() {
             onFocusHandled={() => setScanFocusId(null)}
             onSelect={openSession}
             onSessionMenu={showMenu}
-            onNewSession={setDialogProject}
+            onNewSession={openNewSession}
+            onWorkMenu={showWorkMenu}
+            onNewWork={(project) => { setError(null); setWorkDialog({ mode: 'create', projectId: project.id }) }}
+            onResumeConversation={resumeConversation}
+            onOpenClaude={openClaudeSession}
+            onUnlinkClaude={unlinkClaude}
+            onLinkClaude={(work) => { setError(null); setClaudePicker(work) }}
             onAddProject={() => setAddingProject(true)}
             onPalette={() => setPaletteOpen(true)}
             onAddToGrid={addToGrid}
@@ -766,9 +909,16 @@ export function App() {
                   <Icon name="back" size={14} /><span>{activeProject?.name ?? 'Oturumlar'}</span>
                 </button>
                 <span className="crumb-sep" aria-hidden="true">/</span>
+                {workOf(active) && <>
+                  <button className="crumb work-crumb" title="İş işlemleri" onClick={(event) => showWorkMenu(workOf(active)!, event)}>
+                    <Icon name="work" size={13} /><span>{workOf(active)!.name}</span>
+                  </button>
+                  <span className="crumb-sep" aria-hidden="true">/</span>
+                </>}
                 <AgentMark session={active} />
                 <h1 className="title" title={active.cwd}>{active.name}</h1>
               </nav>
+              {!active.workId && <button className="ghost-button work-attach" title="Bu terminali bir işe bağla" onClick={() => { setError(null); setAssigning(active) }}><Icon name="work" size={13} /> İşe bağla</button>}
               <span className="status-pill" data-tone={statusTone(active)} title={active.attention?.message ?? active.degraded ?? undefined}>
                 <StatusDot session={active} />{active.archivedAt !== null ? 'Arşiv' : stateLabel(active)}
               </span>
@@ -862,6 +1012,40 @@ export function App() {
       </main>
 
       {menu && menuSession && <ActionMenu position={menu.position} actions={menuActions} onClose={closeMenu} />}
+      {workMenu && <ActionMenu label="İş işlemleri" position={workMenu.position} onClose={closeWorkMenu} actions={[
+        { label: 'Bu işte yeni oturum…', icon: 'plus', run: () => { const p = state.projects.find((p) => p.id === workMenu.work.projectId); if (p) openNewSession(p, workMenu.work.id) } },
+        { label: 'Claude oturumu bağla…', icon: 'chat', description: 'Claude’un arka plan oturumlarını bu işe bağlar.', run: () => { setError(null); setClaudePicker(workMenu.work) } },
+        { label: 'Yeniden adlandır…', icon: 'edit', run: () => { setError(null); setWorkDialog({ mode: 'rename', work: workMenu.work }) } },
+        { label: 'İşi kaldır', icon: 'trash', danger: true, description: 'Terminaller ve dosyalar yerinde kalır; yalnız işe bağlı görünmezler.', disabled: !stateHealthy, run: () => run(api.removeWork(workMenu.work.id)) },
+      ]} />}
+      {workDialog && <WorkNameDialog
+        title={workDialog.mode === 'rename' ? 'İşi yeniden adlandır' : 'Yeni iş'}
+        initial={workDialog.mode === 'rename' ? workDialog.work.name : ''}
+        submitLabel={workDialog.mode === 'rename' ? 'Kaydet' : 'Oluştur'}
+        busy={workBusy}
+        error={error}
+        onSubmit={submitWorkName}
+        onCancel={() => { if (!workBusy) setWorkDialog(null) }}
+      />}
+      {claudePicker && <ClaudeSessionPicker
+        work={claudePicker}
+        works={works}
+        projectId={claudePicker.projectId}
+        now={now}
+        busy={workBusy}
+        error={error}
+        onSubmit={linkClaude}
+        onCancel={() => { if (!workBusy) setClaudePicker(null) }}
+      />}
+      {assigning && <AssignWorkDialog
+        sessionName={assigning.name}
+        works={works.filter((w) => w.projectId === assigning.projectId)}
+        currentWorkId={assigning.workId ?? null}
+        busy={workBusy}
+        error={error}
+        onSubmit={submitAssign}
+        onCancel={() => { if (!workBusy) setAssigning(null) }}
+      />}
       {addMenu && (() => {
         const focusProject = state.projects.find((p) => p.id === gridFocusSession()?.projectId) ?? state.projects[0]
         const live = navigationIds(state).filter((id) => !gridIds.includes(id)).length
@@ -957,6 +1141,8 @@ export function App() {
       {dialogProject && (
         <NewSessionDialog
           project={dialogProject}
+          works={works.filter((w) => w.projectId === dialogProject.id)}
+          initialWork={dialogWork}
           busy={creating}
           error={error}
           onCancel={() => {

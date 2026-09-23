@@ -21,6 +21,9 @@ import { chunkText, type SnapshotScope } from './terminalState'
 import { readUserEnvironment, runEnv } from './env'
 import { AccountError, openClaudeAccounts, type ClaudePaths } from './claudeAccounts'
 import { startClaudeLogin, type ClaudeLogin } from './claudeLogin'
+import { installClaudeHook, openHookInbox, type HookEvent } from './claudeHooks'
+import { createTranscriptSummaries } from './transcripts'
+import { createClaudeAgents, isClaudeAgentId } from './claudeAgents'
 import { lastLaunchFor, repeatLaunchCommand } from '../shared/launchPolicy'
 import { resumeTargetFromTerminalText } from '../shared/resumeDetection'
 import { terminalAttentionFromText } from '../shared/terminalAttention'
@@ -37,6 +40,10 @@ import {
   type SessionView,
   type TerminalAttention,
   type SessionWorktree,
+  type ConversationRecord,
+  type ConversationView,
+  type ClaudeAgentView,
+  type Work,
 } from '../shared/types'
 
 const PROTOCOL_VERSION = 2
@@ -75,6 +82,12 @@ const WS_VIEWER_QUEUE_BYTES = 1024 * 1024
 
 const ISOLATIONS: Isolation[] = ['worktree', 'shared']
 
+/** Oturum başına saklanan en çok konuşma kaydı; eskiler düşer. */
+const MAX_CONVERSATIONS_PER_SESSION = 100
+/** Kaydı henüz yazılmamış oturumun kanca olayı bu süre bekletilir. */
+const HOOK_EVENT_GRACE_MS = 60_000
+const WORK_NAME_MAX = 80
+
 export interface DaemonOptions {
   dataDir: string
   port?: number
@@ -85,6 +98,10 @@ export interface DaemonOptions {
   environmentFile?: string
   /** Claude hesap geçişi (ADR 0017). Verilmezse panel desteklenmez; canlı kimlik dosyalarına dokunulmaz. */
   claudeAccounts?: { live: ClaudePaths; command?: string }
+  /** Claude konuşma kancasının ekleneceği settings.json (ADR 0018). Verilmezse ayarlara dokunulmaz. */
+  claudeSettingsFile?: string
+  /** Claude arka plan oturumlarını işe bağlama; verilmezse kapalıdır. */
+  claudeAgents?: { command: string; claudeDir: string }
 }
 
 export interface Daemon {
@@ -332,7 +349,15 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       lastActivityAt: live?.lastActivityAt ?? null,
       remainingProcessGroup: sessions.hasLingeringGroup(session.id),
       degraded: cwdProblem === null ? null : `Çalışma dizini ${cwdProblem}: ${session.cwd}`,
+      conversation: latestConversation(session),
     }
+  }
+
+  function latestConversation(session: Session): SessionView['conversation'] {
+    const latest = session.conversations?.at(-1)
+    if (!latest) return null
+    const { title, firstPrompt, lastPrompt, updatedAt, current } = conversationView(session, latest)
+    return { id: latest.id, title, firstPrompt, lastPrompt, updatedAt, current }
   }
 
   function projectView(project: Project): ProjectView {
@@ -342,6 +367,110 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
   function findSession(id: string): Session | undefined {
     return store.get().sessions.find((s) => s.id === id)
+  }
+
+  function findWork(id: string): Work | undefined {
+    return (store.get().works ?? []).find((w) => w.id === id)
+  }
+
+  // Claude konuşma takibi (ADR 0018): kanca olay dosyası bırakır, daemon oturuma yazar.
+  const hookDir = path.join(options.dataDir, 'hooks', 'claude')
+  let conversationTracking: { active: boolean; message: string | null } = {
+    active: false,
+    message: 'Claude ayar dosyası yapılandırılmadı',
+  }
+  if (options.claudeSettingsFile) {
+    const installed = installClaudeHook(options.claudeSettingsFile)
+    conversationTracking = installed.active ? { active: true, message: null } : { active: false, message: installed.message }
+    if (!installed.active) console.warn(`[agentdeck] Claude konuşma takibi kapalı: ${installed.message}`)
+  }
+  const transcripts = createTranscriptSummaries()
+  let pendingHookEvents: HookEvent[] = []
+
+  function recordConversations(events: HookEvent[]): void {
+    const all = [...pendingHookEvents, ...events]
+    if (all.length === 0) return
+    const known = new Set(store.get().sessions.map((s) => s.id))
+    const now = Date.now()
+    // Oturum kaydı PTY doğduktan sonra yazılır; kanca ondan önce gelebilir.
+    pendingHookEvents = all.filter((e) => !known.has(e.sessionId) && now - e.at < HOOK_EVENT_GRACE_MS)
+    const ready = all.filter((e) => known.has(e.sessionId))
+    if (ready.length === 0) return
+    void store.commit((draft) => {
+      for (const event of ready) {
+        const session = draft.sessions.find((s) => s.id === event.sessionId)
+        if (!session) continue
+        const list = session.conversations ?? []
+        const existing = list.find((c) => c.id === event.conversationId)
+        if (existing) {
+          existing.lastSeenAt = Math.max(existing.lastSeenAt, event.at)
+          existing.runId = event.runId
+          if (event.transcriptPath) existing.transcriptPath = event.transcriptPath
+        } else {
+          list.push({
+            cli: 'claude',
+            id: event.conversationId,
+            runId: event.runId,
+            source: event.source,
+            startedAt: event.at,
+            lastSeenAt: event.at,
+            transcriptPath: event.transcriptPath,
+          })
+        }
+        list.sort((a, b) => a.lastSeenAt - b.lastSeenAt)
+        session.conversations = list.slice(-MAX_CONVERSATIONS_PER_SESSION)
+      }
+    }).catch(() => {
+      // Store serviceError'u taşır; kayıt sonraki olayda yeniden denenmez, kanca yeniden başlatmada tekrar bildirir.
+    })
+  }
+  const inbox = openHookInbox(hookDir, recordConversations)
+
+  const claudeAgents = options.claudeAgents
+    ? createClaudeAgents({ ...options.claudeAgents, env: process.env })
+    : null
+
+  /** Listede görünmeyen bağlı oturum silinmiş veya henüz okunmamış olabilir; uydurulmaz, unknown görünür. */
+  function placeholderAgent(id: string, cwd: string): ClaudeAgentView {
+    return { id, name: id, state: 'unknown', cwd, sessionId: null, startedAt: null, updatedAt: null, detail: null }
+  }
+
+  function workClaudeSessions(): Record<string, ClaudeAgentView[]> {
+    const result: Record<string, ClaudeAgentView[]> = {}
+    const state = store.get()
+    for (const work of state.works ?? []) {
+      if (!work.claudeSessions?.length) continue
+      const project = state.projects.find((p) => p.id === work.projectId)
+      if (!project) continue
+      const listed = claudeAgents?.cached(project.path)?.agents ?? []
+      result[work.id] = work.claudeSessions.map((id) => listed.find((a) => a.id === id) ?? placeholderAgent(id, project.path))
+    }
+    return result
+  }
+
+  const EMPTY_SUMMARY = { title: null, firstPrompt: null, lastPrompt: null, updatedAt: null }
+
+  function conversationView(session: Session, record: ConversationRecord): ConversationView {
+    const latest = session.conversations?.at(-1)
+    return {
+      ...record,
+      ...(record.transcriptPath ? transcripts.get(record.transcriptPath) : EMPTY_SUMMARY),
+      sessionId: session.id,
+      current: latest === record && session.lifecycle === 'live' && record.runId === session.runId,
+    }
+  }
+
+  /** Oturumların konuşmaları, en yeni önce; aynı konuşma birden çok oturumda görüldüyse en son görüleni kalır. */
+  function conversationList(owned: Session[]): ConversationView[] {
+    const byId = new Map<string, ConversationView>()
+    for (const session of owned) {
+      for (const record of session.conversations ?? []) {
+        const view = conversationView(session, record)
+        const seen = byId.get(view.id)
+        if (!seen || seen.lastSeenAt < view.lastSeenAt || (view.current && !seen.current)) byId.set(view.id, view)
+      }
+    }
+    return [...byId.values()].sort((a, b) => Number(b.current) - Number(a.current) || b.lastSeenAt - a.lastSeenAt)
   }
 
   const attentionBySession = new Map<string, { runId: string; attention: TerminalAttention }>()
@@ -692,6 +821,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       projects: state.projects.map(projectView),
       // Kalıcı lifecycle canlılık tahminiyle ezilmez; kayıt tek doğrudur.
       sessions: state.sessions.map(sessionView),
+      works: state.works ?? [],
+      claudeSessions: workClaudeSessions(),
+      conversationTracking,
       previews,
       terminals: Object.fromEntries(state.sessions.filter((s) => s.runId).map((s) => [s.id, {
         failure: host.failure(s.runId!),
@@ -814,6 +946,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       name: req.body?.name ?? null,
       command: req.body?.command === undefined ? undefined : req.body.command,
       isolation: req.body?.isolation ?? null,
+      workId: req.body?.workId ?? null,
     }
 
     try {
@@ -823,6 +956,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         if (projectsBeingDeleted.has(project.id)) {
           throw new HttpError(409, 'operation_in_progress', 'Proje silinirken yeni oturum açılmaz')
         }
+        const workId = readWorkId(payload.workId, project.id)
 
         if (payload.command === undefined) {
           throw new HttpError(400, 'validation', 'command alanı gerekli (null = kabuk)')
@@ -890,6 +1024,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
             command: program,
             cwd,
             userEnv,
+            hookDir,
             onData: (chunk) => recordTerminalOutput(sid, runId, chunk),
             onExit: (exit) => recordExit(sid, exit),
           })
@@ -922,10 +1057,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           runId,
           archivedAt: null,
           lastLaunch: { mode: 'command', command: program },
+          ...(workId ? { workId } : {}),
         }
 
         try {
           await store.commit((draft) => {
+            // İş bu arada kaldırıldıysa oturum işsiz açılır.
+            if (session.workId && !(draft.works ?? []).some((w) => w.id === session.workId)) delete session.workId
             draft.sessions.push(session)
           })
         } catch (err) {
@@ -944,6 +1082,156 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       })
       // Yanıt kalıcı kayıttan okunur: Run bu arada çıkmışsa görünüm bunu söyler.
       res.json(sessionView(findSession(session.id) ?? session))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  /** null/undefined işsiz demektir; iş aynı projeye ait olmalıdır. */
+  function readWorkId(raw: unknown, projectId: string): string | null {
+    if (raw === null || raw === undefined) return null
+    if (typeof raw !== 'string') throw new HttpError(400, 'validation', 'workId string veya null olmalı')
+    const found = findWork(raw)
+    if (!found) throw new HttpError(404, 'not_found', 'İş yok')
+    if (found.projectId !== projectId) throw new HttpError(400, 'validation', 'İş başka bir projeye ait')
+    return found.id
+  }
+
+  function readWorkName(raw: unknown): string {
+    if (typeof raw !== 'string' || raw.trim() === '') throw new HttpError(400, 'validation', 'İş adı gerekli')
+    const name = raw.trim().replace(/\s+/g, ' ')
+    if (name.length > WORK_NAME_MAX) throw new HttpError(400, 'validation', `İş adı en çok ${WORK_NAME_MAX} karakter olabilir`)
+    return name
+  }
+
+  app.post('/api/works', async (req, res) => {
+    try {
+      const project = store.get().projects.find((p) => p.id === req.body?.projectId)
+      if (!project) throw new HttpError(404, 'not_found', 'Proje yok')
+      if (projectsBeingDeleted.has(project.id)) throw new HttpError(409, 'operation_in_progress', 'Proje silinirken iş açılmaz')
+      const work: Work = { id: crypto.randomBytes(16).toString('hex'), projectId: project.id, name: readWorkName(req.body?.name), createdAt: Date.now() }
+      await store.commit((draft) => {
+        if (!draft.projects.some((p) => p.id === project.id)) throw new HttpError(404, 'not_found', 'Proje yok')
+        draft.works = [...(draft.works ?? []), work]
+      })
+      res.json(work)
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  app.patch('/api/works/:id', async (req, res) => {
+    try {
+      const name = readWorkName(req.body?.name)
+      if (!findWork(req.params.id)) throw new HttpError(404, 'not_found', 'İş yok')
+      await store.commit((draft) => {
+        const target = (draft.works ?? []).find((w) => w.id === req.params.id)
+        if (target) target.name = name
+      })
+      res.json(findWork(req.params.id))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  /** İş kaydını kaldırır; oturumlar, dosyalar ve konuşmalar yerinde kalır, yalnız işsiz olur. */
+  app.delete('/api/works/:id', async (req, res) => {
+    try {
+      if (!findWork(req.params.id)) throw new HttpError(404, 'not_found', 'İş yok')
+      await store.commit((draft) => {
+        draft.works = (draft.works ?? []).filter((w) => w.id !== req.params.id)
+        for (const session of draft.sessions) if (session.workId === req.params.id) delete session.workId
+      })
+      res.json({ ok: true })
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  /** Transcript özetleri en çok bu kadar beklenir; yetişmeyen özet sonraki istekte gelir. */
+  async function conversationsOf(owned: Session[]): Promise<ConversationView[]> {
+    const files = owned.flatMap((s) => (s.conversations ?? []).flatMap((c) => (c.transcriptPath ? [c.transcriptPath] : [])))
+    await transcripts.settle(files, 1500)
+    return conversationList(owned)
+  }
+
+  /** Projenin (alt klasörleri dahil) Claude arka plan oturumları; hangi işe bağlı oldukları ile. */
+  app.get('/api/projects/:id/claude-sessions', async (req, res) => {
+    const project = store.get().projects.find((p) => p.id === req.params.id)
+    if (!project) return jsonError(res, 404, 'not_found', 'Proje yok')
+    if (!claudeAgents) return res.json({ supported: false, error: null, sessions: [] })
+    const listed = await claudeAgents.list(project.path)
+    const owner = new Map<string, string>()
+    for (const work of store.get().works ?? []) for (const id of work.claudeSessions ?? []) owner.set(id, work.id)
+    res.json({
+      supported: true,
+      error: listed.error,
+      sessions: listed.agents
+        .map((agent) => ({ ...agent, workId: owner.get(agent.id) ?? null }))
+        .sort((a, b) => (b.updatedAt ?? b.startedAt ?? 0) - (a.updatedAt ?? a.startedAt ?? 0)),
+    })
+  })
+
+  /** Claude oturumu tek bir işe bağlıdır: başka işteyse oradan alınır. */
+  app.post('/api/works/:id/claude-sessions', async (req, res) => {
+    try {
+      const work = findWork(req.params.id)
+      if (!work) throw new HttpError(404, 'not_found', 'İş yok')
+      const ids: unknown = req.body?.ids
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 50 || !ids.every(isClaudeAgentId)) {
+        throw new HttpError(400, 'validation', 'ids 1-50 Claude oturum kimliği (8 hex) olmalı')
+      }
+      await store.commit((draft) => {
+        for (const other of draft.works ?? []) {
+          if (other.id !== work.id && other.claudeSessions) other.claudeSessions = other.claudeSessions.filter((id) => !ids.includes(id))
+        }
+        const target = (draft.works ?? []).find((w) => w.id === work.id)
+        if (target) target.claudeSessions = [...new Set([...(target.claudeSessions ?? []), ...ids])]
+      })
+      res.json(findWork(work.id))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  app.delete('/api/works/:id/claude-sessions/:sessionId', async (req, res) => {
+    try {
+      if (!findWork(req.params.id)) throw new HttpError(404, 'not_found', 'İş yok')
+      await store.commit((draft) => {
+        const target = (draft.works ?? []).find((w) => w.id === req.params.id)
+        if (target?.claudeSessions) target.claudeSessions = target.claudeSessions.filter((id) => id !== req.params.sessionId)
+      })
+      res.json(findWork(req.params.id))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  app.get('/api/works/:id/conversations', async (req, res) => {
+    const work = findWork(req.params.id)
+    if (!work) return jsonError(res, 404, 'not_found', 'İş yok')
+    res.json({ conversations: await conversationsOf(store.get().sessions.filter((s) => s.workId === work.id)) })
+  })
+
+  app.get('/api/sessions/:id/conversations', async (req, res) => {
+    const session = findSession(req.params.id)
+    if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
+    res.json({ conversations: await conversationsOf([session]) })
+  })
+
+  /** Oturumu bir işe bağlar veya işten çıkarır; Run ve dosyalar etkilenmez. */
+  app.post('/api/sessions/:id/work', async (req, res) => {
+    try {
+      const session = findSession(req.params.id)
+      if (!session) throw new HttpError(404, 'not_found', 'Oturum yok')
+      const workId = readWorkId(req.body?.workId, session.projectId)
+      await store.commit((draft) => {
+        const target = draft.sessions.find((s) => s.id === session.id)
+        if (!target) return
+        if (workId && (draft.works ?? []).some((w) => w.id === workId)) target.workId = workId
+        else delete target.workId
+      })
+      res.json(sessionView(findSession(session.id) as Session))
     } catch (err) {
       sendError(res, err)
     }
@@ -1067,6 +1355,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         command,
         cwd: current.cwd,
         userEnv,
+        hookDir,
         onData: (chunk) => recordTerminalOutput(current.id, runId, chunk),
         onExit: (exit) => recordExit(current.id, exit),
       })
@@ -1648,6 +1937,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       try {
         await store.commit((draft) => {
           draft.projects = draft.projects.filter((p) => p.id !== project.id)
+          if (draft.works) draft.works = draft.works.filter((w) => w.projectId !== project.id)
         })
       } catch (err) {
         throw new HttpError(503, 'persistence', `Proje kaydı silinemedi: ${(err as Error).message}`, {
@@ -2179,6 +2469,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (closed) return closed
       closed = (async () => {
         shuttingDown = true
+        inbox.close()
         claudeLogin?.cancel()
         for (const client of wss.clients) client.close(1001, 'kapanıyor')
         await new Promise<void>((resolve) => wss.close(() => resolve()))

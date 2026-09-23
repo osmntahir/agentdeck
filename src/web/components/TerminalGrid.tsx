@@ -392,7 +392,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
         {actions}
         </div>
 
-        {layoutPanel && api && <GridLayoutDialog projects={state.projects} healthy={healthy} onRefresh={onRefresh} api={api} panelId={layoutPanel} sessions={state.sessions}
+        {layoutPanel && api && <GridLayoutDialog projects={state.projects} healthy={healthy} onRefresh={onRefresh} api={api} panelId={layoutPanel} sessions={state.sessions} works={state.works ?? []}
           onClose={() => setLayoutPanel(null)} />}
         {notice && (
           <div className="error" role="alert">

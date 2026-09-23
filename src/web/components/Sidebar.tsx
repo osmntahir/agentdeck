@@ -6,17 +6,35 @@ import { AgentMark } from './AgentMark'
 import { AccountsPanel } from './AccountsPanel'
 import { Icon } from './Icon'
 import { useEffect, useState } from 'react'
-import type { ProjectView, SessionView, StateResponse } from '../../shared/types'
+import type { ClaudeAgentView, ProjectView, SessionView, StateResponse, Work } from '../../shared/types'
+import { claudeStateLabel, claudeStateTone } from './ClaudeSessions'
+import { ProgramIcon } from './AgentMark'
 import type { OrphanScanResult } from '../api'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
 import { SHORTCUT_LABELS } from '../../shared/shortcuts'
 import { stateLabel, StatusDot } from '../sessionStatus'
 
+/**
+ * Projedeki gezinme satırlarının iş grupları. Oturumu hiç olmayan yeni iş de
+ * görünür; oturumlarının hepsi bitmiş iş kenar çubuğundan çekilir, taramada kalır.
+ */
+export function sidebarGroups(state: StateResponse, projectId: string): { works: { work: Work; rows: SessionView[] }[]; loose: SessionView[] } {
+  const owned = state.sessions.filter((s) => s.projectId === projectId)
+  const rows = owned.filter(inProjectNavigation)
+  const projectWorks = (state.works ?? []).filter((w) => w.projectId === projectId)
+  const works = projectWorks
+    .map((work) => ({ work, rows: rows.filter((s) => s.workId === work.id) }))
+    .filter((group) => group.rows.length > 0 || !owned.some((s) => s.workId === group.work.id) || Boolean(group.work.claudeSessions?.length))
+  const loose = rows.filter((s) => !projectWorks.some((w) => w.id === s.workId))
+  return { works, loose }
+}
+
 /** Kenar çubuğundaki oturum sırası; Alt+rakam ve Ctrl+PgUp/PgDn bu sırayı izler. */
 export function navigationIds(state: StateResponse): string[] {
-  return state.projects.flatMap((project) =>
-    state.sessions.filter((session) => session.projectId === project.id && inProjectNavigation(session)).map((s) => s.id),
-  )
+  return state.projects.flatMap((project) => {
+    const { works, loose } = sidebarGroups(state, project.id)
+    return [...works.flatMap((group) => group.rows), ...loose].map((s) => s.id)
+  })
 }
 
 interface Props {
@@ -36,7 +54,10 @@ interface Props {
   notifications: React.ReactNode
   onHome: () => void
   healthy: boolean
-  onNewSession: (project: ProjectView) => void
+  /** workId verilirse yeni oturum o işte açılır. */
+  onNewSession: (project: ProjectView, workId?: string) => void
+  onWorkMenu: (work: Work, event: React.MouseEvent<HTMLElement>) => void
+  onOpenClaude: (work: Work, agent: ClaudeAgentView) => void
   /** Onay penceresini App açar; kenar çubuğu yalnız isteği iletir. */
   onRemoveProject: (project: ProjectView) => void
   orphans: OrphanScanResult | null
@@ -62,6 +83,8 @@ export function Sidebar({
   onHome,
   healthy,
   onNewSession,
+  onWorkMenu,
+  onOpenClaude,
   onRemoveProject,
   orphans,
   onRefreshOrphans,
@@ -136,6 +159,24 @@ export function Sidebar({
         {state.projects.map((project) => {
           const owned = state.sessions.filter((s) => s.projectId === project.id)
           const rows = owned.filter(inProjectNavigation)
+          const groups = sidebarGroups(state, project.id)
+          const renderRow = (session: SessionView) => {
+            const index = visibleIds.indexOf(session.id)
+            return (
+              <SessionRow
+                key={session.id}
+                session={session}
+                shortcut={index < 9 ? index + 1 : null}
+                active={session.id === activeId || gridSessionIds.includes(session.id)}
+                tabbable={session.id === tabbableId}
+                ids={visibleIds}
+                onFocusRow={() => setRowFocus(session.id)}
+                onSelect={() => onSelect(session.id)}
+                onAddToGrid={() => onAddToGrid(session.id)}
+                onMenu={event => onSessionMenu(session.id, event)}
+              />
+            )
+          }
           return (
             <div key={project.id} className="project" style={projectStyle(project.id, preferences)}>
               <div className="project-head" onContextMenu={e => { e.preventDefault(); setProjectMenu({ id: project.id, name: project.name, position: { x: e.clientX, y: e.clientY, origin: e.currentTarget } }) }}>
@@ -161,24 +202,47 @@ export function Sidebar({
 
               {/* Arşivlenen ve biten oturum gezinmede görünmez (ADR 0014); taramada durur. */}
               <div className="project-sessions">
-              {rows.map((session) => {
-                const index = visibleIds.indexOf(session.id)
+              {groups.works.map(({ work, rows: workRows }) => {
+                const claude = state.claudeSessions?.[work.id] ?? []
+                // Zaten bir terminalde açık olan Claude oturumu ikinci satır olarak gösterilmez.
+                const detached = claude.filter((agent) => !workRows.some((s) => s.command === `claude attach ${agent.id}` || (s.lastLaunch?.mode === 'command' && s.lastLaunch.command === `claude attach ${agent.id}`)))
+                const waitingInWork = workRows.filter((s) => s.lifecycle === 'live' && s.attention).length + claude.filter((a) => a.state === 'blocked').length
                 return (
-                  <SessionRow
-                    key={session.id}
-                    session={session}
-                    shortcut={index < 9 ? index + 1 : null}
-                    active={session.id === activeId || gridSessionIds.includes(session.id)}
-                    tabbable={session.id === tabbableId}
-                    ids={visibleIds}
-                    onFocusRow={() => setRowFocus(session.id)}
-                    onSelect={() => onSelect(session.id)}
-                    onAddToGrid={() => onAddToGrid(session.id)}
-                    onMenu={event => onSessionMenu(session.id, event)}
-                  />
+                  <div key={work.id} className="work-group">
+                    <div className="work-head" onContextMenu={(e) => onWorkMenu(work, e)} title={work.name}>
+                      <Icon name="work" size={12} />
+                      <span className="work-name">{work.name}</span>
+                      {waitingInWork > 0 && <span className="row-flag" title={`${waitingInWork} terminal onay veya yanıt bekliyor`}>{waitingInWork}</span>}
+                      {workRows.length > 0 && <span className="project-count">{workRows.length}</span>}
+                      <span className="work-actions">
+                        <button className="icon-button ghost" title="Bu işte yeni oturum" aria-label={`${work.name} işinde yeni oturum`} onClick={() => onNewSession(project, work.id)}><Icon name="plus" size={13} /></button>
+                        <button className="icon-button ghost" title="İş işlemleri" aria-label={`${work.name} iş işlemleri`} onClick={(e) => onWorkMenu(work, e)}><Icon name="more" size={13} /></button>
+                      </span>
+                    </div>
+                    <div className="work-sessions">
+                      {workRows.map(renderRow)}
+                      {detached.map((agent) => (
+                        <div key={agent.id} className="session-row-wrap claude-row">
+                          <button className="session-row" tabIndex={-1} onClick={() => onOpenClaude(work, agent)}
+                            title={`${agent.name} · Claude oturumu · ${claudeStateLabel(agent.state)}${agent.detail ? `\n${agent.detail}` : ''}\nTıkla: bu işte terminalde aç (claude attach ${agent.id})`}>
+                            <ProgramIcon command="claude" />
+                            <span className="session-name">{agent.name}</span>
+                            {agent.state === 'blocked' && <span className="row-flag">Girdi</span>}
+                            <span className="status-dot" data-tone={claudeStateTone(agent.state)} aria-hidden="true" />
+                          </button>
+                        </div>
+                      ))}
+                      {workRows.length === 0 && detached.length === 0 && (
+                        <button className="project-idle" onClick={() => onNewSession(project, work.id)}>
+                          <Icon name="plus" size={12} /><span>Bu işte oturum başlat</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 )
               })}
-              {rows.length === 0 && (
+              {groups.loose.map(renderRow)}
+              {rows.length === 0 && groups.works.length === 0 && (
                 <button className="project-idle" onClick={() => onNewSession(project)} title={`${project.name} içinde oturum başlat`}>
                   <Icon name="plus" size={12} /><span>{owned.length > 0 ? 'Çalışan oturum yok · başlat' : 'Oturum başlat'}</span>
                 </button>
@@ -191,6 +255,7 @@ export function Sidebar({
 
       {projectMenu && <ActionMenu label="Proje işlemleri" position={projectMenu.position} onClose={() => setProjectMenu(null)} actions={[
         { label: 'Yeni oturum…', icon: 'plus', run: () => { const p = state.projects.find(p => p.id === projectMenu.id); if (p) onNewSession(p) } },
+        { label: 'Yeni iş…', icon: 'work', description: 'Yeni iş ve ilk terminali birlikte açılır.', run: () => { const p = state.projects.find(p => p.id === projectMenu.id); if (p) onNewSession(p, 'new') } },
         { label: 'Proje rengi…', icon: 'palette', run: () => setColorProject(projectMenu) },
         { label: 'Projeyi kaldır…', icon: 'trash', danger: true, run: () => { const p = state.projects.find(p => p.id === projectMenu.id); if (p) onRemoveProject(p) } },
       ]} />}
@@ -278,7 +343,7 @@ function SessionRow({
         onMouseDown={(e) => { if (e.button === 1) e.preventDefault() }}
         onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onAddToGrid() } }}
         onFocus={onFocusRow}
-        title={`${session.name} · ${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''}\nOrta tık veya sürükle: grid'e ekle · Ctrl basılı sürükle: aynı programdan kopya`}
+        title={`${session.name} · ${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''}${session.conversation?.lastPrompt ? `\nSon istem: ${session.conversation.lastPrompt}` : ''}\nOrta tık veya sürükle: grid'e ekle · Ctrl basılı sürükle: aynı programdan kopya`}
         aria-keyshortcuts={shortcut ? `Alt+${shortcut}` : undefined}
         draggable
         onDragStart={(e) => { e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id); e.dataTransfer.effectAllowed = 'copyMove' }}

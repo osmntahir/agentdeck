@@ -66,6 +66,75 @@ export interface Session {
   lastLaunch: LastLaunch | null
   /** Bu saklı resume hedefi daemon açılışında bir kez otomatik denenmiş mi? */
   autoResumeAttempted?: boolean
+  /** Bağlı olduğu İş; yoksa oturum hiçbir işe bağlı değildir. */
+  workId?: string
+  /** Bu oturumun Run'larında gözlenen ajan konuşmaları; eskiden yeniye. */
+  conversations?: ConversationRecord[]
+}
+
+/**
+ * Kullanıcının adlandırdığı iş: bir projede aynı amaca hizmet eden oturumları
+ * ve onların konuşmalarını bir araya toplar. Kaldırılması oturumlara dokunmaz.
+ */
+export interface Work {
+  id: string
+  projectId: string
+  name: string
+  createdAt: number
+  /** İşe bağlanmış Claude arka plan oturumlarının kısa kimlikleri (`claude agents`). */
+  claudeSessions?: string[]
+}
+
+/**
+ * Claude Code'un arka plan oturumu (`claude agents --json`). Durum CLI'ındır:
+ * working, blocked (girdi bekliyor), done, failed; listede yoksa unknown.
+ */
+export interface ClaudeAgentView {
+  /** `claude attach <id>` ile açılan kısa kimlik. */
+  id: string
+  name: string
+  state: string
+  cwd: string
+  /** Güncel konuşmanın kimliği. */
+  sessionId: string | null
+  startedAt: number | null
+  updatedAt: number | null
+  /** CLI'ın son özet satırı; iç dosyadan okunur, yoksa null. */
+  detail: string | null
+}
+
+/** Konuşmanın o Run'da nasıl başladığı; Claude SessionStart kancasının source alanıdır. */
+export type ConversationSource = 'startup' | 'resume' | 'clear' | 'compact' | 'other'
+
+/**
+ * Ajan CLI'ının bildirdiği bir konuşma. Kimlik CLI'ındır; AgentDeck üretmez.
+ * Kayıt, konuşmanın hâlâ erişilebilir olduğunu kanıtlamaz.
+ */
+export interface ConversationRecord {
+  cli: 'claude'
+  id: string
+  /** Bu kaydın açıldığı Run. */
+  runId: string
+  source: ConversationSource
+  startedAt: number
+  /** Aynı konuşmanın bu oturumda en son (yeniden) başladığı an. */
+  lastSeenAt: number
+  transcriptPath: string | null
+}
+
+/** Transcript'ten türetilen özet; dosya okunamazsa alanlar null kalır. */
+export interface ConversationSummary {
+  /** CLI'da /rename ile verilen ad. /clear sonrası yeni konuşmaya da kopyalanır. */
+  title: string | null
+  firstPrompt: string | null
+  lastPrompt: string | null
+  updatedAt: number | null
+}
+
+export interface ConversationView extends ConversationRecord, ConversationSummary {
+  sessionId: string
+  /** Oturumun canlı Run'ında şu an bu konuşma sürüyor. */
+  current: boolean
 }
 
 /** Diske yazılan kayıt. Activity, health ve preview buraya girmez. */
@@ -73,6 +142,8 @@ export interface PersistedState {
   schemaVersion: 2
   projects: Project[]
   sessions: Session[]
+  /** Alan eklenmeden önceki kayıtlarda yoktur. */
+  works?: Work[]
 }
 
 /** Kalıcı kayda türetilmiş alanların eklendiği API görünümü. */
@@ -87,6 +158,8 @@ export interface SessionView extends Session {
   remainingProcessGroup: boolean
   /** Çalışma dizini kullanılamıyorsa nedeni; lifecycle'dan ayrı, türetilmiş overlay (ADR 0005). */
   degraded: string | null
+  /** En son gözlenen konuşmanın özeti; özet henüz okunmadıysa alanları null'dur. */
+  conversation?: (ConversationSummary & { id: string; current: boolean }) | null
 }
 
 /** Proje kökü kullanılamıyorsa nedeni; kayıt ve oturumlar olduğu gibi kalır. */
@@ -112,6 +185,11 @@ export interface StateResponse {
   serverNow: number
   projects: ProjectView[]
   sessions: SessionView[]
+  works?: Work[]
+  /** İş kimliği → bağlı Claude arka plan oturumları; liste henüz okunmadıysa durum unknown'dur. */
+  claudeSessions?: Record<string, ClaudeAgentView[]>
+  /** Claude konuşma takibinin durumu; kanca kurulamadıysa nedeni. */
+  conversationTracking?: { active: boolean; message: string | null }
   serviceError: string | null
   terminals?: Record<string, {
     failure: { code: string; message: string } | null

@@ -15,6 +15,18 @@ _Avoid_: submodule, iç içe proje
 Bir çalışma kaydı ve ona bağlı ardışık Run'lar. Süreç sonlandığında çalışma kaydı yaşayabilir.
 _Avoid_: Tek süreç, CLI konuşması
 
+**İş**:
+Kullanıcının adlandırdığı amaç (ör. "Çoklu dil desteği"). Bir projedeki Session'ları ve onların Conversation kayıtlarını bir araya toplar. İşin kaldırılması Session, dosya veya konuşmaya dokunmaz; Session'lar işsiz kalır. Bir Session en çok bir işe bağlıdır.
+_Avoid_: Claude session, görev (Session adıyla karışır)
+
+**Claude arka plan oturumu**:
+Claude Code'un kendi yönettiği, `claude agents` ile listelenen ve `claude attach <kısa-id>` ile açılan oturum. AgentDeck Session'ı değildir; bir İş'e bağlanabilir, kapatılan terminal onu durdurmaz.
+_Avoid_: Session (AgentDeck anlamında), job
+
+**Conversation kaydı**:
+Bir Session'ın Run'ında ajan CLI'ının bildirdiği konuşma kimliği, başlama nedeni (yeni, sürdürme, /clear, /compact) ve transcript yolu. Claude'da SessionStart kancasıyla gelir; ekran çıktısından okunmaz. Kayıt konuşmanın hâlâ açılabildiğini kanıtlamaz. /rename adı /clear sonrası yeni konuşmaya kopyalandığı için konuşmayı ayırt etmekte ad değil istem kullanılır.
+_Avoid_: Session (AgentDeck anlamında)
+
 **Run**:
 Bir Session'a bağlı tek PTY çalıştırması. Yeniden bağlanma aynı Run'ı izler; yeniden çalıştırma yeni Run'dır.
 

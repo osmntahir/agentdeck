@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import type { Isolation, LastLaunch, Lifecycle, PersistedState, Project, Session, SessionWorktree } from '../shared/types'
+import type { ConversationRecord, ConversationSource, Isolation, LastLaunch, Lifecycle, PersistedState, Project, Session, SessionWorktree, Work } from '../shared/types'
 
 export const SCHEMA_VERSION = 2
 
@@ -114,6 +114,46 @@ function worktrees(raw: unknown): SessionWorktree[] {
   })
 }
 
+const CONVERSATION_SOURCES: ConversationSource[] = ['startup', 'resume', 'clear', 'compact', 'other']
+
+function work(raw: unknown): Work {
+  if (!isObject(raw)) corrupt('work kaydı')
+  return {
+    id: str(raw.id, 'work.id'),
+    projectId: str(raw.projectId, 'work.projectId'),
+    name: str(raw.name, 'work.name'),
+    createdAt: num(raw.createdAt, 'work.createdAt'),
+    ...(raw.claudeSessions !== undefined ? { claudeSessions: claudeSessionIds(raw.claudeSessions) } : {}),
+  }
+}
+
+function claudeSessionIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) corrupt('work.claudeSessions')
+  return raw.map((id) => {
+    if (typeof id !== 'string' || !/^[0-9a-f]{8}$/.test(id)) corrupt('work.claudeSessions kaydı')
+    return id
+  })
+}
+
+function conversations(raw: unknown): ConversationRecord[] {
+  if (!Array.isArray(raw)) corrupt('session.conversations')
+  return raw.map((entry) => {
+    if (!isObject(entry)) corrupt('session.conversations kaydı')
+    if (entry.cli !== 'claude') corrupt(`conversation.cli=${String(entry.cli)}`)
+    const source = str(entry.source, 'conversation.source')
+    if (!CONVERSATION_SOURCES.includes(source as ConversationSource)) corrupt(`conversation.source=${source}`)
+    return {
+      cli: 'claude',
+      id: str(entry.id, 'conversation.id'),
+      runId: str(entry.runId, 'conversation.runId'),
+      source: source as ConversationSource,
+      startedAt: num(entry.startedAt, 'conversation.startedAt'),
+      lastSeenAt: num(entry.lastSeenAt, 'conversation.lastSeenAt'),
+      transcriptPath: nullableStr(entry.transcriptPath, 'conversation.transcriptPath'),
+    }
+  })
+}
+
 function session(raw: unknown): Session {
   if (!isObject(raw)) corrupt('session kaydı')
   const lifecycle = str(raw.lifecycle, 'session.lifecycle')
@@ -140,6 +180,9 @@ function session(raw: unknown): Session {
     archivedAt: nullableNum(raw.archivedAt, 'session.archivedAt'),
     lastLaunch: lastLaunch(raw.lastLaunch),
     autoResumeAttempted: optionalBool(raw.autoResumeAttempted, 'session.autoResumeAttempted'),
+    // Alanlar eklenmeden önceki kayıtlarda yoktur; yoksa anahtar da yazılmaz.
+    ...(raw.workId !== undefined ? { workId: str(raw.workId, 'session.workId') } : {}),
+    ...(raw.conversations !== undefined ? { conversations: conversations(raw.conversations) } : {}),
   }
 }
 
@@ -206,8 +249,15 @@ function parseKnownSchema(raw: unknown): { state: PersistedState; migrated: bool
       `Kayıt şeması ${version}, bu daemon ${SCHEMA_VERSION} biliyor. Daha yeni sürümle açılmış bir kayda dokunulmaz.`,
     )
   }
+  if (raw.works !== undefined && !Array.isArray(raw.works)) corrupt('works dizisi')
+  const works = raw.works === undefined ? undefined : raw.works.map(work)
   return {
-    state: { schemaVersion: SCHEMA_VERSION, projects, sessions: raw.sessions.map(session) },
+    state: {
+      schemaVersion: SCHEMA_VERSION,
+      projects,
+      sessions: raw.sessions.map(session),
+      ...(works !== undefined ? { works } : {}),
+    },
     migrated: false,
   }
 }

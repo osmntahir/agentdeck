@@ -1,19 +1,24 @@
 import { ProgramIcon } from './AgentMark'
 import { useEffect, useRef, useState } from 'react'
-import type { Isolation, Project } from '../../shared/types'
+import type { Isolation, Project, Work } from '../../shared/types'
 import { PRESETS } from '../../shared/types'
 import { getProjectHead } from '../api'
 import { updatePreferences, usePreferences } from '../preferences'
+import { WorkField, workChoice, type WorkChoice } from './WorkDialogs'
 
 interface Props {
   busy: boolean
   error: string | null
   project: Project
+  /** Projenin işleri. */
+  works: Work[]
+  /** Önceden seçili iş: kimlik, 'new' (yeni iş) veya '' (işsiz). */
+  initialWork: string
   onCancel: () => void
-  onCreate: (input: { name: string; command: string | null; isolation: Isolation }) => void
+  onCreate: (input: { name: string; command: string | null; isolation: Isolation; work: WorkChoice }) => void
 }
 
-export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: Props) {
+export function NewSessionDialog({ project, works, initialWork, busy, error, onCancel, onCreate }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     dialog.current?.showModal()
@@ -24,6 +29,9 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
   // Projede son kullanılan program önceden seçilir.
   const [presetIndex, setPresetIndex] = useState(() => Math.max(0, PRESETS.findIndex((p) => p.label === preferences.lastProgram[project.id])))
   const [isolation, setIsolation] = useState<Isolation | null>('shared')
+  const [workValue, setWorkValue] = useState(initialWork)
+  const [newWorkName, setNewWorkName] = useState('')
+  const work = workChoice(workValue, newWorkName)
   const [hasHead, setHasHead] = useState<boolean | null>(null)
   useEffect(() => {
     if (project.kind === 'folder') return
@@ -44,14 +52,15 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
 
   const worktreeClosed = project.kind === 'git' && hasHead === false
   const ready =
+    work !== undefined &&
     isolation !== null &&
     (isolation === 'shared' || (isolation === 'worktree' && (project.kind === 'folder' || hasHead === true)))
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (busy || !ready || isolation === null) return
+    if (busy || !ready || isolation === null || work === undefined) return
     try { updatePreferences({ lastProgram: { ...preferences.lastProgram, [project.id]: PRESETS[presetIndex].label } }) } catch { /* tercih yalnız bu açılışta kalır */ }
-    onCreate({ name: name.trim(), command: PRESETS[presetIndex].command, isolation })
+    onCreate({ name: name.trim(), command: PRESETS[presetIndex].command, isolation, work })
   }
 
   return (
@@ -83,10 +92,12 @@ export function NewSessionDialog({ project, busy, error, onCancel, onCreate }: P
           </div>
         </fieldset>
 
+        <WorkField works={works} value={workValue} onChange={setWorkValue} newName={newWorkName} onNewName={setNewWorkName} />
+
         <label>
-          Görev adı
+          Terminal adı
           <input
-            autoFocus
+            autoFocus={workValue !== 'new'}
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="İsteğe bağlı · boş kalırsa programdan adlandırılır"

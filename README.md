@@ -15,6 +15,8 @@ flowchart LR
 ## What it does
 
 - **Isolated sessions** – each task can run in its own `git worktree` and branch, or directly in the project folder.
+- **Works** – group the terminals you open for one goal (e.g. "i18n support") under a named work. New terminals open in the work you are looking at, so side tasks don't land in the wrong place.
+- **Claude conversation history per work** – every Claude conversation started in a work, including the new one after `/clear` or `/resume`, is listed with its first and last prompt and can be resumed with one click. This adds a `SessionStart` hook to your Claude `settings.json`; it does nothing outside agentdeck terminals.
 - **Sessions outlive the window** – agents run in a background daemon; close the app and they keep working.
 - **Terminal grid** – watch and drive several agents at once; split, resize and maximize panels.
 - **Know when an agent needs you** – sessions waiting for approval or input are flagged, with desktop notifications.

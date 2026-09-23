@@ -1,6 +1,7 @@
 import { NewSessionDialog } from './NewSessionDialog'
 import * as client from '../api'
-import type { Isolation, Project, SessionView } from '../../shared/types'
+import type { Isolation, Project, SessionView, Work } from '../../shared/types'
+import type { WorkChoice } from './WorkDialogs'
 import { useEffect, useRef, useState } from 'react'
 import type { DockviewApi, Position } from 'dockview-react'
 import { MAX_GRID_PANELS } from '../gridLayout'
@@ -12,22 +13,24 @@ interface Props {
   api: DockviewApi
   panelId: string
   sessions: SessionView[]
+  works: Work[]
   onClose: () => void
 }
 
 /** Aynı Dockview taşıma/boyut API'si; terminal tuşlarını yakalayan kısayol yoktur. */
-export function GridLayoutDialog({ projects, healthy, onRefresh, api, panelId, sessions, onClose }: Props) {
+export function GridLayoutDialog({ projects, healthy, onRefresh, api, panelId, sessions, works, onClose }: Props) {
   const [newProjectId, setNewProjectId] = useState(projects[0]?.id ?? '')
   const [creatingNew, setCreatingNew] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newDirection, setNewDirection] = useState<'right' | 'below'>('right')
   const project = projects.find(p => p.id === newProjectId)
-  const create = async (input: { name: string; command: string | null; isolation: Isolation }) => {
+  const create = async (input: { name: string; command: string | null; isolation: Isolation; work: WorkChoice }) => {
     if (!project || busy || !healthy || api.panels.length >= MAX_GRID_PANELS) return
     setBusy(true); setError(null)
     try {
-      const session = await client.createSession({ ...input, projectId: project.id })
+      const workId = input.work === null ? null : 'id' in input.work ? input.work.id : (await client.createWork(project.id, input.work.name)).id
+      const session = await client.createSession({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId: project.id })
       await onRefresh()
       const reference = api.getPanel(panelId)
       api.addPanel({ id: session.id, component: 'terminal', title: session.name, params: { sessionId: session.id }, ...(reference ? { position: { referenceGroup: reference.api.group, direction: newDirection } } : {}) })
@@ -172,7 +175,8 @@ export function GridLayoutDialog({ projects, healthy, onRefresh, api, panelId, s
         </div>
       </div>
     </dialog>
-    {creatingNew && project && <NewSessionDialog project={project} busy={busy} error={error} onCancel={() => { if (!busy) setCreatingNew(false) }} onCreate={input => void create(input)} />}
+    {creatingNew && project && <NewSessionDialog project={project} works={works.filter(w => w.projectId === project.id)}
+      initialWork={(() => { const origin = sessions.find(s => s.id === panelId); return origin?.projectId === project.id ? (origin.workId ?? '') : '' })()} busy={busy} error={error} onCancel={() => { if (!busy) setCreatingNew(false) }} onCreate={input => void create(input)} />}
     </>
   )
 }

@@ -39,6 +39,8 @@ const ALLOWED = [
 export interface RunIdentity {
   sessionId: string
   runId: string
+  /** Claude konuşma kancasının olay dizini (ADR 0018); yoksa kanca hiçbir şey yazmaz. */
+  hookDir?: string
 }
 
 const USER_ENVIRONMENT_MAX_BYTES = 64 * 1024
@@ -132,6 +134,7 @@ export function runEnv(
   env.TERM = 'xterm-256color'
   env.AGENTDECK_SESSION = ids.sessionId
   env.AGENTDECK_RUN = ids.runId
+  if (ids.hookDir) env.AGENTDECK_HOOK_DIR = ids.hookDir
 
   return env
 }

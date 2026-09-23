@@ -88,6 +88,8 @@ export interface SpawnInput {
   rows?: number
   /** Kullanıcının environment.json değerleri; çağıran Run öncesi okuyup doğrular. */
   userEnv?: Record<string, string>
+  /** Claude konuşma kancasının olay dizini. */
+  hookDir?: string
   /** Ham PTY çıktısı; sıralı ekran modeline verilir. */
   onData: (chunk: string) => void
   onExit: (exit: RunExit) => void
@@ -110,7 +112,7 @@ export function spawn(input: SpawnInput): { runId: string; pid: number } {
     cols: input.cols ?? DEFAULT_COLS,
     rows: input.rows ?? DEFAULT_ROWS,
     cwd: input.cwd,
-    env: runEnv(process.env, { sessionId: input.sessionId, runId: input.runId }, input.userEnv),
+    env: runEnv(process.env, { sessionId: input.sessionId, runId: input.runId, hookDir: input.hookDir }, input.userEnv),
   })
 
   let markExited!: () => void

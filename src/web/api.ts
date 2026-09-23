@@ -1,6 +1,8 @@
 import type {
   ClaudeAccountsResponse,
+  ClaudeAgentView,
   ClaudeLoginView,
+  ConversationView,
   DiffResult,
   DiffScope,
   Isolation,
@@ -8,6 +10,7 @@ import type {
   SessionView,
   StateResponse,
   StoredRun,
+  Work,
 } from '../shared/types'
 import { createMutationIds } from '../shared/mutationIds'
 
@@ -118,6 +121,8 @@ export const createSession = (input: {
   name: string
   command: string | null
   isolation: Isolation
+  /** Oturumun bağlanacağı iş; null işsiz demektir. */
+  workId?: string | null
 }) => mutatingCall<SessionView>(`create:${input.projectId}`, '/api/sessions', input, input)
 
 export const stopSession = (id: string, expectedRunId: string | null) =>
@@ -239,3 +244,25 @@ export const startClaudeLogin = () => call<{ login: ClaudeLoginView }>('/api/cla
 export const sendClaudeLoginInput = (text: string) =>
   call('/api/claude-accounts/login/input', { method: 'POST', body: JSON.stringify({ text }) })
 export const cancelClaudeLogin = () => call('/api/claude-accounts/login/cancel', { method: 'POST' })
+
+/** İşler (ADR 0018): oturumları ve konuşmalarını bir amaç altında toplar. */
+export const createWork = (projectId: string, name: string) =>
+  call<Work>('/api/works', { method: 'POST', body: JSON.stringify({ projectId, name }) })
+export const renameWork = (id: string, name: string) =>
+  call<Work>(`/api/works/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) })
+/** Yalnız iş kaydı kalkar; oturumlar işsiz olarak yerinde kalır. */
+export const removeWork = (id: string) => call<{ ok: true }>(`/api/works/${id}`, { method: 'DELETE' })
+export const assignWork = (sessionId: string, workId: string | null) =>
+  call<SessionView>(`/api/sessions/${sessionId}/work`, { method: 'POST', body: JSON.stringify({ workId }) })
+export const getWorkConversations = (id: string) =>
+  call<{ conversations: ConversationView[] }>(`/api/works/${id}/conversations`)
+export const getSessionConversations = (id: string) =>
+  call<{ conversations: ConversationView[] }>(`/api/sessions/${id}/conversations`)
+
+export type ClaudeSessionListing = { supported: boolean; error: string | null; sessions: (ClaudeAgentView & { workId: string | null })[] }
+/** Projenin Claude arka plan oturumları (`claude agents`). */
+export const getClaudeSessions = (projectId: string) => call<ClaudeSessionListing>(`/api/projects/${projectId}/claude-sessions`)
+export const linkClaudeSessions = (workId: string, ids: string[]) =>
+  call<Work>(`/api/works/${workId}/claude-sessions`, { method: 'POST', body: JSON.stringify({ ids }) })
+export const unlinkClaudeSession = (workId: string, id: string) =>
+  call<Work>(`/api/works/${workId}/claude-sessions/${id}`, { method: 'DELETE' })

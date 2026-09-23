@@ -17,6 +17,10 @@ async function main(): Promise<void> {
     environmentFile: path.join(os.homedir(), '.config', 'agentdeck', 'environment.json'),
     // macOS'ta kimlik anahtar zincirindedir; dosya geçişi yalnız diğer platformlarda açılır.
     claudeAccounts: process.platform === 'darwin' ? undefined : { live: claudePaths() },
+    // Konuşmaları işlere bağlayan SessionStart kancası (ADR 0018).
+    claudeSettingsFile: path.join(path.dirname(claudePaths().credentials), 'settings.json'),
+    // İşe bağlanan Claude arka plan oturumları `claude agents` ile okunur.
+    claudeAgents: { command: 'claude', claudeDir: path.dirname(claudePaths().credentials) },
   })
   console.log(`agentdeck hazır:  ${daemon.url}/?token=${daemon.token}`)
   console.log(`vite ile geliştirme: http://127.0.0.1:4710/?token=${daemon.token}`)
