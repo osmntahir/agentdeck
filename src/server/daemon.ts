@@ -184,6 +184,12 @@ function slugify(input: string): string {
 }
 
 /** 1-80 Unicode karakter, kontrol karakteri yok. Boş ad otomatik etiketlenir. */
+/** Büyük/küçük harf ve Türkçe işaretler yok sayılarak ad karşılaştırması ("Çeviri" = "ceviri"). */
+function sameName(a: string, b: string): boolean {
+  const fold = (value: string) => value.trim().toLocaleLowerCase('tr').replace(/ı/g, 'i').normalize('NFD').replace(/\p{M}/gu, '')
+  return fold(a) === fold(b)
+}
+
 function readName(raw: unknown, command: string | null, sessionId: string): string | { error: string } {
   if (raw === undefined || raw === null || raw === '') {
     return `${commandLabel(command)} ${sessionId.slice(0, 6)}`
@@ -984,7 +990,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
         // Kimlik rastgele 128 bit; kullanıcı adı yol veya kimlik değildir.
         const sid = crypto.randomBytes(16).toString('hex')
-        const name = readName(payload.name, program, sid)
+        // İşteki terminal adını boş bırakılırsa işin adını alır.
+        const workName = workId ? findWork(workId)?.name : undefined
+        const name = readName(typeof payload.name === 'string' && payload.name.trim() === '' && workName ? workName : payload.name, program, sid)
         if (typeof name === 'object') throw new HttpError(400, 'validation', name.error)
         const userEnv = userEnvironment()
 
@@ -1170,6 +1178,50 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         .map((agent) => ({ ...agent, workId: owner.get(agent.id) ?? null }))
         .sort((a, b) => (b.updatedAt ?? b.startedAt ?? 0) - (a.updatedAt ?? a.startedAt ?? 0)),
     })
+  })
+
+  /**
+   * İşin kendi Claude oturumu: listede bulunan ilk bağlı oturum. Yoksa işin
+   * adıyla yeni arka plan oturumu açılır ve işin başına yazılır. Aynı işte
+   * açılan her Claude terminali bu oturuma attach olur.
+   */
+  const workClaudeStarts = new Map<string, Promise<{ id: string; created: boolean }>>()
+  async function ensureWorkClaude(work: Work, project: Project): Promise<{ id: string; created: boolean }> {
+    if (!claudeAgents) throw new HttpError(409, 'unsupported', 'Bu daemon Claude oturumlarını yönetmiyor')
+    const listed = await claudeAgents.list(project.path)
+    const linked = findWork(work.id)?.claudeSessions ?? []
+    // Liste okunamadıysa bağlı oturum yok sayılmaz; ikinci oturum açılmaz.
+    const existing = linked.find((id) => listed.agents.some((a) => a.id === id && a.state !== 'failed')) ?? (listed.error ? linked[0] : undefined)
+    if (existing) return { id: existing, created: false }
+    // İşle aynı adı taşıyan, hiçbir işe bağlı olmayan Claude oturumu işin oturumu sayılır.
+    const owned = new Set((store.get().works ?? []).flatMap((w) => w.claudeSessions ?? []))
+    const namesake = listed.agents.find((a) => !owned.has(a.id) && a.state !== 'failed' && sameName(a.name, work.name))
+    const id = namesake?.id ?? await claudeAgents.start(project.path, work.name)
+    await store.commit((draft) => {
+      for (const other of draft.works ?? []) if (other.claudeSessions) other.claudeSessions = other.claudeSessions.filter((x) => x !== id)
+      const target = (draft.works ?? []).find((w) => w.id === work.id)
+      if (target) target.claudeSessions = [id, ...(target.claudeSessions ?? [])]
+    })
+    return { id, created: !namesake }
+  }
+
+  app.post('/api/works/:id/claude-session', async (req, res) => {
+    try {
+      const work = findWork(req.params.id)
+      if (!work) throw new HttpError(404, 'not_found', 'İş yok')
+      const project = store.get().projects.find((p) => p.id === work.projectId)
+      if (!project) throw new HttpError(404, 'not_found', 'Proje yok')
+      // Çift tıklama iki oturum açmasın: süren açılış paylaşılır.
+      let pending = workClaudeStarts.get(work.id)
+      if (!pending) {
+        pending = ensureWorkClaude(work, project).finally(() => workClaudeStarts.delete(work.id))
+        workClaudeStarts.set(work.id, pending)
+      }
+      res.json(await pending)
+    } catch (err) {
+      if (err instanceof HttpError) return sendError(res, err)
+      jsonError(res, 502, 'claude_failed', (err as Error).message)
+    }
   })
 
   /** Claude oturumu tek bir işe bağlıdır: başka işteyse oradan alınır. */

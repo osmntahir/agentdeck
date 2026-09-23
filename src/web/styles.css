@@ -1633,3 +1633,5 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
 .claude-pick input { flex: none; }
 .claude-owner { color: var(--amber); }
 .claude-row .session-row .agent-mark img { filter: none; opacity: 0.85; }
+.work-claude-note { padding: 10px 12px; border-radius: var(--radius); background: var(--accent-soft); color: var(--text-2); }
+.work-claude-note strong { color: var(--text); }

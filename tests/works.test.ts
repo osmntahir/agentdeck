@@ -170,3 +170,65 @@ test('Claude arka plan oturumları işe bağlanır; bir oturum tek işte durur',
     removeDir(bin)
   }
 })
+
+test('işin Claude oturumu bir kez işin adıyla açılır; sonraki Claude terminalleri ona bağlanır', { timeout: 30000 }, async () => {
+  const dataDir = tempDir()
+  const project = tempDir()
+  const bin = tempDir()
+  const fake = path.join(bin, 'claude')
+  const started = path.join(bin, 'started')
+  // Sahte CLI: --bg adı kaydeder ve kimlik basar; agents kayıtlı oturumları listeler.
+  fs.writeFileSync(fake, `#!/bin/sh
+if [ "$1" = "--bg" ]; then echo "$3" >> '${started}'; printf 'backgrounded \\302\\267 \\033[36mabcdef12\\033[39m \\302\\267 %s\\n' "$3"; exit 0; fi
+if [ -f '${started}' ]; then printf '[{"id":"abcdef12","cwd":"%s","name":"%s","state":"blocked"}]' "$5" "$(head -1 '${started}')"; else echo '[]'; fi
+`, { mode: 0o755 })
+  const daemon = await startDaemon({ dataDir, port: 0, claudeAgents: { command: fake, claudeDir: bin } })
+  const api = client(daemon)
+  try {
+    const projectId = (await api.post<{ id: string }>('/api/projects', { path: project })).body.id
+    const work = (await api.post<Work>('/api/works', { projectId, name: 'Çeviri' })).body
+
+    const [a, b] = await Promise.all([
+      api.post<{ id: string; created: boolean }>(`/api/works/${work.id}/claude-session`),
+      api.post<{ id: string; created: boolean }>(`/api/works/${work.id}/claude-session`),
+    ])
+    assert.equal(a.body.id, 'abcdef12')
+    assert.equal(b.body.id, 'abcdef12')
+    const again = await api.post<{ id: string; created: boolean }>(`/api/works/${work.id}/claude-session`)
+    assert.deepEqual(again.body, { id: 'abcdef12', created: false })
+    assert.deepEqual(fs.readFileSync(started, 'utf8').trim().split('\n'), ['Çeviri'], 'tek oturum, işin adıyla')
+    assert.deepEqual((await api.get<StateResponse>('/api/state')).body.works?.[0]?.claudeSessions, ['abcdef12'])
+
+    const terminal = await api.post<SessionView>('/api/sessions', { requestId: requestId(), projectId, name: '', command: 'sleep 30', isolation: 'shared', workId: work.id })
+    assert.equal(terminal.body.name, 'Çeviri', 'işteki terminal işin adını alır')
+  } finally {
+    await daemon.close()
+    removeDir(dataDir)
+    removeDir(project)
+    removeDir(bin)
+  }
+})
+
+test('işle aynı adlı, bağlanmamış Claude oturumu yeni oturum açmadan sahiplenilir', { timeout: 30000 }, async () => {
+  const dataDir = tempDir()
+  const project = tempDir()
+  const bin = tempDir()
+  const fake = path.join(bin, 'claude')
+  fs.writeFileSync(fake, `#!/bin/sh
+if [ "$1" = "--bg" ]; then exit 9; fi
+printf '[{"id":"66b8d668","cwd":"%s","name":"ceviri","state":"blocked"}]' "$5"
+`, { mode: 0o755 })
+  const daemon = await startDaemon({ dataDir, port: 0, claudeAgents: { command: fake, claudeDir: bin } })
+  const api = client(daemon)
+  try {
+    const projectId = (await api.post<{ id: string }>('/api/projects', { path: project })).body.id
+    const work = (await api.post<Work>('/api/works', { projectId, name: 'Çeviri' })).body
+    const reply = await api.post<{ id: string; created: boolean }>(`/api/works/${work.id}/claude-session`)
+    assert.deepEqual(reply.body, { id: '66b8d668', created: false })
+  } finally {
+    await daemon.close()
+    removeDir(dataDir)
+    removeDir(project)
+    removeDir(bin)
+  }
+})

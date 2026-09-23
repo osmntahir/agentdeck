@@ -32,6 +32,9 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
   const [workValue, setWorkValue] = useState(initialWork)
   const [newWorkName, setNewWorkName] = useState('')
   const work = workChoice(workValue, newWorkName)
+  // İşteki Claude, işin tek Claude oturumuna bağlanır; o oturum proje klasöründe yaşar.
+  const workClaude = PRESETS[presetIndex].command === 'claude' && workValue !== ''
+  const workName = workValue === 'new' ? newWorkName.trim() : works.find((w) => w.id === workValue)?.name ?? ''
   const [hasHead, setHasHead] = useState<boolean | null>(null)
   useEffect(() => {
     if (project.kind === 'folder') return
@@ -60,7 +63,7 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
     e.preventDefault()
     if (busy || !ready || isolation === null || work === undefined) return
     try { updatePreferences({ lastProgram: { ...preferences.lastProgram, [project.id]: PRESETS[presetIndex].label } }) } catch { /* tercih yalnız bu açılışta kalır */ }
-    onCreate({ name: name.trim(), command: PRESETS[presetIndex].command, isolation, work })
+    onCreate({ name: name.trim(), command: PRESETS[presetIndex].command, isolation: workClaude ? 'shared' : isolation, work })
   }
 
   return (
@@ -100,12 +103,18 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
             autoFocus={workValue !== 'new'}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="İsteğe bağlı · boş kalırsa programdan adlandırılır"
+            placeholder={workName ? `İsteğe bağlı · boş kalırsa “${workName}”` : 'İsteğe bağlı · boş kalırsa programdan adlandırılır'}
             maxLength={80}
           />
         </label>
 
-        <fieldset className="isolation-picker">
+        {workClaude && (
+          <p className="dialog-note work-claude-note">
+            <strong>{workName ? `“${workName}”` : 'Bu iş'}</strong> Claude oturumuna bağlanır. İşte henüz Claude oturumu yoksa
+            bu adla açılır; aynı işte açtığın her Claude terminali aynı oturumu gösterir. Oturum proje klasöründe çalışır.
+          </p>
+        )}
+        {!workClaude && <fieldset className="isolation-picker">
           <legend>Çalışma yeri</legend>
           <div className="radio-group">
             <label className="radio">
@@ -134,8 +143,8 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
               </span>
             </label>
           </div>
-        </fieldset>
-        {worktreeClosed && (
+        </fieldset>}
+        {worktreeClosed && !workClaude && (
           <p className="dialog-note muted">
             İlk commit sonrası izole çalışma da kullanılabilir.
           </p>

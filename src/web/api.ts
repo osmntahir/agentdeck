@@ -266,3 +266,19 @@ export const linkClaudeSessions = (workId: string, ids: string[]) =>
   call<Work>(`/api/works/${workId}/claude-sessions`, { method: 'POST', body: JSON.stringify({ ids }) })
 export const unlinkClaudeSession = (workId: string, id: string) =>
   call<Work>(`/api/works/${workId}/claude-sessions/${id}`, { method: 'DELETE' })
+
+/** İşin tek Claude oturumu; yoksa işin adıyla açılır. */
+export const ensureWorkClaude = (workId: string) =>
+  call<{ id: string; created: boolean }>(`/api/works/${workId}/claude-session`, { method: 'POST' })
+
+/**
+ * Oturum açar; işteki Claude, işin Claude oturumuna attach olur. Böylece bir
+ * işin bütün Claude terminalleri aynı oturumu gösterir ve adı işin adıdır.
+ */
+export async function createSessionInWork(input: Parameters<typeof createSession>[0]): Promise<SessionView> {
+  if (input.workId && input.command?.trim() === 'claude') {
+    const { id } = await ensureWorkClaude(input.workId)
+    return createSession({ ...input, command: `claude attach ${id}`, isolation: 'shared' })
+  }
+  return createSession(input)
+}

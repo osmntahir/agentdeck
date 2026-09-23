@@ -372,7 +372,7 @@ export function App() {
     setError(null)
     const projectId = dialogProject.id
     resolveWork(input.work, projectId)
-      .then((workId) => api.createSession({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId }))
+      .then((workId) => api.createSessionInWork({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId }))
       .then((session) => {
         setDialogProject(null)
         setActiveId(session.id)
@@ -407,7 +407,7 @@ export function App() {
     try { updatePreferences({ lastProgram: { ...preferences.lastProgram, [project.id]: preset.label } }) } catch { /* tercih yalnız bu açılışta kalır */ }
     const intoGrid = view === 'grid' && !active
     api
-      .createSession({ name: '', command: preset.command, isolation: 'shared', projectId: project.id, workId: active?.projectId === project.id ? (active.workId ?? null) : null })
+      .createSessionInWork({ name: '', command: preset.command, isolation: 'shared', projectId: project.id, workId: active?.projectId === project.id ? (active.workId ?? null) : null })
       .then(async (session) => {
         await refresh()
         if (intoGrid) { setPendingGridAdd({ ids: [session.id], focus: true }); setView('grid') }
@@ -487,7 +487,7 @@ export function App() {
     setError(null)
     const intoGrid = view === 'grid' && !active
     api
-      .createSession({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared', workId: session.workId ?? null })
+      .createSessionInWork({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared', workId: session.workId ?? null })
       .then(async (created) => {
         await refresh()
         if (intoGrid) setPendingGridAdd({ ids: [created.id], focus: true })
