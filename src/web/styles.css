@@ -1735,7 +1735,21 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 .claude-mascot .m-bubble, .claude-mascot .m-zzz, .claude-mascot .m-heart { position: absolute; top: 6px; left: -8px; font: 700 12px/1 var(--font-mono); pointer-events: none; }
 .claude-mascot .m-bubble { color: var(--amber); animation: blink-soft 1s ease-in-out infinite; }
 .claude-mascot .m-zzz { color: var(--text-3); animation: m-float 2.4s ease-in infinite; }
-.claude-mascot .m-heart { left: 14px; top: 2px; color: #f0717a; animation: m-float 1.5s ease-out 1 forwards; }
+.claude-mascot .m-heart { top: 4px; color: #f0717a; opacity: 0; animation: m-heart-up 1.4s ease-out 1 forwards; }
+@keyframes m-heart-up { 0% { opacity: 0; transform: translateY(6px) scale(0.6); } 20% { opacity: 1; transform: translateY(0) scale(1.1); } 100% { opacity: 0; transform: translateY(-22px) scale(0.9); } }
+
+/* Sevme: üzerinde el işareti; basılı tutunca gözler kısılır, yanaklar pembeleşir, mutlulukla kıpırdanır. */
+.claude-mascot { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><text x='2' y='22' font-size='20'>🖐️</text></svg>") 12 12, grab; touch-action: none; user-select: none; }
+.claude-mascot[data-petting] { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><text x='2' y='22' font-size='20'>🫳</text></svg>") 12 12, grabbing; }
+.claude-mascot .m-blush rect { fill: #ff8fb0; opacity: 0; transition: opacity 160ms; }
+.claude-mascot[data-petting] .m-blush rect { opacity: 0.85; }
+.claude-mascot[data-petting] .m-eyes { animation: none; transform: scaleY(0.3) translateY(0.8px); }
+.claude-mascot[data-petting] .m-all { animation: m-purr 0.32s ease-in-out infinite; }
+.claude-mascot[data-petting] .m-arm-l { animation: m-arm-up-l 0.64s ease-in-out infinite; }
+.claude-mascot[data-petting] .m-arm-r { animation: m-arm-up-r 0.64s ease-in-out infinite; }
+.claude-mascot[data-petting] .m-legs-a { animation: m-step 0.32s steps(1) infinite; }
+.claude-mascot[data-petting] .m-legs-b { animation: m-step 0.32s steps(1) infinite 0.16s; }
+@keyframes m-purr { 0%, 100% { transform: scale(1, 1) rotate(0deg); } 25% { transform: scale(1.06, 0.92) rotate(-4deg); } 75% { transform: scale(1.06, 0.92) rotate(4deg); } }
 
 @keyframes m-blink { 0%, 93%, 100% { transform: scaleY(1); } 95%, 97% { transform: scaleY(0.12); } }
 @keyframes m-bob { 50% { transform: translateY(-0.6px); } }
