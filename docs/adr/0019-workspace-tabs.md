@@ -17,6 +17,15 @@ Orta tık oturumu arka plan sekmesi olarak ekler. Hiç sekme yokken sekme şerid
 
 **Karar 4 — Ayrıntı görünümü.** Önceki tek oturum görünümü kalır. Değişiklikler (diff), önceki Run'lar ve tam başlık için kullanılır. Sekme başlığındaki düğmeden veya "Değişiklikleri incele" eyleminden açılır. Esc ile geldiğin yere dönülür.
 
+**Karar 4a — Ayrıntı görünümündeki bilgi sekmede kalıcı yer kaplamaz.** Bilgiler şöyle dağıtılır:
+- Proje / iş ve İzole: grup başlığındaki yazı ve sekmenin ipucu metni.
+- Onay bekleme mesajı: sekmenin ipucu metni. Sekmedeki nokta zaten sarı yanıp söner.
+- Hata ve güven notu: grup başlığında yalnız sorun varken görünen kırmızı veya sarı simge. Simgeye tıklamak ayrıntı görünümünü açar.
+- "Devam et / Yeniden aç": program bitince terminalin boş kalan alt kısmında bir kart.
+- Sağ tık menüsü: en üstte tıklanamayan bir bilgi satırı (ad, proje / iş, izolasyon, durum, klasör).
+
+Terminalin üstüne şerit eklenmez.
+
 **Karar 5 — Kısayollar GNOME Terminal ailesinden.**
 - Ctrl+Shift+T: yeni sekme.
 - Ctrl+Shift+W: sekmeyi kapat.

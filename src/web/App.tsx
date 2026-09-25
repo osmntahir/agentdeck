@@ -14,6 +14,7 @@ import { MAX_GRID_PANELS, type GridAdd, type GridPlacement } from './gridLayout'
 import type { NoticeKind } from '../shared/notices'
 import type { IconName } from './components/Icon'
 import { useWorkspaceLifecycle } from './useWorkspaceLifecycle'
+import { TRUST_NOTE, trustKey } from './sessionIssues'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as api from './api'
 import { AddProjectDialog } from './components/AddProjectDialog'
@@ -52,7 +53,6 @@ function noticeAge(at: number): string {
   return age === 'az önce' ? age : `${age} önce`
 }
 
-const TRUST_NOTE = 'Ajan klasör güveni veya giriş onayı isteyebilir; terminalden tamamlayın.'
 
 function boardSessionIds(state: StateResponse): string[] {
   return state.projects.flatMap((project) =>
@@ -64,10 +64,6 @@ function nextVisibleSession(ids: string[], id: string): string | null {
   const index = ids.indexOf(id)
   if (index < 0) return ids[0] ?? null
   return ids[index + 1] ?? ids[index - 1] ?? null
-}
-
-function trustKey(id: string): string {
-  return `agentdeck.trustNote.${id}`
 }
 
 /** Silinecek içeriği onaydan önce söyler; ignored dosyalar da silinir. */
@@ -984,6 +980,7 @@ export function App() {
             pendingAdd={pendingGridAdd}
             onPendingHandled={() => setPendingGridAdd(null)}
             onDetail={openDetail}
+            onAction={executeAction}
             onSessionMenu={showMenu}
             onPanelsChange={setGridIds}
             onVisibleChange={setVisibleGridIds}
@@ -1131,7 +1128,14 @@ export function App() {
         )}
       </main>
 
-      {menu && menuSession && <ActionMenu position={menu.position} actions={menuActions} onClose={closeMenu} />}
+      {menu && menuSession && <ActionMenu position={menu.position} actions={menuActions} onClose={closeMenu} header={(() => {
+        const project = state.projects.find((p) => p.id === menuSession.projectId)
+        return <>
+          <strong>{menuSession.name}</strong>
+          <span>{[project?.general ? 'Projesiz' : project?.name, workOf(menuSession)?.name].filter(Boolean).join(' / ')}{menuSession.isolation === 'worktree' ? ' · İzole' : ''} · {menuSession.archivedAt !== null ? 'Arşiv' : stateLabel(menuSession)}</span>
+          <span className="action-menu-path" title={menuSession.cwd}>{menuSession.cwd.replace(/^\/home\/[^/]+/, '~')}</span>
+        </>
+      })()} />}
       {workMenu && <ActionMenu label="İş işlemleri" position={workMenu.position} onClose={closeWorkMenu} actions={[
         { label: 'Bu işte yeni oturum…', icon: 'plus', run: () => { const p = state.projects.find((p) => p.id === workMenu.work.projectId); if (p) openNewSession(p, workMenu.work.id) } },
         { label: 'Claude oturumu bağla…', icon: 'chat', description: 'Claude’un arka plan oturumlarını bu işe bağlar.', run: () => { setError(null); setClaudePicker(workMenu.work) } },

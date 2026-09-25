@@ -23,6 +23,8 @@ import { duplicateCommand } from '../../shared/workspacePolicy'
 import * as client from '../api'
 import { clearGridLayout, loadGridLayout, MAX_GRID_PANELS, saveGridLayout, SESSION_DRAG_TYPE, type GridAdd, type GridPlacement } from '../gridLayout'
 import { stateLabel, statusTone, StatusDot } from '../sessionStatus'
+import { sessionIssues } from '../sessionIssues'
+import { sessionWorkActions, type SessionWorkAction } from '../../shared/sessionActions'
 import { Icon } from './Icon'
 import { SHORTCUT_LABELS } from '../../shared/shortcuts'
 import { TerminalPane } from './TerminalPane'
@@ -35,6 +37,7 @@ interface GridContextValue {
   onFocusHandled: () => void
   onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onDetail: (sessionId: string, tab: 'terminal' | 'diff') => void
+  onAction: (session: SessionView, action: SessionWorkAction) => void
   onLayout: (sessionId: string) => void
   maximized: boolean
   onToggleMaximize: (sessionId: string) => void
@@ -137,8 +140,38 @@ function TerminalPanel({ params, api }: IDockviewPanelProps) {
         compact
         onLayout={() => grid.onLayout(session.id)}
       />
+      <EndedCard session={session} />
     </div>
   )
+}
+
+/**
+ * Program bittiğinde terminalin boş kalan alt kısmında sürdürme eylemleri;
+ * program çalışırken hiç görünmez.
+ */
+function EndedCard({ session }: { session: SessionView }) {
+  const grid = useContext(GridContext)
+  if (!grid || session.archivedAt !== null || session.lifecycle === 'live') return null
+  const actions = sessionWorkActions(session).filter((action) => action.primary)
+  if (actions.length === 0) return null
+  return (
+    <div className="ended-card" role="status">
+      <span>{stateLabel(session)}</span>
+      {actions.map((action) => (
+        <button key={action.kind} className="primary" disabled={!grid.healthy || Boolean(session.degraded)} title={action.description} onClick={() => grid.onAction(session, action)}>
+          <Icon name="play" size={13} />{action.kind === 'continue' ? 'Devam et' : 'Yeniden aç'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** Sekme ve grup başlığında oturumun yeri: proje / iş, izolasyon. */
+function sessionPlace(session: SessionView, state: StateResponse): string {
+  const project = state.projects.find((p) => p.id === session.projectId)
+  const work = state.works?.find((w) => w.id === session.workId)
+  const place = [project?.general ? 'Projesiz' : (project?.name ?? 'proje kaydı yok'), work?.name].filter(Boolean).join(' / ')
+  return session.isolation === 'worktree' ? `${place} · İzole` : place
 }
 
 /** Grup başlığının sağı: öndeki oturumun programı, branch'i ve görünüm eylemleri. */
@@ -146,13 +179,19 @@ function GroupActions({ activePanel }: IDockviewHeaderActionsProps) {
   const grid = useContext(GridContext)
   const session = grid?.state.sessions.find((s) => s.id === activePanel?.id)
   if (!grid || !session) return null
-  const project = grid.state.projects.find((p) => p.id === session.projectId)
+  const issues = sessionIssues(session, grid.state)
   return (
     <div className="grid-group-actions" onContextMenu={event => grid.onSessionMenu(session.id, event)}>
-      <span className="grid-group-meta" title={session.degraded ?? session.cwd}>
-        {project?.name ?? 'proje kaydı yok'} · {stateLabel(session)}
-        {session.degraded ? ' · dizin kullanılamıyor' : ''}
+      <span className="grid-group-meta" title={session.cwd}>
+        {sessionPlace(session, grid.state)} · {stateLabel(session)}
       </span>
+      {issues.length > 0 && (
+        <button className="icon-button ghost grid-issue" data-tone={issues.some((issue) => issue.tone === 'error') ? 'error' : 'warn'}
+          title={`${issues.map((issue) => issue.text).join('\n')}\nTıkla: ayrıntı görünümü`} aria-label={`${session.name}: ${issues.length} uyarı`}
+          onClick={() => grid.onDetail(session.id, 'terminal')}>
+          <Icon name="alert" size={14} />
+        </button>
+      )}
       <BranchPicker session={session} healthy={grid.healthy} />
       <button className="icon-button ghost" title={`${grid.maximized ? 'Önceki yerleşime dön' : 'Paneli büyüt'} · ${SHORTCUT_LABELS.maximize}`} aria-label={grid.maximized ? 'Önceki yerleşime dön' : 'Paneli büyüt'} onClick={() => grid.onToggleMaximize(session.id)}>
         <Icon name={grid.maximized ? 'minimize' : 'maximize'} size={14} />
@@ -179,7 +218,11 @@ function SessionTab(props: IDockviewPanelHeaderProps) {
       {...props}
       data-lifecycle={session?.lifecycle ?? 'orphaned'}
       data-tone={session ? statusTone(session) : 'orphaned'}
-      title={session ? `${session.name} · ${stateLabel(session)}` : undefined}
+      title={session && grid ? [
+        `${session.name} · ${stateLabel(session)}`,
+        sessionPlace(session, grid.state),
+        session.attention && session.lifecycle === 'live' ? (session.attention.kind === 'approval' ? 'Onayınızı bekliyor' : `Yanıtınızı bekliyor: ${session.attention.message}`) : null,
+      ].filter(Boolean).join('\n') : undefined}
     />
   )
 }
@@ -222,6 +265,8 @@ interface Props {
   onPendingHandled: () => void
   onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
   onDetail: (sessionId: string, tab: 'terminal' | 'diff') => void
+  /** Biten programı sürdürür veya yeniden açar. */
+  onAction: (session: SessionView, action: SessionWorkAction) => void
   /** Açık sekmelerin hepsi. */
   onPanelsChange: (sessionIds: string[]) => void
   /** Her grubun öndeki sekmesi: kullanıcının o an gördükleri. */
@@ -233,7 +278,7 @@ interface Props {
   onNewTab: () => void
 }
 
-export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, onPendingHandled, onDetail, onSessionMenu, onPanelsChange, onVisibleChange, toolbar, onAddLive, onNewTab }: Props) {
+export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, onPendingHandled, onDetail, onAction, onSessionMenu, onPanelsChange, onVisibleChange, toolbar, onAddLive, onNewTab }: Props) {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
     const tick = () => {
@@ -403,7 +448,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
   }, [api, healthy, state.sessions])
 
   return (
-    <GridContext.Provider value={{ state, healthy, onDetail, onSessionMenu, onLayout: setLayoutPanel, focusRequest, onFocusHandled: () => setFocusRequest(null), maximized, onToggleMaximize: toggleMaximize, onAddLive, onNewTab, liveOutside: state.sessions.filter((s) => s.archivedAt === null && s.lifecycle === 'live' && !panelIds.includes(s.id)).length }}>
+    <GridContext.Provider value={{ state, healthy, onDetail, onAction, onSessionMenu, onLayout: setLayoutPanel, focusRequest, onFocusHandled: () => setFocusRequest(null), maximized, onToggleMaximize: toggleMaximize, onAddLive, onNewTab, liveOutside: state.sessions.filter((s) => s.archivedAt === null && s.lifecycle === 'live' && !panelIds.includes(s.id)).length }}>
       <section className="terminal-grid">
         <div className="grid-toolbar">{toolbar}</div>
 

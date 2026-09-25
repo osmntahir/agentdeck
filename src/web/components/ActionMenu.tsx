@@ -5,7 +5,8 @@ import { Icon, type IconName } from './Icon'
 export interface MenuAction { label: string; icon: IconName; run: () => void; disabled?: boolean; danger?: boolean; description?: string; /** Simgenin yerine çizilir (ör. ajan logosu). */ leading?: ReactNode }
 export interface MenuPosition { x: number; y: number; origin: HTMLElement | null }
 
-export function ActionMenu({ position, actions, onClose, label = 'Oturum işlemleri' }: { position: MenuPosition; actions: MenuAction[]; onClose: () => void; label?: string }) {
+/** header: menünün başındaki tıklanamayan bilgi satırı (ör. oturumun projesi, işi, branch'i). */
+export function ActionMenu({ position, actions, onClose, label = 'Oturum işlemleri', header }: { position: MenuPosition; actions: MenuAction[]; onClose: () => void; label?: string; header?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const menu = ref.current!
@@ -28,5 +29,5 @@ export function ActionMenu({ position, actions, onClose, label = 'Oturum işleml
       const index = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (current + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
       items[index]?.focus()
     }
-  }}>{actions.map((action, index) => <button role="menuitem" key={index} disabled={action.disabled} className={action.danger ? 'danger' : ''} title={action.description} onClick={() => { onClose(); position.origin?.focus(); action.run() }}>{action.leading ?? <Icon name={action.icon} />}<span>{action.label}</span></button>)}</div>, document.body)
+  }}>{header && <div className="action-menu-header" role="presentation">{header}</div>}{actions.map((action, index) => <button role="menuitem" key={index} disabled={action.disabled} className={action.danger ? 'danger' : ''} title={action.description} onClick={() => { onClose(); position.origin?.focus(); action.run() }}>{action.leading ?? <Icon name={action.icon} />}<span>{action.label}</span></button>)}</div>, document.body)
 }
