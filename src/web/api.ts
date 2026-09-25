@@ -87,6 +87,8 @@ export const getState = async (previewIds: string[] = [], signal?: AbortSignal) 
   return state
 }
 
+/** Projesiz oturumların ev klasöründeki kaydı; yoksa oluşturulur. */
+export const ensureGeneralProject = () => call<Project>('/api/projects/general', { method: 'POST' })
 export const addProject = (path: string) =>
   call<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ path }) })
 

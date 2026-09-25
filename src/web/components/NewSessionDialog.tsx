@@ -77,7 +77,7 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
       <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <header className="dialog-head">
           <h2 id="new-session-title">Yeni oturum</h2>
-          <div className="dialog-sub">{project.name}</div>
+          <div className="dialog-sub">{project.general ? `Projesiz · ${project.path}` : project.name}</div>
         </header>
 
         <fieldset className="program-picker">
@@ -106,7 +106,7 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
           />
         </label>
 
-        <fieldset className="isolation-picker">
+        {!project.general && <fieldset className="isolation-picker">
           <legend>Çalışma yeri</legend>
           <div className="radio-group">
             <label className="radio">
@@ -135,14 +135,14 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
               </span>
             </label>
           </div>
-        </fieldset>
-        {worktreeClosed && (
+        </fieldset>}
+        {worktreeClosed && !project.general && (
           <p className="dialog-note muted">
             İlk commit sonrası izole çalışma da kullanılabilir.
           </p>
         )}
 
-        {project.kind === 'folder' && (
+        {project.kind === 'folder' && !project.general && (
           <p className="dialog-note muted">
             Bu proje Git deposu değil. Ortak oturum doğrudan klasörde çalışır. İzole oturum yalnız alt
             klasörlerdeki Git depolarını kopyalar; depo dışındaki dosyalar izole kopyada bulunmaz. Diff her

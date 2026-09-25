@@ -64,6 +64,8 @@ interface Props {
   healthy: boolean
   /** workId verilirse yeni oturum o işte açılır. */
   onNewSession: (project: ProjectView, workId?: string) => void
+  /** Projesiz oturum: ev klasöründe açılır. */
+  onNewGeneralSession: () => void
   onWorkMenu: (work: Work, event: React.MouseEvent<HTMLElement>) => void
   onOpenClaude: (work: Work, agent: ClaudeAgentView) => void
   /** Sürüklenen satırı işe taşır; workId null ise işten çıkarır. */
@@ -93,6 +95,7 @@ export function Sidebar({
   onHome,
   healthy,
   onNewSession,
+  onNewGeneralSession,
   onWorkMenu,
   onOpenClaude,
   onMoveToWork,
@@ -107,6 +110,7 @@ export function Sidebar({
   const preferences = usePreferences()
   const [colorProject, setColorProject] = useState<{ id: string; name: string } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ id: string; name: string; position: MenuPosition } | null>(null)
+  const [blankMenu, setBlankMenu] = useState<MenuPosition | null>(null)
   const [rowFocus, setRowFocus] = useState<string | null>(null)
   const [drag, setDrag] = useState<SidebarDrag | null>(null)
   /** Bırakma hedefi: iş kimliği, projenin işsiz alanı için `loose:<proje>`. */
@@ -192,11 +196,22 @@ export function Sidebar({
       </nav>
       <div className="sidebar-label">
         <span>Projeler</span>
+        <button className="icon-button ghost" title="Projesiz oturum · ev klasöründe" aria-label="Projesiz oturum" onClick={onNewGeneralSession}><Icon name="terminal" size={14} /></button>
         <button className="icon-button ghost" title="Proje ekle" aria-label="Proje ekle" onClick={onAddProject}><Icon name="plus" size={14} /></button>
       </div>
 
-      <div className="projects">
-        {state.projects.length === 0 && <div className="sidebar-empty">Projeleriniz burada görünecek.</div>}
+      {/* Boş alana sağ tık: projesiz oturum veya proje ekle. */}
+      <div className="projects" onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest('.project')) return
+        e.preventDefault()
+        setBlankMenu({ x: e.clientX, y: e.clientY, origin: e.currentTarget })
+      }}>
+        {state.projects.length === 0 && (
+          <div className="sidebar-empty">
+            Projeleriniz burada görünecek.
+            <button className="project-idle" onClick={onNewGeneralSession}><Icon name="terminal" size={12} /><span>Projesiz oturum başlat</span></button>
+          </div>
+        )}
 
         {state.projects.map((project) => {
           const owned = state.sessions.filter((s) => s.projectId === project.id)
@@ -229,7 +244,7 @@ export function Sidebar({
                 <button className="project-tile" title={`${project.name} · proje işlemleri`} aria-label={`${project.name} proje işlemleri`}
                   onClick={e => { const rect = e.currentTarget.getBoundingClientRect(); setProjectMenu({ id: project.id, name: project.name, position: { x: rect.left, y: rect.bottom + 4, origin: e.currentTarget } }) }}>
                   {/* Proje adları çoğunlukla İngilizce; Türkçe büyük harf "ki" → "Kİ" yapardı. */}
-                  {project.name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '•'}
+                  {project.general ? <Icon name="terminal" size={13} /> : project.name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '•'}
                 </button>
                 <button className="project-name" aria-expanded={!projectCollapsed} onClick={() => toggleProjectCollapsed(project.id)}
                   title={`${project.degraded ?? project.path} · ${projectCollapsed ? 'aç' : 'kapat'}`}>
@@ -314,6 +329,10 @@ export function Sidebar({
         { label: 'Yeni iş…', icon: 'work', description: 'Yeni iş ve ilk terminali birlikte açılır.', run: () => { const p = state.projects.find(p => p.id === projectMenu.id); if (p) onNewSession(p, 'new') } },
         { label: 'Proje rengi…', icon: 'palette', run: () => setColorProject(projectMenu) },
         { label: 'Projeyi kaldır…', icon: 'trash', danger: true, run: () => { const p = state.projects.find(p => p.id === projectMenu.id); if (p) onRemoveProject(p) } },
+      ]} />}
+      {blankMenu && <ActionMenu label="Oturum işlemleri" position={blankMenu} onClose={() => setBlankMenu(null)} actions={[
+        { label: 'Yeni oturum…', icon: 'terminal', description: 'Projesiz; ev klasöründe açılır.', run: onNewGeneralSession },
+        { label: 'Proje ekle…', icon: 'plus', run: onAddProject },
       ]} />}
       {colorProject && <ColorDialog {...colorProject} onClose={() => setColorProject(null)} />}
       <OrphanList scan={orphans} onRefresh={onRefreshOrphans} />

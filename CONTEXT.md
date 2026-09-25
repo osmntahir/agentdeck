@@ -7,6 +7,10 @@ Yerel, proje odaklı ajan ve terminal çalışma tezgâhı. Kullanıcı paralel 
 **Project**:
 Arayüze eklenmiş yerel klasör; Session kayıtlarının kapsayıcısıdır. Git projesi bir çalışma kopyası köküdür. Klasör projesi Git deposu olmayan bir klasördür; ortak oturumlar doğrudan klasörde çalışır, diff ve izolasyon altındaki Alt depolar üzerinden yapılır.
 
+**Genel**:
+Projesiz oturumların kaydı: ev klasöründe tek bir klasör projesi (`general`). İlk projesiz oturumda oluşur, kenar çubuğunda en üstte durur. Oturumları yalnız ortak klasörde çalışır; izolasyon ve alt depo taraması yoktur. Kalan her şeyde sıradan bir Project gibidir: işleri olabilir, kaldırılması proje silme onayından geçer.
+_Avoid_: varsayılan proje, ev projesi
+
 **Alt depo**:
 Klasör projesinin alt klasörlerinde bulunan Git deposu. Keşif sınırlıdır: en çok 4 seviye ve 30 depo taranır; `node_modules`, gizli klasörler ve symlink atlanır; bulunan deponun içine inilmez. Sınır aşılırsa liste eksik bildirilir, "başka depo yok" sonucu çıkarılmaz.
 _Avoid_: submodule, iç içe proje

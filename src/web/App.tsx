@@ -360,6 +360,18 @@ export function App() {
     setDialogProject(project)
   }
 
+  /** Projesiz oturum: ev klasöründeki "Genel" kayıt ilk seferde oluşturulur. */
+  const openGeneralSession = () => {
+    setError(null)
+    api
+      .ensureGeneralProject()
+      .then(async (project) => {
+        await refresh()
+        openNewSession(project)
+      })
+      .catch((e) => setError(e.message))
+  }
+
   /** Seçilen iş kimliği; yeni iş önce oluşturulur. */
   const resolveWork = async (choice: WorkChoice, projectId: string): Promise<string | null> => {
     if (choice === null) return null
@@ -431,9 +443,10 @@ export function App() {
       return
     }
     if (shortcut.kind === 'new-session') {
-      const project = state.projects.find((p) => p.id === (active?.projectId ?? gridFocusSession()?.projectId)) ?? state.projects[0]
+      // Açık oturum yoksa yeni oturum projesiz açılır.
+      const project = state.projects.find((p) => p.id === (active?.projectId ?? gridFocusSession()?.projectId))
       if (project) openNewSession(project)
-      else setAddingProject(true)
+      else openGeneralSession()
       return
     }
     const ids = navigationIds(state, preferences.collapsedWorks, preferences.collapsedProjects)
@@ -876,6 +889,7 @@ export function App() {
           selectSession(id)
         })}
         onNewSession={(project, work) => navigate(() => openNewSession(project, work))}
+        onNewGeneralSession={() => navigate(openGeneralSession)}
         onWorkMenu={showWorkMenu}
         onOpenClaude={(work, agent) => navigate(() => openClaudeSession(work, agent))}
         onMoveToWork={(item, workId) => run(item.kind === 'session'

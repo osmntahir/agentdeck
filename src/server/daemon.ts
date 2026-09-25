@@ -3,6 +3,7 @@ import { readGitWorkspace, switchWorkspaceBranch } from './branchControl'
 import http from 'node:http'
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
 import crypto from 'node:crypto'
 import express from 'express'
 import { WebSocketServer } from 'ws'
@@ -961,6 +962,35 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   }))
   app.post('/api/claude-accounts/login/cancel', accountRoute(() => claudeLogin?.cancel()))
 
+  /**
+   * Projesiz oturumların kaydı: ev klasöründe tek bir "Genel" proje. İlk
+   * istekte oluşturulur ve listenin başına yazılır; sonraki istekler onu döner.
+   */
+  let generalProjectPending: Promise<Project> | null = null
+  app.post('/api/projects/general', async (_req, res) => {
+    try {
+      const existing = store.get().projects.find((p) => p.general)
+      if (existing) return res.json(existing)
+      generalProjectPending ??= (async () => {
+        const project: Project = {
+          kind: 'folder',
+          id: crypto.randomBytes(8).toString('hex'),
+          name: 'Genel',
+          path: fs.realpathSync(os.homedir()),
+          createdAt: Date.now(),
+          general: true,
+        }
+        await store.commit((draft) => {
+          draft.projects.unshift(project)
+        })
+        return project
+      })().finally(() => { generalProjectPending = null })
+      res.json(await generalProjectPending)
+    } catch (err) {
+      jsonError(res, 503, 'persistence', `Genel oturum kaydı oluşturulamadı: ${(err as Error).message}`)
+    }
+  })
+
   app.post('/api/projects', async (req, res) => {
     const raw = String(req.body?.path ?? '').trim()
     if (!raw) return jsonError(res, 400, 'validation', 'Klasör yolu gerekli')
@@ -1040,6 +1070,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         const isolation = payload.isolation
         if (!ISOLATIONS.includes(isolation as Isolation)) {
           throw new HttpError(400, 'validation', `Geçersiz izolasyon: ${String(isolation)}`)
+        }
+        if (project.general && isolation === 'worktree') {
+          throw new HttpError(400, 'validation', 'Projesiz oturum yalnız ev klasöründe, ortak çalışır')
         }
 
         const state = store.get()

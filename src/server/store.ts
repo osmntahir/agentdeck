@@ -73,6 +73,7 @@ function project(raw: unknown): Project {
     name: str(raw.name, 'project.name'),
     path: str(raw.path, 'project.path'),
     createdAt: num(raw.createdAt, 'project.createdAt'),
+    ...(raw.general === true ? { general: true as const } : {}),
   }
 }
 

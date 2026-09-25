@@ -20,6 +20,8 @@ export interface Project {
   name: string
   path: string
   createdAt: number
+  /** Projesiz oturumların kaydı: ev klasöründe, yalnız ortak klasörle çalışır. */
+  general?: true
 }
 
 /**
