@@ -12,6 +12,8 @@
     "start": "node dist/server/index.js",
     "app": "npm run build && node scripts/launch.mjs",
     "install-desktop": "node scripts/install-desktop.mjs",
+    "daemon:restart": "node scripts/restart-daemon.mjs",
+    "daemon:sync": "node scripts/restart-daemon.mjs --if-changed",
     "test": "tsx --test tests/*.test.ts",
     "test:browser": "npm run build && node tests/browser/workspace.mjs"
   },

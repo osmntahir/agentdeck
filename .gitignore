@@ -6,3 +6,6 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+
+# Kişisel Claude Code ayarları (ör. daemon güncelleme kancası)
+.claude/settings.local.json
