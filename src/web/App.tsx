@@ -28,6 +28,7 @@ import { AssignWorkDialog, WorkNameDialog, type WorkChoice } from './components/
 import { ClaudeSessionPicker } from './components/ClaudeSessions'
 import { LaunchDialog } from './components/LaunchDialog'
 import { TerminalGrid } from './components/TerminalGrid'
+import { ClaudeMascot } from './components/ClaudeMascot'
 import { loadGridWorkspaces, saveGridWorkspaces, clearGridLayout, savedGridSessionIds } from './gridLayout'
 import { createStatePoller, pollPreviewIds } from '../shared/statePoll'
 import { sessionWorkActions, sessionWorkCli } from '../shared/sessionActions'
@@ -1019,6 +1020,7 @@ export function App() {
                 setGridMenu({ x: rect.left, y: rect.bottom + 4, origin: event.currentTarget })
               }}><Icon name="more" size={14} /></button>
               </div>
+              {preferences.mascot && <ClaudeMascot sessions={state.sessions} now={now} onOpen={(id) => selectSession(id, true)} />}
             </>}
           />
           </div>

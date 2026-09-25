@@ -25,6 +25,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       ['notifications', 'Bildirimler', 'Bakmadığın bir ajan onay beklediğinde, uzun bir çalışmadan sonra çıktıyı durdurduğunda veya bittiğinde haber ver. Uygulama öndeyken köşede kısa kart, arka plandayken masaüstü bildirimi çıkar.'],
       ['previews', 'Oturum önizlemeleri', 'Oturum kartlarında terminal çıktısını göster.'],
       ['compact', 'Kompakt görünüm', 'Kartları ve gezinmeyi daha sıkı yerleştir.'],
+      ['mascot', 'Claude robotu', 'Claude oturumu varken çalışma alanının sağ üstünde durur: çalışırken yürür, onay beklerken el sallar, uzun sessizlikte uyur.'],
     ] as const).map(([key, label, description]) => <label className="setting-row" key={key}><span><strong>{label}</strong><small>{description}</small></span><input type="checkbox" role="switch" className="switch" checked={preferences[key]} onChange={async e => {
       const value = e.target.checked
       try {
@@ -47,11 +48,14 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       <dl>
         <dt><kbd>Ctrl+K</kbd> / <kbd>Ctrl+Shift+P</kbd></dt><dd>Komut paleti: oturuma geç, ajan başlat</dd>
         <dt><kbd>Alt+1…9</kbd></dt><dd>Kenar çubuğundaki oturuma atla</dd>
-        <dt><kbd>Ctrl+PgUp</kbd> / <kbd>Ctrl+PgDn</kbd></dt><dd>Önceki / sonraki oturum</dd>
-        <dt><kbd>Ctrl+Shift+N</kbd></dt><dd>Yeni oturum</dd>
-        <dt><kbd>Ctrl+Shift+Enter</kbd></dt><dd>Grid panelini büyüt / geri al</dd>
+        <dt><kbd>Ctrl+Shift+T</kbd> / <kbd>Ctrl+Shift+W</kbd></dt><dd>Yeni sekme / sekmeyi kapat (oturum sürer)</dd>
+        <dt><kbd>Ctrl+PgUp</kbd> / <kbd>Ctrl+PgDn</kbd></dt><dd>Önceki / sonraki sekme</dd>
+        <dt><kbd>Ctrl+Shift+PgUp</kbd> / <kbd>PgDn</kbd></dt><dd>Sekmeyi sola / sağa taşı</dd>
+        <dt>Orta tık · çift tık</dt><dd>Sekmeyi kapat · şeridin boş yerinde yeni sekme</dd>
+        <dt><kbd>Ctrl+Shift+N</kbd></dt><dd>Yeni oturum (proje, program, iş seçilir)</dd>
+        <dt><kbd>Ctrl+Shift+Enter</kbd></dt><dd>Bölmeyi büyüt / geri al</dd>
         <dt><kbd>Ctrl+Shift+B</kbd></dt><dd>Kenar çubuğunu daralt / genişlet</dd>
-        <dt><kbd>Ctrl</kbd> + sürükle</dt><dd>Oturumu grid’e aynı programın yeni kopyası olarak bırak</dd>
+        <dt><kbd>Ctrl</kbd> + sürükle</dt><dd>Oturumu çalışma alanına aynı programın yeni kopyası olarak bırak</dd>
         <dt><kbd>Esc</kbd> · <kbd>F6</kbd></dt><dd>Taramaya dön · terminalden çık</dd>
       </dl>
     </div>

@@ -24,6 +24,8 @@ export interface Preferences {
   compact: boolean
   /** Kenar çubuğu yalnız simgelerle dar şeritte durur. */
   sidebarCollapsed: boolean
+  /** Claude oturumu varken çalışma alanının sağ üstündeki robot. */
+  mascot: boolean
   colors: Record<string, string>
   terminalColors: Record<string, string>
   /** Projede en son seçilen program (preset etiketi); yeni oturum bununla açılır. */
@@ -33,13 +35,13 @@ export interface Preferences {
   /** Başlığına tıklanarak kapatılmış projeler; oturumları kenar çubuğunda gizlenir. */
   collapsedProjects: string[]
 }
-const defaults: Preferences = { theme: 'graphite', terminalColors: {}, notifications: true, previews: true, compact: true, sidebarCollapsed: false, colors: {}, lastProgram: {}, collapsedWorks: [], collapsedProjects: [] }
+const defaults: Preferences = { theme: 'graphite', terminalColors: {}, notifications: true, previews: true, compact: true, sidebarCollapsed: false, mascot: true, colors: {}, lastProgram: {}, collapsedWorks: [], collapsedProjects: [] }
 const KEY = 'agentdeck.preferences.v1'
 function read(): Preferences {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}')
     const result: Preferences = { ...defaults, colors: {}, terminalColors: {}, lastProgram: {}, collapsedWorks: [], collapsedProjects: [] }
-    for (const key of ['notifications', 'previews', 'compact', 'sidebarCollapsed'] as const) if (typeof raw[key] === 'boolean') result[key] = raw[key]
+    for (const key of ['notifications', 'previews', 'compact', 'sidebarCollapsed', 'mascot'] as const) if (typeof raw[key] === 'boolean') result[key] = raw[key]
     if (typeof raw.theme === 'string' && Object.hasOwn(THEMES, raw.theme)) result.theme = raw.theme as ThemeName
     for (const key of ['colors', 'terminalColors'] as const)
       for (const [id, color] of Object.entries(raw[key] ?? {})) if (typeof color === 'string' && /^#[a-f0-9]{6}$/i.test(color)) result[key][id] = color
