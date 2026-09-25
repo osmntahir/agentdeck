@@ -250,8 +250,16 @@ export const createWork = (projectId: string, name: string) =>
   call<Work>('/api/works', { method: 'POST', body: JSON.stringify({ projectId, name }) })
 export const renameWork = (id: string, name: string) =>
   call<Work>(`/api/works/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) })
-/** Yalnız iş kaydı kalkar; oturumlar işsiz olarak yerinde kalır. */
-export const removeWork = (id: string) => call<{ ok: true }>(`/api/works/${id}`, { method: 'DELETE' })
+/** İş oturumlarıyla birlikte silinir; oturumu olan iş yalnız taze onayla silinir. */
+export const removeWork = (id: string, confirmationToken?: string) =>
+  call<{ ok: true }>(`/api/works/${id}`, {
+    method: 'DELETE',
+    ...(confirmationToken ? { body: JSON.stringify({ confirmationToken }) } : {}),
+  })
+export type WorkDeletePreview = Omit<ProjectDeletePreview, 'projectId'> & { workId: string }
+/** İşin bütün oturumlarını tek onaya bağlar. */
+export const previewWorkDelete = (id: string) =>
+  call<WorkDeletePreview>(`/api/works/${id}/delete-preview`, { method: 'POST' })
 export const assignWork = (sessionId: string, workId: string | null) =>
   call<SessionView>(`/api/sessions/${sessionId}/work`, { method: 'POST', body: JSON.stringify({ workId }) })
 export const getWorkConversations = (id: string) =>
@@ -266,22 +274,6 @@ export const linkClaudeSessions = (workId: string, ids: string[]) =>
   call<Work>(`/api/works/${workId}/claude-sessions`, { method: 'POST', body: JSON.stringify({ ids }) })
 export const unlinkClaudeSession = (workId: string, id: string) =>
   call<Work>(`/api/works/${workId}/claude-sessions/${id}`, { method: 'DELETE' })
-
-/** İşin tek Claude oturumu; yoksa işin adıyla açılır. */
-export const ensureWorkClaude = (workId: string) =>
-  call<{ id: string; created: boolean }>(`/api/works/${workId}/claude-session`, { method: 'POST' })
-
-/**
- * Oturum açar; işteki Claude, işin Claude oturumuna attach olur. Böylece bir
- * işin bütün Claude terminalleri aynı oturumu gösterir ve adı işin adıdır.
- */
-export async function createSessionInWork(input: Parameters<typeof createSession>[0]): Promise<SessionView> {
-  if (input.workId && input.command?.trim() === 'claude') {
-    const { id } = await ensureWorkClaude(input.workId)
-    return createSession({ ...input, command: `claude attach ${id}`, isolation: 'shared' })
-  }
-  return createSession(input)
-}
 
 /** Konuşmayı işe taşır; Claude dosyası değişmez. */
 export const moveConversations = (workId: string, ids: string[]) =>

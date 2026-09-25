@@ -1633,8 +1633,6 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
 .claude-pick input { flex: none; }
 .claude-owner { color: var(--amber); }
 .claude-row .session-row .agent-mark img { filter: none; opacity: 0.85; }
-.work-claude-note { padding: 10px 12px; border-radius: var(--radius); background: var(--accent-soft); color: var(--text-2); }
-.work-claude-note strong { color: var(--text); }
 
 /* İş başlığına tıklayınca iş kapanır/açılır. */
 .work-toggle, .work-block-toggle {
@@ -1656,3 +1654,13 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
 .work-chevron { display: inline-flex; flex: none; color: var(--text-3); transform: rotate(90deg); transition: transform var(--fast); }
 .collapsed > .work-head .work-chevron, .work-block.collapsed .work-chevron { transform: none; }
 .work-block.collapsed .work-block-head { margin-bottom: 0; }
+
+/* Proje başlığına tıklayınca proje kapanır/açılır; satır sürüklenince bırakma hedefi vurgulanır. */
+button.project-name { min-height: 0; padding: 0; border: 0; background: transparent; font: inherit; font-size: 13px; font-weight: 650; text-align: left; }
+button.project-name:hover > span:first-child { color: var(--project-color); }
+.project.collapsed .project-name .work-chevron { transform: none; }
+.project-head[data-drop='over'], .project-sessions[data-drop='over'], .work-group[data-drop='over'] > .work-head {
+  outline: 1px dashed var(--project-color);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--project-color) 12%, transparent);
+}

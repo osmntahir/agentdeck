@@ -12,7 +12,6 @@ import type { ClaudeAgentView } from '../shared/types'
 
 const SHORT_ID = /^[0-9a-f]{8}$/
 const LIST_TIMEOUT_MS = 5000
-const START_TIMEOUT_MS = 30_000
 const CACHE_MS = 4000
 
 export function isClaudeAgentId(value: unknown): value is string {
@@ -75,14 +74,6 @@ export interface ClaudeAgents {
   cached(cwd: string): { agents: ClaudeAgentView[]; error: string | null } | null
   /** Taze liste; en çok bir CLI çağrısı sürer. */
   list(cwd: string): Promise<{ agents: ClaudeAgentView[]; error: string | null }>
-  /** `claude --bg --name <ad>` ile adlandırılmış yeni arka plan oturumu açar; kısa kimliği döner. */
-  start(cwd: string, name: string): Promise<string>
-}
-
-/** `claude --bg` çıktısındaki "backgrounded · <id>" satırı. */
-export function parseStartedId(output: string): string | null {
-  const plain = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-  return plain.match(/backgrounded\s*·\s*([0-9a-f]{8})\b/)?.[1] ?? null
 }
 
 export function createClaudeAgents(options: { command: string; claudeDir: string; env: NodeJS.ProcessEnv }): ClaudeAgents {
@@ -130,26 +121,6 @@ export function createClaudeAgents(options: { command: string; claudeDir: string
       const entry = cache.get(cwd)
       if (entry && Date.now() - entry.at < CACHE_MS) return entry.value
       return read(cwd)
-    },
-    start(cwd, name) {
-      return new Promise((resolve, reject) => {
-        const child = execFile(
-          options.command,
-          ['--bg', '--name', name],
-          { cwd, env: options.env, timeout: START_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
-          (err, stdout, stderr) => {
-            const id = parseStartedId(`${stdout}\n${stderr}`)
-            if (id) {
-              cache.delete(cwd)
-              resolve(id)
-              return
-            }
-            const code = (err as NodeJS.ErrnoException | null)?.code
-            reject(new Error(code === 'ENOENT' ? 'claude komutu bulunamadı' : `Claude oturumu açılamadı: ${(err?.message ?? stdout.trim()).split('\n')[0]}`))
-          },
-        )
-        child.stdin?.end()
-      })
     },
   }
 }

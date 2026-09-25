@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createClaudeAgents, parseAgents, parseStartedId } from '../src/server/claudeAgents'
+import { createClaudeAgents, parseAgents } from '../src/server/claudeAgents'
 import { tempDir, removeDir } from './helpers'
 
 test('claude agents çıktısından yalnız açılabilir arka plan oturumları alınır', () => {
@@ -36,9 +36,4 @@ test('liste CLI ile okunur, özet iç dosyadan eklenir; CLI yoksa hata söylenir
   } finally {
     removeDir(dir)
   }
-})
-
-test('claude --bg çıktısından kısa kimlik okunur', () => {
-  assert.equal(parseStartedId('backgrounded · \u001b[36m7c8569b3\u001b[39m · Çeviri (idle — send a prompt to start)\n'), '7c8569b3')
-  assert.equal(parseStartedId('Error: not logged in'), null)
 })

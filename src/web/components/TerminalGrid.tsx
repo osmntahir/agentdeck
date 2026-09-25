@@ -286,7 +286,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
     }
     setNotice(null)
     try {
-      const created = await client.createSessionInWork({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared', workId: session.workId ?? null })
+      const created = await client.createSession({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared', workId: session.workId ?? null })
       await onRefresh()
       // Kopya özgün terminalin arkasına sekme olarak gizlenmesin; ortaya bırakılınca grup bölünür.
       const position: Position = drop.position !== 'center' ? drop.position : drop.group && drop.group.width < drop.group.height ? 'bottom' : 'right'

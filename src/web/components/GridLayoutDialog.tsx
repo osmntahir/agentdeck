@@ -30,7 +30,7 @@ export function GridLayoutDialog({ projects, healthy, onRefresh, api, panelId, s
     setBusy(true); setError(null)
     try {
       const workId = input.work === null ? null : 'id' in input.work ? input.work.id : (await client.createWork(project.id, input.work.name)).id
-      const session = await client.createSessionInWork({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId: project.id })
+      const session = await client.createSession({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId: project.id })
       await onRefresh()
       const reference = api.getPanel(panelId)
       api.addPanel({ id: session.id, component: 'terminal', title: session.name, params: { sessionId: session.id }, ...(reference ? { position: { referenceGroup: reference.api.group, direction: newDirection } } : {}) })

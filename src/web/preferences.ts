@@ -30,19 +30,22 @@ export interface Preferences {
   lastProgram: Record<string, string>
   /** Başlığına tıklanarak kapatılmış işler; kenar çubuğu ve taramada birlikte kapanır. */
   collapsedWorks: string[]
+  /** Başlığına tıklanarak kapatılmış projeler; oturumları kenar çubuğunda gizlenir. */
+  collapsedProjects: string[]
 }
-const defaults: Preferences = { theme: 'graphite', terminalColors: {}, notifications: true, previews: true, compact: true, sidebarCollapsed: false, colors: {}, lastProgram: {}, collapsedWorks: [] }
+const defaults: Preferences = { theme: 'graphite', terminalColors: {}, notifications: true, previews: true, compact: true, sidebarCollapsed: false, colors: {}, lastProgram: {}, collapsedWorks: [], collapsedProjects: [] }
 const KEY = 'agentdeck.preferences.v1'
 function read(): Preferences {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}')
-    const result: Preferences = { ...defaults, colors: {}, terminalColors: {}, lastProgram: {}, collapsedWorks: [] }
+    const result: Preferences = { ...defaults, colors: {}, terminalColors: {}, lastProgram: {}, collapsedWorks: [], collapsedProjects: [] }
     for (const key of ['notifications', 'previews', 'compact', 'sidebarCollapsed'] as const) if (typeof raw[key] === 'boolean') result[key] = raw[key]
     if (typeof raw.theme === 'string' && Object.hasOwn(THEMES, raw.theme)) result.theme = raw.theme as ThemeName
     for (const key of ['colors', 'terminalColors'] as const)
       for (const [id, color] of Object.entries(raw[key] ?? {})) if (typeof color === 'string' && /^#[a-f0-9]{6}$/i.test(color)) result[key][id] = color
     for (const [id, label] of Object.entries(raw.lastProgram ?? {})) if (typeof label === 'string' && label.length <= 80) result.lastProgram[id] = label
-    if (Array.isArray(raw.collapsedWorks)) result.collapsedWorks = raw.collapsedWorks.filter((id: unknown): id is string => typeof id === 'string' && id.length <= 64).slice(0, 500)
+    for (const key of ['collapsedWorks', 'collapsedProjects'] as const)
+      if (Array.isArray(raw[key])) result[key] = raw[key].filter((id: unknown): id is string => typeof id === 'string' && id.length <= 64).slice(0, 500)
     return result
   } catch { return defaults }
 }
@@ -76,8 +79,15 @@ export function terminalStyle(session: { id: string; projectId: string }, prefer
 
 /** İşi açar veya kapatır; tercih yazılamazsa yalnız bu açılışta geçerli olur. */
 export function toggleWorkCollapsed(workId: string): void {
-  const collapsed = current.collapsedWorks.includes(workId)
-    ? current.collapsedWorks.filter((id) => id !== workId)
-    : [...current.collapsedWorks, workId]
-  try { updatePreferences({ collapsedWorks: collapsed }) } catch { current = { ...current, collapsedWorks: collapsed }; listeners.forEach(fn => fn()) }
+  toggleCollapsed('collapsedWorks', workId)
+}
+
+/** Projeyi açar veya kapatır; tercih yazılamazsa yalnız bu açılışta geçerli olur. */
+export function toggleProjectCollapsed(projectId: string): void {
+  toggleCollapsed('collapsedProjects', projectId)
+}
+
+function toggleCollapsed(key: 'collapsedWorks' | 'collapsedProjects', id: string): void {
+  const collapsed = current[key].includes(id) ? current[key].filter((x) => x !== id) : [...current[key], id]
+  try { updatePreferences({ [key]: collapsed }) } catch { current = { ...current, [key]: collapsed }; listeners.forEach(fn => fn()) }
 }

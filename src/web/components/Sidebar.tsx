@@ -1,7 +1,7 @@
 import { ColorDialog } from './ColorDialog'
 import { ActionMenu, type MenuPosition } from './ActionMenu'
 import { inProjectNavigation } from '../../shared/workspacePolicy'
-import { projectStyle, terminalStyle, toggleWorkCollapsed, usePreferences } from '../preferences'
+import { projectStyle, terminalStyle, toggleProjectCollapsed, toggleWorkCollapsed, usePreferences } from '../preferences'
 import { AgentMark } from './AgentMark'
 import { AccountsPanel } from './AccountsPanel'
 import { Icon } from './Icon'
@@ -31,14 +31,19 @@ export function sidebarGroups(state: StateResponse, projectId: string): { works:
 
 /**
  * Kenar çubuğundaki oturum sırası; Alt+rakam ve Ctrl+PgUp/PgDn bu sırayı izler.
- * Kapalı işin satırları görünmediği için sıraya girmez.
+ * Kapalı iş veya projenin satırları görünmediği için sıraya girmez.
  */
-export function navigationIds(state: StateResponse, collapsedWorks: readonly string[] = []): string[] {
-  return state.projects.flatMap((project) => {
+export function navigationIds(state: StateResponse, collapsedWorks: readonly string[] = [], collapsedProjects: readonly string[] = []): string[] {
+  return state.projects.filter((project) => !collapsedProjects.includes(project.id)).flatMap((project) => {
     const { works, loose } = sidebarGroups(state, project.id)
     return [...works.filter((group) => !collapsedWorks.includes(group.work.id)).flatMap((group) => group.rows), ...loose].map((s) => s.id)
   })
 }
+
+/** Kenar çubuğunda sürüklenen satır: terminal veya işe bağlı Claude oturumu. */
+export type SidebarDrag =
+  | { kind: 'session'; id: string; projectId: string; workId: string | null }
+  | { kind: 'claude'; id: string; projectId: string; workId: string }
 
 interface Props {
   state: StateResponse
@@ -61,6 +66,8 @@ interface Props {
   onNewSession: (project: ProjectView, workId?: string) => void
   onWorkMenu: (work: Work, event: React.MouseEvent<HTMLElement>) => void
   onOpenClaude: (work: Work, agent: ClaudeAgentView) => void
+  /** Sürüklenen satırı işe taşır; workId null ise işten çıkarır. */
+  onMoveToWork: (item: SidebarDrag, workId: string | null) => void
   /** Onay penceresini App açar; kenar çubuğu yalnız isteği iletir. */
   onRemoveProject: (project: ProjectView) => void
   orphans: OrphanScanResult | null
@@ -88,6 +95,7 @@ export function Sidebar({
   onNewSession,
   onWorkMenu,
   onOpenClaude,
+  onMoveToWork,
   onRemoveProject,
   orphans,
   onRefreshOrphans,
@@ -100,7 +108,38 @@ export function Sidebar({
   const [colorProject, setColorProject] = useState<{ id: string; name: string } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ id: string; name: string; position: MenuPosition } | null>(null)
   const [rowFocus, setRowFocus] = useState<string | null>(null)
-  const visibleIds = navigationIds(state, preferences.collapsedWorks)
+  const [drag, setDrag] = useState<SidebarDrag | null>(null)
+  /** Bırakma hedefi: iş kimliği, projenin işsiz alanı için `loose:<proje>`. */
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
+  const visibleIds = navigationIds(state, preferences.collapsedWorks, preferences.collapsedProjects)
+  // Satır yalnız kendi projesindeki başka bir yere bırakılabilir.
+  const dropProps = (projectId: string, workId: string | null) => {
+    const key = workId ?? `loose:${projectId}`
+    const accepts = drag !== null && drag.projectId === projectId && drag.workId !== workId
+    return {
+      'data-drop': dropTarget === key && accepts ? 'over' : undefined,
+      // İş grubu, satırın kendi işi olsa da olayı projenin işsiz alanına geçirmez.
+      onDragOver: (e: React.DragEvent) => {
+        if (drag?.projectId !== projectId) return
+        e.stopPropagation()
+        if (!accepts) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (dropTarget !== key) setDropTarget(key)
+      },
+      onDragLeave: (e: React.DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget((t) => (t === key ? null : t)) },
+      onDrop: (e: React.DragEvent) => {
+        if (drag?.projectId !== projectId) return
+        e.stopPropagation()
+        if (!accepts || !drag) return
+        e.preventDefault()
+        onMoveToWork(drag, workId)
+        setDrag(null)
+        setDropTarget(null)
+      },
+    }
+  }
+  const endDrag = () => { setDrag(null); setDropTarget(null) }
   const tabbableId =
     rowFocus && visibleIds.includes(rowFocus)
       ? rowFocus
@@ -177,22 +216,29 @@ export function Sidebar({
                 onSelect={() => onSelect(session.id)}
                 onAddToGrid={() => onAddToGrid(session.id)}
                 onMenu={event => onSessionMenu(session.id, event)}
+                onDragStart={() => setDrag({ kind: 'session', id: session.id, projectId: session.projectId, workId: session.workId ?? null })}
+                onDragEnd={endDrag}
               />
             )
           }
+          const projectCollapsed = preferences.collapsedProjects.includes(project.id)
+          const waitingInProject = rows.filter((s) => s.lifecycle === 'live' && s.attention).length
           return (
-            <div key={project.id} className="project" style={projectStyle(project.id, preferences)}>
-              <div className="project-head" onContextMenu={e => { e.preventDefault(); setProjectMenu({ id: project.id, name: project.name, position: { x: e.clientX, y: e.clientY, origin: e.currentTarget } }) }}>
+            <div key={project.id} className={`project${projectCollapsed ? ' collapsed' : ''}`} style={projectStyle(project.id, preferences)}>
+              <div className="project-head" {...dropProps(project.id, null)} onContextMenu={e => { e.preventDefault(); setProjectMenu({ id: project.id, name: project.name, position: { x: e.clientX, y: e.clientY, origin: e.currentTarget } }) }}>
                 <button className="project-tile" title={`${project.name} · proje işlemleri`} aria-label={`${project.name} proje işlemleri`}
                   onClick={e => { const rect = e.currentTarget.getBoundingClientRect(); setProjectMenu({ id: project.id, name: project.name, position: { x: rect.left, y: rect.bottom + 4, origin: e.currentTarget } }) }}>
                   {/* Proje adları çoğunlukla İngilizce; Türkçe büyük harf "ki" → "Kİ" yapardı. */}
                   {project.name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '•'}
                 </button>
-                <div className="project-name" title={project.degraded ?? project.path}>
+                <button className="project-name" aria-expanded={!projectCollapsed} onClick={() => toggleProjectCollapsed(project.id)}
+                  title={`${project.degraded ?? project.path} · ${projectCollapsed ? 'aç' : 'kapat'}`}>
                   <span>{project.name}</span>
+                  <span className="work-chevron" aria-hidden="true"><Icon name="chevron" size={11} /></span>
                   {project.degraded && <span className="badge warn" title={project.degraded}>!</span>}
+                  {projectCollapsed && waitingInProject > 0 && <span className="row-flag" title={`${waitingInProject} terminal onay veya yanıt bekliyor`}>{waitingInProject}</span>}
                   {rows.length > 0 && <span className="project-count">{rows.length}</span>}
-                </div>
+                </button>
                 <div className="project-actions">
                   <button className="icon-button ghost" title="Yeni oturum" aria-label={`${project.name} içinde yeni oturum`} onClick={() => onNewSession(project)}>
                     <Icon name="plus" size={14} />
@@ -204,7 +250,7 @@ export function Sidebar({
               </div>
 
               {/* Arşivlenen ve biten oturum gezinmede görünmez (ADR 0014); taramada durur. */}
-              <div className="project-sessions">
+              {!projectCollapsed && <div className="project-sessions" {...dropProps(project.id, null)}>
               {groups.works.map(({ work, rows: workRows }) => {
                 const claude = state.claudeSessions?.[work.id] ?? []
                 // Zaten bir terminalde açık olan Claude oturumu ikinci satır olarak gösterilmez.
@@ -212,7 +258,7 @@ export function Sidebar({
                 const waitingInWork = workRows.filter((s) => s.lifecycle === 'live' && s.attention).length + claude.filter((a) => a.state === 'blocked').length
                 const collapsed = preferences.collapsedWorks.includes(work.id)
                 return (
-                  <div key={work.id} className={`work-group${collapsed ? ' collapsed' : ''}`}>
+                  <div key={work.id} className={`work-group${collapsed ? ' collapsed' : ''}`} {...dropProps(project.id, work.id)}>
                     <div className="work-head" onContextMenu={(e) => onWorkMenu(work, e)}>
                       <button className="work-toggle" aria-expanded={!collapsed} onClick={() => toggleWorkCollapsed(work.id)}
                         title={`${work.name} · ${collapsed ? 'aç' : 'kapat'}`}>
@@ -231,7 +277,10 @@ export function Sidebar({
                       {detached.map((agent) => (
                         <div key={agent.id} className="session-row-wrap claude-row">
                           <button className="session-row" tabIndex={-1} onClick={() => onOpenClaude(work, agent)}
-                            title={`${agent.name} · Claude oturumu · ${claudeStateLabel(agent.state)}${agent.detail ? `\n${agent.detail}` : ''}\nTıkla: bu işte terminalde aç (claude attach ${agent.id})`}>
+                            draggable
+                            onDragStart={(e) => { e.dataTransfer.setData('text/plain', agent.id); e.dataTransfer.effectAllowed = 'move'; setDrag({ kind: 'claude', id: agent.id, projectId: project.id, workId: work.id }) }}
+                            onDragEnd={endDrag}
+                            title={`${agent.name} · Claude oturumu · ${claudeStateLabel(agent.state)}${agent.detail ? `\n${agent.detail}` : ''}\nTıkla: bu işte terminalde aç (claude attach ${agent.id}) · Sürükle: başka işe taşı`}>
                             <ProgramIcon command="claude" />
                             <span className="session-name">{agent.name}</span>
                             {agent.state === 'blocked' && <span className="row-flag">Girdi</span>}
@@ -254,7 +303,7 @@ export function Sidebar({
                   <Icon name="plus" size={12} /><span>{owned.length > 0 ? 'Çalışan oturum yok · başlat' : 'Oturum başlat'}</span>
                 </button>
               )}
-              </div>
+              </div>}
             </div>
           )
         })}
@@ -328,6 +377,8 @@ function SessionRow({
   onSelect,
   onAddToGrid,
   onMenu,
+  onDragStart,
+  onDragEnd,
 }: {
   session: SessionView
   shortcut: number | null
@@ -338,6 +389,8 @@ function SessionRow({
   onSelect: () => void
   onAddToGrid: () => void
   onMenu: (event: React.MouseEvent<HTMLElement>) => void
+  onDragStart: () => void
+  onDragEnd: () => void
 }) {
   const preferences = usePreferences()
   return (
@@ -350,10 +403,11 @@ function SessionRow({
         onMouseDown={(e) => { if (e.button === 1) e.preventDefault() }}
         onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onAddToGrid() } }}
         onFocus={onFocusRow}
-        title={`${session.name} · ${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''}${session.conversation?.lastPrompt ? `\nSon istem: ${session.conversation.lastPrompt}` : ''}\nOrta tık veya sürükle: grid'e ekle · Ctrl basılı sürükle: aynı programdan kopya`}
+        title={`${session.name} · ${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''}${session.conversation?.lastPrompt ? `\nSon istem: ${session.conversation.lastPrompt}` : ''}\nOrta tık veya sürükle: grid'e ekle · Ctrl basılı sürükle: aynı programdan kopya · Başka işe sürükle: işe taşı`}
         aria-keyshortcuts={shortcut ? `Alt+${shortcut}` : undefined}
         draggable
-        onDragStart={(e) => { e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id); e.dataTransfer.effectAllowed = 'copyMove' }}
+        onDragStart={(e) => { e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id); e.dataTransfer.effectAllowed = 'copyMove'; onDragStart() }}
+        onDragEnd={onDragEnd}
         onKeyDown={(e) => {
           if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
           e.preventDefault()

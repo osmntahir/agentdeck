@@ -81,7 +81,7 @@ function deleteQuestion(preview: api.DeletePreview): string {
 }
 
 /** Proje silmenin neyi götürüp neyi koruyacağını onaydan önce söyler. */
-function projectDeleteSummary(preview: api.ProjectDeletePreview): string {
+function projectDeleteSummary(preview: Pick<api.ProjectDeletePreview, 'sessions'>): string {
   const isolated = preview.sessions.filter((s) => s.isolation === 'worktree')
   const changed = isolated.reduce((sum, s) => sum + s.changedEntries, 0)
   const ignored = isolated.reduce((sum, s) => sum + s.ignoredEntries, 0)
@@ -141,6 +141,7 @@ export function App() {
   const [claudePicker, setClaudePicker] = useState<Work | null>(null)
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; preview: api.DeletePreview } | null>(null)
   const [projectDelete, setProjectDelete] = useState<api.ProjectDeletePreview | null>(null)
+  const [workDelete, setWorkDelete] = useState<api.WorkDeletePreview | null>(null)
   const [projectRemove, setProjectRemove] = useState<{ id: string; name: string } | null>(null)
   const [orphans, setOrphans] = useState<api.OrphanScanResult | null>(null)
   const [stateHealthy, setStateHealthy] = useState(false)
@@ -372,7 +373,7 @@ export function App() {
     setError(null)
     const projectId = dialogProject.id
     resolveWork(input.work, projectId)
-      .then((workId) => api.createSessionInWork({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId }))
+      .then((workId) => api.createSession({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId }))
       .then((session) => {
         setDialogProject(null)
         setActiveId(session.id)
@@ -407,7 +408,7 @@ export function App() {
     try { updatePreferences({ lastProgram: { ...preferences.lastProgram, [project.id]: preset.label } }) } catch { /* tercih yalnız bu açılışta kalır */ }
     const intoGrid = view === 'grid' && !active
     api
-      .createSessionInWork({ name: '', command: preset.command, isolation: 'shared', projectId: project.id, workId: active?.projectId === project.id ? (active.workId ?? null) : null })
+      .createSession({ name: '', command: preset.command, isolation: 'shared', projectId: project.id, workId: active?.projectId === project.id ? (active.workId ?? null) : null })
       .then(async (session) => {
         await refresh()
         if (intoGrid) { setPendingGridAdd({ ids: [session.id], focus: true }); setView('grid') }
@@ -435,7 +436,7 @@ export function App() {
       else setAddingProject(true)
       return
     }
-    const ids = navigationIds(state, preferences.collapsedWorks)
+    const ids = navigationIds(state, preferences.collapsedWorks, preferences.collapsedProjects)
     if (ids.length === 0) return
     if (shortcut.kind === 'jump') {
       const id = ids[shortcut.index]
@@ -487,7 +488,7 @@ export function App() {
     setError(null)
     const intoGrid = view === 'grid' && !active
     api
-      .createSessionInWork({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared', workId: session.workId ?? null })
+      .createSession({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared', workId: session.workId ?? null })
       .then(async (created) => {
         await refresh()
         if (intoGrid) setPendingGridAdd({ ids: [created.id], focus: true })
@@ -713,6 +714,37 @@ export function App() {
       })
   }
 
+  // Oturumu olan iş de taze bir önizlemeyle silinir; boş iş doğrudan kalkar.
+  const askWorkDelete = (work: Work) => {
+    setError(null)
+    if (!state.sessions.some((s) => s.workId === work.id)) return run(api.removeWork(work.id))
+    api
+      .previewWorkDelete(work.id)
+      .then(setWorkDelete)
+      .catch((e) => {
+        setWorkDelete(null)
+        setError(e.message)
+      })
+  }
+
+  const confirmWorkDelete = () => {
+    if (!workDelete) return
+    const { workId, confirmationToken } = workDelete
+    const work = works.find((w) => w.id === workId)
+    setWorkDelete(null)
+    setError(null)
+    api
+      .removeWork(workId, confirmationToken)
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e))
+        if (work && e instanceof api.ApiCallError && e.code === 'confirmation_stale') askWorkDelete(work)
+      })
+      .finally(() => {
+        refreshOrphans()
+        return refresh()
+      })
+  }
+
   const confirmProjectDelete = () => {
     if (!projectDelete) return
     const { projectId, confirmationToken } = projectDelete
@@ -846,6 +878,9 @@ export function App() {
         onNewSession={(project, work) => navigate(() => openNewSession(project, work))}
         onWorkMenu={showWorkMenu}
         onOpenClaude={(work, agent) => navigate(() => openClaudeSession(work, agent))}
+        onMoveToWork={(item, workId) => run(item.kind === 'session'
+          ? api.assignWork(item.id, workId)
+          : workId ? api.linkClaudeSessions(workId, [item.id]) : api.unlinkClaudeSession(item.workId, item.id))}
         onRemoveProject={(project) => {
           // Oturumu olan projede önce neyin silineceği gösterilir; olmayanda yalnız kayıt kalkar.
           if (state.sessions.some((s) => s.projectId === project.id)) askProjectDelete(project.id)
@@ -1047,7 +1082,7 @@ export function App() {
         { label: 'Bu işte yeni oturum…', icon: 'plus', run: () => { const p = state.projects.find((p) => p.id === workMenu.work.projectId); if (p) openNewSession(p, workMenu.work.id) } },
         { label: 'Claude oturumu bağla…', icon: 'chat', description: 'Claude’un arka plan oturumlarını bu işe bağlar.', run: () => { setError(null); setClaudePicker(workMenu.work) } },
         { label: 'Yeniden adlandır…', icon: 'edit', run: () => { setError(null); setWorkDialog({ mode: 'rename', work: workMenu.work }) } },
-        { label: 'İşi kaldır', icon: 'trash', danger: true, description: 'Terminaller ve dosyalar yerinde kalır; yalnız işe bağlı görünmezler.', disabled: !stateHealthy, run: () => run(api.removeWork(workMenu.work.id)) },
+        { label: 'İşi sil…', icon: 'trash', danger: true, description: 'İşin terminalleri de silinir; branch’ler ve ortak klasör dosyaları korunur.', disabled: !stateHealthy, run: () => askWorkDelete(workMenu.work) },
       ]} />}
       {workDialog && <WorkNameDialog
         title={workDialog.mode === 'rename' ? 'İşi yeniden adlandır' : 'Yeni iş'}
@@ -1135,6 +1170,22 @@ export function App() {
               <span>Silinecek klasörler</span>
               {/* Kullanıcı silinecek tam yolları onaydan önce görür. */}
               {projectDelete.sessions.filter((s) => s.isolation === 'worktree').map((s) => <code key={s.id}>{s.cwd}</code>)}
+            </div>
+          )}
+        </ConfirmDialog>
+      )}
+      {workDelete && (
+        <ConfirmDialog
+          title={`“${works.find((w) => w.id === workDelete.workId)?.name ?? 'İş'}” silinsin mi?`}
+          confirmLabel="İşi sil"
+          onConfirm={confirmWorkDelete}
+          onCancel={() => setWorkDelete(null)}
+        >
+          <p className="dialog-note">{projectDeleteSummary(workDelete)} Bağlı Claude oturumları Claude’da kalır; yalnız işten çıkar.</p>
+          {workDelete.sessions.some((s) => s.isolation === 'worktree') && (
+            <div className="confirm-paths">
+              <span>Silinecek klasörler</span>
+              {workDelete.sessions.filter((s) => s.isolation === 'worktree').map((s) => <code key={s.id}>{s.cwd}</code>)}
             </div>
           )}
         </ConfirmDialog>

@@ -20,7 +20,7 @@ function client(daemon: Daemon) {
     get: <T>(route: string) => call<T>('GET', route),
     post: <T>(route: string, body?: unknown) => call<T>('POST', route, body),
     patch: <T>(route: string, body?: unknown) => call<T>('PATCH', route, body),
-    del: <T>(route: string) => call<T>('DELETE', route),
+    del: <T>(route: string, body?: unknown) => call<T>('DELETE', route, body),
   }
 }
 
@@ -37,7 +37,7 @@ async function until<T>(read: () => Promise<T | undefined>, timeoutMs = 10_000):
 let requestCount = 0
 const requestId = () => `test-${process.pid}-${++requestCount}`
 
-test('iş oluşturulur, oturum işe bağlanır, taşınır; iş kaldırılınca oturum işsiz kalır', { timeout: 30000 }, async () => {
+test('iş oluşturulur, oturum işe bağlanır, taşınır; iş oturumlarıyla birlikte silinir', { timeout: 30000 }, async () => {
   const dataDir = tempDir()
   const project = tempDir()
   const other = tempDir()
@@ -58,17 +58,27 @@ test('iş oluşturulur, oturum işe bağlanır, taşınır; iş kaldırılınca 
     const created = await api.post<SessionView>('/api/sessions', { requestId: requestId(), projectId, name: '', command: 'sleep 30', isolation: 'shared', workId: work.id })
     assert.equal(created.status, 200, JSON.stringify(created.body))
     assert.equal(created.body.workId, work.id)
+    assert.equal(created.body.name, 'Çoklu dil', 'işteki terminal işin adını alır')
+    const sibling = await api.post<SessionView>('/api/sessions', { requestId: requestId(), projectId, name: '', command: 'sleep 30', isolation: 'shared', workId: work.id })
+    assert.equal(sibling.body.name, 'Çoklu dil 2', 'sonraki terminal numaralanır')
 
     assert.equal((await api.patch<Work>(`/api/works/${work.id}`, { name: 'i18n' })).body.name, 'i18n')
     assert.equal((await api.post(`/api/sessions/${created.body.id}/work`, { workId: foreign.id })).status, 400)
     assert.equal((await api.post<SessionView>(`/api/sessions/${created.body.id}/work`, { workId: null })).body.workId, undefined)
     await api.post(`/api/sessions/${created.body.id}/work`, { workId: work.id })
 
-    assert.equal((await api.del(`/api/works/${work.id}`)).status, 200)
+    const loose = await api.post<SessionView>('/api/sessions', { requestId: requestId(), projectId, name: '', command: 'sleep 30', isolation: 'shared' })
+    const unconfirmed = await api.del<{ code: string }>(`/api/works/${work.id}`)
+    assert.equal(unconfirmed.status, 409)
+    assert.equal(unconfirmed.body.code, 'work_has_sessions', 'gizli cascade yok; önce önizleme')
+    const preview = await api.post<{ confirmationToken: string; sessions: { id: string }[] }>(`/api/works/${work.id}/delete-preview`)
+    assert.deepEqual(preview.body.sessions.map((s) => s.id).sort(), [created.body.id, sibling.body.id].sort())
+    assert.equal((await api.del(`/api/works/${work.id}`, { confirmationToken: preview.body.confirmationToken })).status, 200)
     const state = (await api.get<StateResponse>('/api/state')).body
     assert.deepEqual(state.works?.map((w) => w.id), [foreign.id])
-    assert.equal(state.sessions[0]!.workId, undefined)
-    assert.equal(state.sessions.length, 1, 'iş kaldırmak oturumu silmez')
+    assert.deepEqual(state.sessions.map((s) => s.id), [loose.body.id], 'işin oturumu silinir, işsiz oturum kalır')
+    // Oturumu olmayan iş onaysız kalkar.
+    assert.equal((await api.del(`/api/works/${(await api.post<Work>('/api/works', { projectId, name: 'Boş' })).body.id}`)).status, 200)
 
     // Proje silinince işleri de kalkar.
     assert.equal((await api.del(`/api/projects/${otherId}`)).status, 200)
@@ -163,68 +173,6 @@ test('Claude arka plan oturumları işe bağlanır; bir oturum tek işte durur',
     await api.del(`/api/works/${first.id}/claude-sessions/93befcf9`)
     const after = (await api.get<StateResponse>('/api/state')).body
     assert.equal(after.claudeSessions?.[first.id], undefined)
-  } finally {
-    await daemon.close()
-    removeDir(dataDir)
-    removeDir(project)
-    removeDir(bin)
-  }
-})
-
-test('işin Claude oturumu bir kez işin adıyla açılır; sonraki Claude terminalleri ona bağlanır', { timeout: 30000 }, async () => {
-  const dataDir = tempDir()
-  const project = tempDir()
-  const bin = tempDir()
-  const fake = path.join(bin, 'claude')
-  const started = path.join(bin, 'started')
-  // Sahte CLI: --bg adı kaydeder ve kimlik basar; agents kayıtlı oturumları listeler.
-  fs.writeFileSync(fake, `#!/bin/sh
-if [ "$1" = "--bg" ]; then echo "$3" >> '${started}'; printf 'backgrounded \\302\\267 \\033[36mabcdef12\\033[39m \\302\\267 %s\\n' "$3"; exit 0; fi
-if [ -f '${started}' ]; then printf '[{"id":"abcdef12","cwd":"%s","name":"%s","state":"blocked"}]' "$5" "$(head -1 '${started}')"; else echo '[]'; fi
-`, { mode: 0o755 })
-  const daemon = await startDaemon({ dataDir, port: 0, claudeAgents: { command: fake, claudeDir: bin } })
-  const api = client(daemon)
-  try {
-    const projectId = (await api.post<{ id: string }>('/api/projects', { path: project })).body.id
-    const work = (await api.post<Work>('/api/works', { projectId, name: 'Çeviri' })).body
-
-    const [a, b] = await Promise.all([
-      api.post<{ id: string; created: boolean }>(`/api/works/${work.id}/claude-session`),
-      api.post<{ id: string; created: boolean }>(`/api/works/${work.id}/claude-session`),
-    ])
-    assert.equal(a.body.id, 'abcdef12')
-    assert.equal(b.body.id, 'abcdef12')
-    const again = await api.post<{ id: string; created: boolean }>(`/api/works/${work.id}/claude-session`)
-    assert.deepEqual(again.body, { id: 'abcdef12', created: false })
-    assert.deepEqual(fs.readFileSync(started, 'utf8').trim().split('\n'), ['Çeviri'], 'tek oturum, işin adıyla')
-    assert.deepEqual((await api.get<StateResponse>('/api/state')).body.works?.[0]?.claudeSessions, ['abcdef12'])
-
-    const terminal = await api.post<SessionView>('/api/sessions', { requestId: requestId(), projectId, name: '', command: 'sleep 30', isolation: 'shared', workId: work.id })
-    assert.equal(terminal.body.name, 'Çeviri', 'işteki terminal işin adını alır')
-  } finally {
-    await daemon.close()
-    removeDir(dataDir)
-    removeDir(project)
-    removeDir(bin)
-  }
-})
-
-test('işle aynı adlı, bağlanmamış Claude oturumu yeni oturum açmadan sahiplenilir', { timeout: 30000 }, async () => {
-  const dataDir = tempDir()
-  const project = tempDir()
-  const bin = tempDir()
-  const fake = path.join(bin, 'claude')
-  fs.writeFileSync(fake, `#!/bin/sh
-if [ "$1" = "--bg" ]; then exit 9; fi
-printf '[{"id":"66b8d668","cwd":"%s","name":"ceviri","state":"blocked"}]' "$5"
-`, { mode: 0o755 })
-  const daemon = await startDaemon({ dataDir, port: 0, claudeAgents: { command: fake, claudeDir: bin } })
-  const api = client(daemon)
-  try {
-    const projectId = (await api.post<{ id: string }>('/api/projects', { path: project })).body.id
-    const work = (await api.post<Work>('/api/works', { projectId, name: 'Çeviri' })).body
-    const reply = await api.post<{ id: string; created: boolean }>(`/api/works/${work.id}/claude-session`)
-    assert.deepEqual(reply.body, { id: '66b8d668', created: false })
   } finally {
     await daemon.close()
     removeDir(dataDir)

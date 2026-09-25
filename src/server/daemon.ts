@@ -123,9 +123,10 @@ interface Confirmation {
   expiresAt: number
 }
 
-/** Proje onayı önizlemedeki Session kümesini ve her birinin onayını birlikte bağlar. */
-interface ProjectConfirmation {
-  projectId: string
+/** Proje veya iş onayı önizlemedeki Session kümesini ve her birinin onayını birlikte bağlar. */
+interface GroupConfirmation {
+  /** `project:<id>` veya `work:<id>` */
+  owner: string
   sessions: Map<string, Confirmation>
   expiresAt: number
 }
@@ -185,12 +186,6 @@ function slugify(input: string): string {
 }
 
 /** 1-80 Unicode karakter, kontrol karakteri yok. Boş ad otomatik etiketlenir. */
-/** Büyük/küçük harf ve Türkçe işaretler yok sayılarak ad karşılaştırması ("Çeviri" = "ceviri"). */
-function sameName(a: string, b: string): boolean {
-  const fold = (value: string) => value.trim().toLocaleLowerCase('tr').replace(/ı/g, 'i').normalize('NFD').replace(/\p{M}/gu, '')
-  return fold(a) === fold(b)
-}
-
 function readName(raw: unknown, command: string | null, sessionId: string): string | { error: string } {
   if (raw === undefined || raw === null || raw === '') {
     return `${commandLabel(command)} ${sessionId.slice(0, 6)}`
@@ -299,7 +294,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const createLedger = createRequestLedger<Session>()
   const launchLedger = createRequestLedger<Session>()
   const confirmations = new Map<string, Confirmation>()
-  const projectConfirmations = new Map<string, ProjectConfirmation>()
+  const groupConfirmations = new Map<string, GroupConfirmation>()
   const projectsBeingDeleted = new Set<string>()
   /** Bir Run'ın çıkış kaydının diske yazılması; stop bunu bekler. */
   const pendingExitCommits = new Map<string, Promise<void>>()
@@ -1061,8 +1056,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
         // Kimlik rastgele 128 bit; kullanıcı adı yol veya kimlik değildir.
         const sid = crypto.randomBytes(16).toString('hex')
-        // İşteki terminal adını boş bırakılırsa işin adını alır.
-        const workName = workId ? findWork(workId)?.name : undefined
+        // İşteki terminal adı boş bırakılırsa işin adını alır; sonraki terminaller numaralanır ("Çeviri 2").
+        const work = workId ? findWork(workId) : undefined
+        const siblings = work ? store.get().sessions.filter((s) => s.workId === work.id && s.archivedAt === null).length : 0
+        const workName = work ? (siblings > 0 ? `${work.name} ${siblings + 1}` : work.name) : undefined
         const name = readName(typeof payload.name === 'string' && payload.name.trim() === '' && workName ? workName : payload.name, program, sid)
         if (typeof name === 'object') throw new HttpError(400, 'validation', name.error)
         const userEnv = userEnvironment()
@@ -1214,18 +1211,45 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   })
 
   /** İş kaydını kaldırır; oturumlar, dosyalar ve konuşmalar yerinde kalır, yalnız işsiz olur. */
+  /** İşin bütün oturumlarını tek onaya bağlar; proje silmedeki önizlemenin aynısıdır. */
+  app.post('/api/works/:id/delete-preview', async (req, res) => {
+    try {
+      const work = findWork(req.params.id)
+      if (!work) throw new HttpError(404, 'not_found', 'İş yok')
+      const group = await previewSessionGroup(store.get().sessions.filter((s) => s.workId === work.id))
+      const confirmationToken = crypto.randomBytes(24).toString('hex')
+      groupConfirmations.set(confirmationToken, { owner: `work:${work.id}`, expiresAt: group.expiresAt, sessions: group.sessions })
+      res.json({ confirmationToken, expiresInMs: CONFIRMATION_TTL_MS, workId: work.id, sessions: group.view, keepsBranches: true })
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  /**
+   * İş, oturumlarıyla birlikte silinir: terminaller durur, izole çalışma
+   * kopyaları kalkar, branch'ler ve ortak klasör dosyaları korunur. Bağlı
+   * Claude arka plan oturumları Claude'a aittir; yalnız bağları kalkar.
+   */
   app.delete('/api/works/:id', async (req, res) => {
     try {
-      if (!findWork(req.params.id)) throw new HttpError(404, 'not_found', 'İş yok')
+      const work = findWork(req.params.id)
+      if (!work) throw new HttpError(404, 'not_found', 'İş yok')
+      const owned = store.get().sessions.filter((s) => s.workId === work.id)
+      const confirmation = owned.length > 0
+        ? takeGroupConfirmation((req.body ?? {}).confirmationToken, `work:${work.id}`, owned, 'work_has_sessions', 'İşte oturum kayıtları var; önce silme önizlemesi alın')
+        : undefined
+      await deleteSessionGroup(owned, confirmation, 'work_delete_partial', 'İş ve kalan oturumlar korunur.')
       await store.commit((draft) => {
-        draft.works = (draft.works ?? []).filter((w) => w.id !== req.params.id)
-        for (const session of draft.sessions) if (session.workId === req.params.id) delete session.workId
+        draft.works = (draft.works ?? []).filter((w) => w.id !== work.id)
+        // Onaydan sonra açılmış bir oturum silinmez; işsiz kalır.
+        for (const session of draft.sessions) if (session.workId === work.id) delete session.workId
       })
       res.json({ ok: true })
     } catch (err) {
       sendError(res, err)
     }
   })
+
 
   /** Transcript özetleri en çok bu kadar beklenir; yetişmeyen özet sonraki istekte gelir. */
   async function conversationsOf(owned: Session[]): Promise<ConversationView[]> {
@@ -1249,50 +1273,6 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         .map((agent) => ({ ...agent, workId: owner.get(agent.id) ?? null }))
         .sort((a, b) => (b.updatedAt ?? b.startedAt ?? 0) - (a.updatedAt ?? a.startedAt ?? 0)),
     })
-  })
-
-  /**
-   * İşin kendi Claude oturumu: listede bulunan ilk bağlı oturum. Yoksa işin
-   * adıyla yeni arka plan oturumu açılır ve işin başına yazılır. Aynı işte
-   * açılan her Claude terminali bu oturuma attach olur.
-   */
-  const workClaudeStarts = new Map<string, Promise<{ id: string; created: boolean }>>()
-  async function ensureWorkClaude(work: Work, project: Project): Promise<{ id: string; created: boolean }> {
-    if (!claudeAgents) throw new HttpError(409, 'unsupported', 'Bu daemon Claude oturumlarını yönetmiyor')
-    const listed = await claudeAgents.list(project.path)
-    const linked = findWork(work.id)?.claudeSessions ?? []
-    // Liste okunamadıysa bağlı oturum yok sayılmaz; ikinci oturum açılmaz.
-    const existing = linked.find((id) => listed.agents.some((a) => a.id === id && a.state !== 'failed')) ?? (listed.error ? linked[0] : undefined)
-    if (existing) return { id: existing, created: false }
-    // İşle aynı adı taşıyan, hiçbir işe bağlı olmayan Claude oturumu işin oturumu sayılır.
-    const owned = new Set((store.get().works ?? []).flatMap((w) => w.claudeSessions ?? []))
-    const namesake = listed.agents.find((a) => !owned.has(a.id) && a.state !== 'failed' && sameName(a.name, work.name))
-    const id = namesake?.id ?? await claudeAgents.start(project.path, work.name)
-    await store.commit((draft) => {
-      for (const other of draft.works ?? []) if (other.claudeSessions) other.claudeSessions = other.claudeSessions.filter((x) => x !== id)
-      const target = (draft.works ?? []).find((w) => w.id === work.id)
-      if (target) target.claudeSessions = [id, ...(target.claudeSessions ?? [])]
-    })
-    return { id, created: !namesake }
-  }
-
-  app.post('/api/works/:id/claude-session', async (req, res) => {
-    try {
-      const work = findWork(req.params.id)
-      if (!work) throw new HttpError(404, 'not_found', 'İş yok')
-      const project = store.get().projects.find((p) => p.id === work.projectId)
-      if (!project) throw new HttpError(404, 'not_found', 'Proje yok')
-      // Çift tıklama iki oturum açmasın: süren açılış paylaşılır.
-      let pending = workClaudeStarts.get(work.id)
-      if (!pending) {
-        pending = ensureWorkClaude(work, project).finally(() => workClaudeStarts.delete(work.id))
-        workClaudeStarts.set(work.id, pending)
-      }
-      res.json(await pending)
-    } catch (err) {
-      if (err instanceof HttpError) return sendError(res, err)
-      jsonError(res, 502, 'claude_failed', (err as Error).message)
-    }
   })
 
   /** Claude oturumu tek bir işe bağlıdır: başka işteyse oradan alınır. */
@@ -1968,18 +1948,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
    * arasında paylaşılır: sınır oturum sayısıyla gizlice aşılmaz, aşımda
    * oturumları tek tek temizlemek önerilir.
    */
-  app.post('/api/projects/:id/delete-preview', async (req, res) => {
-    const project = store.get().projects.find((p) => p.id === req.params.id)
-    if (!project) return jsonError(res, 404, 'not_found', 'Proje yok')
-
-    const owned = store.get().sessions.filter((s) => s.projectId === project.id)
+  /**
+   * Bir oturum kümesini (projenin veya işin bütün oturumları) tek onaya bağlar;
+   * içerik bütçesi oturumlar arasında paylaşılır.
+   */
+  async function previewSessionGroup(owned: Session[]): Promise<{ sessions: Map<string, Confirmation>; expiresAt: number; view: object[] }> {
     const budget = createBudget()
     const reads: { session: Session; dirIdentity: string; fingerprint: Extract<ContentFingerprint, { ok: true }> }[] = []
     for (const session of owned) {
       const dirIdentity = dirIdentityOf(session.cwd)
       if (dirIdentity === null) {
-        return jsonError(
-          res,
+        throw new HttpError(
           409,
           'cwd_missing',
           `"${session.name}" oturumunun çalışma dizini okunamıyor; oturumu tek tek inceleyip silin: ${session.cwd}`,
@@ -1988,41 +1967,25 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       }
       const fingerprint = await deletionFingerprint(session, budget)
       if (!fingerprint.ok) {
-        return jsonError(
-          res,
+        throw new HttpError(
           409,
           fingerprint.reason === 'budget' ? 'preview_budget_exceeded' : 'status_unreadable',
-          `Projenin çalışma kopyaları birlikte büyük veya okunamıyor (${fingerprint.message}); oturumları tek tek temizleyip silin, ardından tekrar deneyin: ${session.cwd}`,
+          `Çalışma kopyaları birlikte büyük veya okunamıyor (${fingerprint.message}); oturumları tek tek temizleyip silin, ardından tekrar deneyin: ${session.cwd}`,
           { sessionId: session.id, cwd: session.cwd, reason: fingerprint.message },
         )
       }
       reads.push({ session, dirIdentity, fingerprint })
     }
-
     const expiresAt = Date.now() + CONFIRMATION_TTL_MS
-    const confirmationToken = crypto.randomBytes(24).toString('hex')
-    projectConfirmations.set(confirmationToken, {
-      projectId: project.id,
+    return {
       expiresAt,
       sessions: new Map(
         reads.map(({ session, dirIdentity, fingerprint }) => [
           session.id,
-          {
-            sessionId: session.id,
-            runId: session.runId,
-            cwd: session.cwd,
-            dirIdentity,
-            contentDigest: fingerprint.digest,
-            expiresAt,
-          },
+          { sessionId: session.id, runId: session.runId, cwd: session.cwd, dirIdentity, contentDigest: fingerprint.digest, expiresAt },
         ]),
       ),
-    })
-    res.json({
-      confirmationToken,
-      expiresInMs: CONFIRMATION_TTL_MS,
-      projectId: project.id,
-      sessions: reads.map(({ session, fingerprint }) => ({
+      view: reads.map(({ session, fingerprint }) => ({
         id: session.id,
         name: session.name,
         cwd: session.cwd,
@@ -2031,45 +1994,36 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         changedEntries: fingerprint.changedEntries,
         ignoredEntries: fingerprint.ignoredEntries,
       })),
-      keepsBranches: true,
-    })
-  })
-
-  app.delete('/api/projects/:id', async (req, res) => {
-    const project = store.get().projects.find((p) => p.id === req.params.id)
-    if (!project) return jsonError(res, 404, 'not_found', 'Proje yok')
-
-    const owned = store.get().sessions.filter((s) => s.projectId === project.id)
-    let confirmation: ProjectConfirmation | undefined
-    if (owned.length > 0) {
-      const token = (req.body ?? {}).confirmationToken
-      if (typeof token !== 'string') {
-        // Gizli cascade yok: oturumu olan proje yalnız proje onayıyla silinir.
-        return jsonError(res, 409, 'project_has_sessions', 'Projede oturum kayıtları var; önce silme önizlemesi alın', {
-          sessionIds: owned.map((s) => s.id),
-        })
-      }
-      confirmation = projectConfirmations.get(token)
-      if (!confirmation || confirmation.projectId !== project.id) {
-        return jsonError(res, 409, 'confirmation_unknown', 'Onay bulunamadı; yeniden önizleme alın')
-      }
-      // Proje onayı tek kullanımlıktır; her deneme taze bir önizlemeyle başlar.
-      projectConfirmations.delete(token)
-      if (confirmation.expiresAt < Date.now()) {
-        return jsonError(res, 409, 'confirmation_stale', 'Onay süresi doldu; yeniden önizleme alın')
-      }
-      const covered = [...confirmation.sessions.keys()].sort().join(',')
-      if (covered !== owned.map((s) => s.id).sort().join(',')) {
-        return jsonError(res, 409, 'confirmation_stale', 'Onaydan sonra projenin oturumları değişti; yeniden önizleme alın')
-      }
     }
+  }
 
-    projectsBeingDeleted.add(project.id)
+  /** Tek kullanımlık küme onayını tüketir; küme önizlemeden sonra değiştiyse onay düşer. */
+  function takeGroupConfirmation(token: unknown, owner: string, owned: Session[], hasSessionsCode: string, hasSessionsMessage: string): GroupConfirmation {
+    if (typeof token !== 'string') {
+      // Gizli cascade yok: oturumu olan küme yalnız kendi onayıyla silinir.
+      throw new HttpError(409, hasSessionsCode, hasSessionsMessage, { sessionIds: owned.map((s) => s.id) })
+    }
+    const confirmation = groupConfirmations.get(token)
+    if (!confirmation || confirmation.owner !== owner) throw new HttpError(409, 'confirmation_unknown', 'Onay bulunamadı; yeniden önizleme alın')
+    // Onay tek kullanımlıktır; her deneme taze bir önizlemeyle başlar.
+    groupConfirmations.delete(token)
+    if (confirmation.expiresAt < Date.now()) throw new HttpError(409, 'confirmation_stale', 'Onay süresi doldu; yeniden önizleme alın')
+    const covered = [...confirmation.sessions.keys()].sort().join(',')
+    if (covered !== owned.map((s) => s.id).sort().join(',')) {
+      throw new HttpError(409, 'confirmation_stale', 'Onaydan sonra oturumlar değişti; yeniden önizleme alın')
+    }
+    return confirmation
+  }
+
+  /**
+   * Onaylı oturum kümesini siler. Bütün kilitler önce alınır; biri meşgulse
+   * hiçbir şey durdurulmaz. Silme ilk hatada durur ve kısmi sonuç bildirilir.
+   */
+  async function deleteSessionGroup(owned: Session[], confirmation: GroupConfirmation | undefined, partialCode: string, keeps: string): Promise<string[]> {
     const held: HeldLock[] = []
     try {
       if (confirmation) {
         const confirmed = (session: Session) => confirmation.sessions.get(session.id) as Confirmation
-        // Bütün oturum kilitleri önce alınır; biri meşgulse hiçbir şey durdurulmaz veya silinmez.
         for (const session of owned) {
           const lock = sessionLocks.tryAcquire(session.id)
           if (!lock) {
@@ -2083,18 +2037,16 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         const budget = createBudget()
         for (const session of owned) await verifyDeletionConfirmation(session, confirmed(session), budget)
       }
-
       const removed: string[] = []
       for (const session of owned) {
         try {
           await removeVerifiedSession(session)
         } catch (err) {
           if (!(err instanceof HttpError) || removed.length === 0) throw err
-          // İlk hatada durulur; kalan varsa Project kalır ve kısmi sonuç listelenir.
           throw new HttpError(
             err.status,
-            'project_delete_partial',
-            `${removed.length} oturum silindi; "${session.name}" silinemedi: ${err.message}. Proje ve kalan oturumlar korunur.`,
+            partialCode,
+            `${removed.length} oturum silindi; "${session.name}" silinemedi: ${err.message}. ${keeps}`,
             {
               cause: err.code,
               sessionId: session.id,
@@ -2106,6 +2058,36 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         }
         removed.push(session.id)
       }
+      return removed
+    } finally {
+      for (const lock of held) lock.release()
+    }
+  }
+
+  app.post('/api/projects/:id/delete-preview', async (req, res) => {
+    try {
+      const project = store.get().projects.find((p) => p.id === req.params.id)
+      if (!project) throw new HttpError(404, 'not_found', 'Proje yok')
+      const group = await previewSessionGroup(store.get().sessions.filter((s) => s.projectId === project.id))
+      const confirmationToken = crypto.randomBytes(24).toString('hex')
+      groupConfirmations.set(confirmationToken, { owner: `project:${project.id}`, expiresAt: group.expiresAt, sessions: group.sessions })
+      res.json({ confirmationToken, expiresInMs: CONFIRMATION_TTL_MS, projectId: project.id, sessions: group.view, keepsBranches: true })
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  app.delete('/api/projects/:id', async (req, res) => {
+    const project = store.get().projects.find((p) => p.id === req.params.id)
+    if (!project) return jsonError(res, 404, 'not_found', 'Proje yok')
+
+    const owned = store.get().sessions.filter((s) => s.projectId === project.id)
+    projectsBeingDeleted.add(project.id)
+    try {
+      const confirmation = owned.length > 0
+        ? takeGroupConfirmation((req.body ?? {}).confirmationToken, `project:${project.id}`, owned, 'project_has_sessions', 'Projede oturum kayıtları var; önce silme önizlemesi alın')
+        : undefined
+      const removed = await deleteSessionGroup(owned, confirmation, 'project_delete_partial', 'Proje ve kalan oturumlar korunur.')
       try {
         await store.commit((draft) => {
           draft.projects = draft.projects.filter((p) => p.id !== project.id)
@@ -2120,7 +2102,6 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     } catch (err) {
       sendError(res, err)
     } finally {
-      for (const lock of held) lock.release()
       projectsBeingDeleted.delete(project.id)
     }
   })
@@ -2614,7 +2595,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       })
     })
   } catch (err) {
-    // Kilit sızdırılmaz: açılamayan daemon veri dizinini tutmaya devam etmez.
+    // Kilit ve kanca izleyicisi sızdırılmaz: açılamayan daemon veri dizinini tutmaya devam etmez.
+    inbox.close()
     await lock.release()
     throw err
   }

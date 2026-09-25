@@ -16,7 +16,7 @@ Bir çalışma kaydı ve ona bağlı ardışık Run'lar. Süreç sonlandığınd
 _Avoid_: Tek süreç, CLI konuşması
 
 **İş**:
-Kullanıcının adlandırdığı amaç (ör. "Çoklu dil desteği"). Bir projedeki Session'ları ve onların Conversation kayıtlarını bir araya toplar. İşin kaldırılması Session, dosya veya konuşmaya dokunmaz; Session'lar işsiz kalır. Bir Session en çok bir işe bağlıdır.
+Kullanıcının adlandırdığı amaç (ör. "Çoklu dil desteği"). Bir projedeki Session'ları ve onların Conversation kayıtlarını bir araya toplar. İş silinince Session'ları da proje silmedeki gibi tek bir önizleme onayıyla silinir: izole çalışma kopyaları kalkar, branch'ler ve ortak klasör dosyaları korunur. Bağlı Claude arka plan oturumları ve konuşma dosyaları Claude'da kalır. İşte açılan Claude terminali düz `claude` konuşmasıdır; AgentDeck arka plan oturumu açmaz. Claude arka plan oturumları işe elle bağlanır. Bir Session en çok bir işe bağlıdır.
 _Avoid_: Claude session, görev (Session adıyla karışır)
 
 **Claude arka plan oturumu**:
