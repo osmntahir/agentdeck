@@ -1689,14 +1689,17 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 .action-menu .menu-hint { margin-left: auto; padding-left: 12px; border: 0; background: transparent; color: var(--text-3); font: 10.5px var(--font-mono); }
 
 /* --- Claude maskotu: Claude oturumu varken çalışma alanının sağ üstünde ---- */
+/* Robotun gezindiği şerit: çubuktaki boş yerin tamamı. */
+.mascot-track { position: relative; flex: 1; align-self: stretch; min-width: 64px; }
 .claude-mascot {
-  position: relative;
-  flex: none;
+  position: absolute;
+  top: 4px;
+  left: 0;
   width: 46px;
   min-height: 0;
   height: 34px;
-  margin-left: auto;
   padding: 0;
+  will-change: transform;
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -1765,3 +1768,42 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 @keyframes m-breathe { 50% { transform: scaleY(0.94); } }
 @keyframes m-float { 0% { opacity: 0; transform: translate(0, 4px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(4px, -10px); } }
 @media (prefers-reduced-motion: reduce) { .claude-mascot, .claude-mascot * { animation: none !important; } }
+
+/* Gözler yakındaki fareyi izler (--gaze, -0.8…0.8 birim). */
+.claude-mascot .m-gaze { transform: translateX(calc(var(--gaze, 0) * 1px)); transition: transform 140ms ease-out; }
+/* Yürürken ayaklar adım atar, gövde hafifçe sallanır. */
+.claude-mascot[data-walking] .m-legs-a { animation: m-step 0.36s steps(1) infinite; }
+.claude-mascot[data-walking] .m-legs-b { animation: m-step 0.36s steps(1) infinite 0.18s; }
+.claude-mascot[data-walking] .m-body { animation: m-bob 0.36s steps(2) infinite; }
+/* Dans: zıplayıp sağa sola eğilir, kollar sırayla kalkar. */
+.claude-mascot[data-trick='dance'] .m-all { animation: m-dance 0.55s ease-in-out 4; }
+.claude-mascot[data-trick='dance'] .m-arm-l { animation: m-arm-up-l 0.55s ease-in-out 4; }
+.claude-mascot[data-trick='dance'] .m-arm-r { animation: m-arm-up-r 0.55s ease-in-out 4 0.27s; }
+/* Tökezleyip yan yatar, sonra kalkar. */
+.claude-mascot[data-trick='trip'] .m-all { animation: m-trip 2.1s ease-in-out 1; }
+/* Kurabiye: ağzının yanında küçülerek kaybolur, gövde çiğner. */
+.claude-mascot[data-snack] .m-body { animation: m-chomp 0.25s steps(2) 6; }
+.claude-mascot[data-snack] .m-eyes { animation: none; transform: scaleY(0.3) translateY(0.8px); }
+.claude-mascot .m-cookie { position: absolute; top: 12px; left: -10px; font-size: 13px; pointer-events: none; animation: m-eat 1.5s steps(4) forwards; }
+/* Konuşma balonu, robotun daha boş tarafına açılır. */
+.claude-mascot .m-say {
+  position: absolute;
+  top: 5px;
+  z-index: 4;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: var(--overlay);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font: 500 11px/1.4 var(--font-ui);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: pop 160ms var(--ease);
+}
+.claude-mascot .m-say[data-side='right'] { left: calc(100% + 2px); }
+.claude-mascot .m-say[data-side='left'] { right: calc(100% + 2px); }
+
+@keyframes m-dance { 0%, 100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-1.8px) rotate(-10deg); } 50% { transform: translateY(0) rotate(0deg); } 75% { transform: translateY(-1.8px) rotate(10deg); } }
+@keyframes m-trip { 0%, 100% { transform: rotate(0deg); } 12% { transform: rotate(-18deg); } 25%, 70% { transform: translate(1px, 1px) rotate(-90deg); } 85% { transform: rotate(8deg); } }
+@keyframes m-chomp { 50% { transform: scaleY(0.88); } }
+@keyframes m-eat { 0% { transform: scale(1); } 100% { transform: scale(0); opacity: 0; } }
