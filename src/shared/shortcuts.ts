@@ -10,6 +10,7 @@ export type AppShortcut =
   | { kind: 'new-session' }
   | { kind: 'new-tab' }
   | { kind: 'close-tab' }
+  | { kind: 'move-tab'; delta: 1 | -1 }
   | { kind: 'maximize' }
   | { kind: 'sidebar' }
 
@@ -30,6 +31,8 @@ export function appShortcut(event: KeyLike, inTerminal: boolean): AppShortcut | 
   if (mod && !shift && !alt && code === 'KeyK' && !inTerminal) return { kind: 'palette' }
   if (alt && !mod && !shift && /^Digit[1-9]$/.test(code)) return { kind: 'jump', index: Number(code.slice(5)) - 1 }
   if (ctrl && !alt && !meta && !shift && (key === 'PageDown' || key === 'PageUp')) return { kind: 'cycle', delta: key === 'PageDown' ? 1 : -1 }
+  // GNOME Terminal gibi: Ctrl+Shift+PgUp/PgDn sekmeyi sola/sağa taşır.
+  if (ctrl && shift && !alt && !meta && (key === 'PageDown' || key === 'PageUp')) return { kind: 'move-tab', delta: key === 'PageDown' ? 1 : -1 }
   if (mod && shift && !alt && code === 'KeyN') return { kind: 'new-session' }
   // GNOME Terminal gibi: Ctrl+Shift+T yeni sekme, Ctrl+Shift+W sekmeyi kapatır (oturum sürer).
   if (mod && shift && !alt && code === 'KeyT') return { kind: 'new-tab' }
@@ -47,6 +50,7 @@ export const SHORTCUT_LABELS = {
   newSession: 'Ctrl+Shift+N',
   newTab: 'Ctrl+Shift+T',
   closeTab: 'Ctrl+Shift+W',
+  moveTab: 'Ctrl+Shift+PgUp / PgDn',
   maximize: 'Ctrl+Shift+Enter',
   sidebar: 'Ctrl+Shift+B',
 } as const

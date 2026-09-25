@@ -30,6 +30,10 @@ Terminalin üstüne şerit eklenmez.
 - Ctrl+Shift+T: yeni sekme.
 - Ctrl+Shift+W: sekmeyi kapat.
 - Ctrl+PgUp ve Ctrl+PgDn: çalışma alanında sekmeler arasında dolaşır. Çalışma alanı açık değilken eskisi gibi kenar çubuğu sırasını izler.
+- Ctrl+Shift+PgUp ve Ctrl+Shift+PgDn: sekmeyi grubunda sola veya sağa taşır.
+- Orta tık sekmeyi kapatır. Sekme şeridinin boş yerine çift tıklamak yeni sekme açar.
+
+Sekmeye sağ tık önce sekme işlemlerini, sonra oturum işlemlerini gösterir. Sekme işlemleri: kapat, diğerlerini / sağdakileri / soldakileri / tümünü kapat, kapatılan sekmeyi geri aç, sağa veya aşağı böl, grubu büyüt, sola veya sağa taşı. Toplu kapatma da oturumları durdurmaz. Son kapatılan 20 sekme, çalışma alanı başına bu açılış boyunca hatırlanır.
 
 Masaüstü uygulamasında Ctrl+Shift+W pencereyi kapatıyordu. Pencereyi kapatma GNOME Terminal'deki gibi Ctrl+Shift+Q'ya taşındı. Ctrl+W ve Ctrl+T kabukta başka işlere yaradığı için alınmaz.
 

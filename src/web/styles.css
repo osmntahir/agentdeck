@@ -1682,3 +1682,8 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 .action-menu-header strong { overflow: hidden; color: var(--text); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .action-menu-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .action-menu-path { font-family: var(--font-mono); font-size: 10.5px; }
+
+/* Menüde bölüm ayırıcı ve sağa yaslı kısayol ipucu. */
+.action-menu button.divider-before { position: relative; margin-top: 9px; }
+.action-menu button.divider-before::before { content: ''; position: absolute; top: -5px; right: 6px; left: 6px; height: 1px; background: var(--border); }
+.action-menu .menu-hint { margin-left: auto; padding-left: 12px; border: 0; background: transparent; color: var(--text-3); font: 10.5px var(--font-mono); }

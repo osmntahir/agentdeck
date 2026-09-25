@@ -26,6 +26,7 @@ import { stateLabel, statusTone, StatusDot } from '../sessionStatus'
 import { sessionIssues } from '../sessionIssues'
 import { sessionWorkActions, type SessionWorkAction } from '../../shared/sessionActions'
 import { Icon } from './Icon'
+import type { MenuAction } from './ActionMenu'
 import { SHORTCUT_LABELS } from '../../shared/shortcuts'
 import { TerminalPane } from './TerminalPane'
 import { GridLayoutDialog } from './GridLayoutDialog'
@@ -35,7 +36,8 @@ interface GridContextValue {
   healthy: boolean
   focusRequest: { sessionId: string; sequence: number; origin: HTMLElement } | null
   onFocusHandled: () => void
-  onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
+  onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>, tabActions?: MenuAction[]) => void
+  onTabMenu: (sessionId: string, event: React.MouseEvent<HTMLElement>) => void
   onDetail: (sessionId: string, tab: 'terminal' | 'diff') => void
   onAction: (session: SessionView, action: SessionWorkAction) => void
   onLayout: (sessionId: string) => void
@@ -216,12 +218,14 @@ function SessionTab(props: IDockviewPanelHeaderProps) {
   return (
     <DockviewDefaultTab
       {...props}
+      onContextMenu={(event: React.MouseEvent<HTMLElement>) => grid?.onTabMenu(props.api.id, event)}
       data-lifecycle={session?.lifecycle ?? 'orphaned'}
       data-tone={session ? statusTone(session) : 'orphaned'}
       title={session && grid ? [
         `${session.name} · ${stateLabel(session)}`,
         sessionPlace(session, grid.state),
         session.attention && session.lifecycle === 'live' ? (session.attention.kind === 'approval' ? 'Onayınızı bekliyor' : `Yanıtınızı bekliyor: ${session.attention.message}`) : null,
+        'Orta tık: kapat · Sağ tık: sekme işlemleri',
       ].filter(Boolean).join('\n') : undefined}
     />
   )
@@ -263,7 +267,8 @@ interface Props {
   /** Başka görünümden eklenmek istenen oturumlar; alan hazır olunca işlenir. focus klavyeyle gelindiğini söyler. */
   pendingAdd: { items: GridAdd[]; focus: boolean } | null
   onPendingHandled: () => void
-  onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
+  /** tabActions verilirse menünün başına sekme işlemleri eklenir. */
+  onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>, tabActions?: MenuAction[]) => void
   onDetail: (sessionId: string, tab: 'terminal' | 'diff') => void
   /** Biten programı sürdürür veya yeniden açar. */
   onAction: (session: SessionView, action: SessionWorkAction) => void
@@ -277,6 +282,13 @@ interface Props {
   onAddLive: () => void
   onNewTab: () => void
 }
+
+/**
+ * Geri açılabilecek son kapatılan sekmeler, çalışma alanı başına; en yenisi
+ * sonda. Alan kapanıp açılsa da bu açılış boyunca tutulur.
+ */
+const CLOSED_LIMIT = 20
+const closedTabs = new Map<string, string[]>()
 
 export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, onPendingHandled, onDetail, onAction, onSessionMenu, onPanelsChange, onVisibleChange, toolbar, onAddLive, onNewTab }: Props) {
   useEffect(() => {
@@ -292,6 +304,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
   const [panelIds, setPanelIds] = useState<string[]>([])
   const [focusRequest, setFocusRequest] = useState<{ sessionId: string; sequence: number; origin: HTMLElement } | null>(null)
   const focusSequence = useRef(0)
+  const closed = useRef<string[]>(closedTabs.get(gridId) ?? [])
 
   const [layoutPanel, setLayoutPanel] = useState<string | null>(null)
   const [maximized, setMaximized] = useState(false)
@@ -310,7 +323,16 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
         clearGridLayout(gridId)
       }
     }
+    let previous = new Set<string>()
     const publish = () => {
+      const current = ready.panels.map((panel) => panel.id)
+      // Taşıma paneli korur; yerleşimden düşen sekme kapatılmış sayılır.
+      const closedNow = [...previous].filter((id) => !current.includes(id))
+      if (closedNow.length > 0) {
+        closed.current = [...closed.current.filter((id) => !closedNow.includes(id)), ...closedNow].slice(-CLOSED_LIMIT)
+        closedTabs.set(gridId, closed.current)
+      }
+      previous = new Set(current)
       saveGridLayout(ready.toJSON(), gridId)
       setPanelIds(ready.panels.map((panel) => panel.id))
       latest.current.onPanelsChange(ready.panels.map((panel) => panel.id))
@@ -415,20 +437,80 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
     focusPanel(panel.id)
   }
 
-  const handlers = useRef({ toggleMaximize, cycle, close: () => api?.activePanel?.api.close() })
-  handlers.current = { toggleMaximize, cycle, close: () => api?.activePanel?.api.close() }
+  /** Etkin sekmeyi grubunda bir sola veya sağa taşır. */
+  const move = (delta: 1 | -1) => {
+    const panel = api?.activePanel
+    if (!panel) return
+    const group = panel.group
+    const index = group.panels.indexOf(panel)
+    const next = index + delta
+    if (next < 0 || next >= group.panels.length) return
+    panel.api.moveTo({ group, position: 'center', index: next })
+    focusPanel(panel.id)
+  }
+
+  /** Hâlâ kaydı olan en son kapatılan sekmeyi geri açar. */
+  const reopen = () => {
+    if (!api) return
+    const known = new Set(latest.current.sessions.map((s) => s.id))
+    let id: string | undefined
+    while ((id = closed.current.pop()) && (!known.has(id) || api.getPanel(id))) { /* silinmiş veya zaten açık */ }
+    const session = id ? latest.current.sessions.find((s) => s.id === id) : undefined
+    if (!session) return
+    setNotice(addSession(api, session, { place: 'tab' }))
+    focusPanel(session.id)
+  }
+  const reopenable = () => {
+    const known = new Set(state.sessions.map((s) => s.id))
+    return closed.current.some((id) => known.has(id) && !api?.getPanel(id))
+  }
+
+  /**
+   * Sekmenin sağ tık menüsü: kapatma ve yerleşim işlemleri, ardından oturum
+   * işlemleri. Kapatmak oturumu durdurmaz.
+   */
+  const tabMenu = (sessionId: string, event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const panel = api?.getPanel(sessionId)
+    if (!api || !panel || !state.sessions.some((s) => s.id === sessionId)) return
+    const group = panel.group
+    const siblings = group.panels
+    const index = siblings.indexOf(panel)
+    const closeAll = (panels: typeof siblings) => { for (const p of [...panels]) p.api.close() }
+    const split = (position: 'right' | 'bottom') => { panel.api.moveTo({ group, position }); focusPanel(panel.id) }
+    const everywhere = api.panels.filter((p) => p !== panel)
+    const actions: MenuAction[] = [
+      { label: 'Sekmeyi kapat', icon: 'close', hint: SHORTCUT_LABELS.closeTab, description: 'Oturum çalışmaya devam eder. Orta tık da kapatır.', run: () => panel.api.close() },
+      { label: 'Diğer sekmeleri kapat', icon: 'close', disabled: siblings.length < 2, run: () => closeAll(siblings.filter((p) => p !== panel)) },
+      { label: 'Sağdakileri kapat', icon: 'close', disabled: index >= siblings.length - 1, run: () => closeAll(siblings.slice(index + 1)) },
+      { label: 'Soldakileri kapat', icon: 'close', disabled: index <= 0, run: () => closeAll(siblings.slice(0, index)) },
+      { label: api.groups.length > 1 ? 'Bu gruptakileri kapat' : 'Tümünü kapat', icon: 'close', run: () => closeAll(siblings) },
+      ...(api.groups.length > 1 ? [{ label: 'Bu sekme dışında her şeyi kapat', icon: 'close' as const, description: 'Bütün gruplardaki diğer sekmeler kapanır.', disabled: everywhere.length === 0, run: () => closeAll(everywhere) }] : []),
+      { label: 'Kapatılan sekmeyi geri aç', icon: 'refresh', disabled: !reopenable(), run: reopen },
+      { label: 'Sağa böl', icon: 'layout', divider: true, disabled: siblings.length < 2, description: 'Sekmeyi yeni bir bölmeye taşır.', run: () => split('right') },
+      { label: 'Aşağı böl', icon: 'layout', disabled: siblings.length < 2, run: () => split('bottom') },
+      { label: maximized ? 'Önceki yerleşime dön' : 'Grubu büyüt', icon: maximized ? 'minimize' : 'maximize', hint: SHORTCUT_LABELS.maximize, disabled: !maximized && api.groups.length < 2, run: () => toggleMaximize(sessionId) },
+      { label: 'Sola taşı', icon: 'back', hint: 'Ctrl+Shift+PgUp', disabled: index <= 0, run: () => { panel.api.setActive(); move(-1) } },
+      { label: 'Sağa taşı', icon: 'chevron', hint: 'Ctrl+Shift+PgDn', disabled: index >= siblings.length - 1, run: () => { panel.api.setActive(); move(1) } },
+    ]
+    onSessionMenu(sessionId, event, actions)
+  }
+
+  const handlers = useRef({ toggleMaximize, cycle, move, reopen, close: () => api?.activePanel?.api.close() })
+  handlers.current = { toggleMaximize, cycle, move, reopen, close: () => api?.activePanel?.api.close() }
   useEffect(() => {
     const onMaximize = () => handlers.current.toggleMaximize()
     const onCycle = (event: Event) => handlers.current.cycle((event as CustomEvent<1 | -1>).detail)
     const onClose = () => handlers.current.close()
-    window.addEventListener('agentdeck:grid-maximize', onMaximize)
-    window.addEventListener('agentdeck:tab-cycle', onCycle)
-    window.addEventListener('agentdeck:tab-close', onClose)
-    return () => {
-      window.removeEventListener('agentdeck:grid-maximize', onMaximize)
-      window.removeEventListener('agentdeck:tab-cycle', onCycle)
-      window.removeEventListener('agentdeck:tab-close', onClose)
-    }
+    const onMove = (event: Event) => handlers.current.move((event as CustomEvent<1 | -1>).detail)
+    const onReopen = () => handlers.current.reopen()
+    const listeners: [string, (event: Event) => void][] = [
+      ['agentdeck:grid-maximize', onMaximize], ['agentdeck:tab-cycle', onCycle], ['agentdeck:tab-close', onClose],
+      ['agentdeck:tab-move', onMove], ['agentdeck:tab-reopen', onReopen],
+    ]
+    for (const [name, fn] of listeners) window.addEventListener(name, fn)
+    return () => { for (const [name, fn] of listeners) window.removeEventListener(name, fn) }
   }, [])
 
   // Restored Dockview tabs keep their saved title unless explicitly refreshed.
@@ -448,7 +530,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
   }, [api, healthy, state.sessions])
 
   return (
-    <GridContext.Provider value={{ state, healthy, onDetail, onAction, onSessionMenu, onLayout: setLayoutPanel, focusRequest, onFocusHandled: () => setFocusRequest(null), maximized, onToggleMaximize: toggleMaximize, onAddLive, onNewTab, liveOutside: state.sessions.filter((s) => s.archivedAt === null && s.lifecycle === 'live' && !panelIds.includes(s.id)).length }}>
+    <GridContext.Provider value={{ state, healthy, onDetail, onAction, onSessionMenu, onTabMenu: tabMenu, onLayout: setLayoutPanel, focusRequest, onFocusHandled: () => setFocusRequest(null), maximized, onToggleMaximize: toggleMaximize, onAddLive, onNewTab, liveOutside: state.sessions.filter((s) => s.archivedAt === null && s.lifecycle === 'live' && !panelIds.includes(s.id)).length }}>
       <section className="terminal-grid">
         <div className="grid-toolbar">{toolbar}</div>
 
@@ -459,7 +541,8 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
             {notice}
           </div>
         )}
-        <div className="grid-stage">
+        {/* Sekme şeridinin boş yerine çift tık yeni sekme açar. */}
+        <div className="grid-stage" onDoubleClick={(event) => { if ((event.target as Element).closest('.dv-void-container')) onNewTab() }}>
           <DockviewReact
             className="grid-dock"
             theme={THEME}

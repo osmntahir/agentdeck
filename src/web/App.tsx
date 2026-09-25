@@ -106,7 +106,7 @@ export function App() {
   const [colorSession, setColorSession] = useState<SessionView | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
-  const [menu, setMenu] = useState<{ id: string; position: MenuPosition } | null>(null)
+  const [menu, setMenu] = useState<{ id: string; position: MenuPosition; tabActions?: MenuAction[] } | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
   const [state, setState] = useState<StateResponse>(EMPTY)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -471,6 +471,10 @@ export function App() {
       if (inWorkspace) window.dispatchEvent(new Event('agentdeck:tab-close'))
       return
     }
+    if (shortcut.kind === 'move-tab') {
+      if (inWorkspace) window.dispatchEvent(new CustomEvent('agentdeck:tab-move', { detail: shortcut.delta }))
+      return
+    }
     if (shortcut.kind === 'cycle' && inWorkspace && gridIds.length > 0) {
       window.dispatchEvent(new CustomEvent('agentdeck:tab-cycle', { detail: shortcut.delta }))
       return
@@ -801,10 +805,10 @@ export function App() {
       })
   }
 
-  const showMenu = (id: string, event: React.MouseEvent<HTMLElement>) => {
+  const showMenu = (id: string, event: React.MouseEvent<HTMLElement>, tabActions?: MenuAction[]) => {
     event.preventDefault(); event.stopPropagation()
     const rect = event.currentTarget.getBoundingClientRect()
-    setMenu({ id, position: { x: event.clientX || rect.left, y: event.clientY || rect.bottom, origin: event.currentTarget } })
+    setMenu({ id, position: { x: event.clientX || rect.left, y: event.clientY || rect.bottom, origin: event.currentTarget }, tabActions })
   }
   const executeAction = (session: SessionView, action: ReturnType<typeof sessionWorkActions>[number]) => {
     if (action.kind === 'stop') return run(api.stopSession(session.id, session.runId))
@@ -836,6 +840,7 @@ export function App() {
     { id: 'home', label: 'Tüm oturumlar', icon: 'list', keywords: 'pano ana sayfa', hint: 'Esc', run: goHome },
     { id: 'grid', label: 'Çalışma alanı', icon: 'grid', keywords: 'sekmeler grid bölünmüş yan yana', run: goGrid },
     { id: 'new-tab', label: 'Yeni sekme', icon: 'plus', hint: SHORTCUT_LABELS.newTab, keywords: 'terminal sekme aç', run: newTab },
+    { id: 'reopen-tab', label: 'Kapatılan sekmeyi geri aç', icon: 'refresh', keywords: 'sekme geri al son kapatılan', run: () => { goGrid(); window.setTimeout(() => window.dispatchEvent(new Event('agentdeck:tab-reopen'))) } },
     ...grids.filter(() => grids.length > 1).map(g => ({ id: `grid:${g.id}`, label: `Çalışma alanına geç · ${g.name}`, icon: 'layout' as const, run: () => { leaveToScan(); setGridId(g.id); setGridIds(savedGridSessionIds(g.id)); setPendingGridAdd(null); setView('grid') } })),
     { id: 'new-grid', label: 'Yeni çalışma alanı oluştur', icon: 'plus', keywords: 'grid', run: () => { createGrid(); goGrid() } },
     { id: 'grid-live', label: 'Çalışan oturumları yan yana aç', icon: 'layout', keywords: 'hepsi tümü canlı grid', run: addLiveToGrid },
@@ -1128,7 +1133,10 @@ export function App() {
         )}
       </main>
 
-      {menu && menuSession && <ActionMenu position={menu.position} actions={menuActions} onClose={closeMenu} header={(() => {
+      {menu && menuSession && <ActionMenu position={menu.position} onClose={closeMenu} label={menu.tabActions ? 'Sekme işlemleri' : 'Oturum işlemleri'}
+        // Sekmeden açılan menüde sekme işlemleri önce gelir; sekmede zaten karşılığı olanlar ("Sekmede aç", "Yan yana aç") düşer.
+        actions={menu.tabActions ? [...menu.tabActions, ...menuActions.filter((a) => a.label !== 'Sekmede aç' && a.label !== 'Yan yana aç').map((a, i) => (i === 0 ? { ...a, divider: true } : a))] : menuActions}
+        header={(() => {
         const project = state.projects.find((p) => p.id === menuSession.projectId)
         return <>
           <strong>{menuSession.name}</strong>

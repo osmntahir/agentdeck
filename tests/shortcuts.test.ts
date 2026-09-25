@@ -38,3 +38,9 @@ test('sekme kısayolları GNOME Terminal gibidir; Ctrl+T ve Ctrl+W kabukta kalı
   assert.equal(appShortcut(key({ code: 'KeyT', key: 't', ctrlKey: true }), true), null)
   assert.equal(appShortcut(key({ code: 'KeyW', key: 'w', ctrlKey: true }), true), null)
 })
+
+test('Ctrl+Shift+PgUp/PgDn sekmeyi taşır; Ctrl+PgUp/PgDn sekmeler arasında geçer', () => {
+  assert.deepEqual(appShortcut(key({ key: 'PageDown', ctrlKey: true, shiftKey: true }), true), { kind: 'move-tab', delta: 1 })
+  assert.deepEqual(appShortcut(key({ key: 'PageUp', ctrlKey: true, shiftKey: true }), true), { kind: 'move-tab', delta: -1 })
+  assert.deepEqual(appShortcut(key({ key: 'PageUp', ctrlKey: true }), true), { kind: 'cycle', delta: -1 })
+})
