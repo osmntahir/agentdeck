@@ -25,7 +25,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       ['notifications', 'Bildirimler', 'Bakmadığın bir ajan onay beklediğinde, uzun bir çalışmadan sonra çıktıyı durdurduğunda veya bittiğinde haber ver. Uygulama öndeyken köşede kısa kart, arka plandayken masaüstü bildirimi çıkar.'],
       ['previews', 'Oturum önizlemeleri', 'Oturum kartlarında terminal çıktısını göster.'],
       ['compact', 'Kompakt görünüm', 'Kartları ve gezinmeyi daha sıkı yerleştir.'],
-      ['mascot', 'Claude robotu', 'Claude oturumu varken çalışma alanının sağ üstünde durur: çalışırken yürür, onay beklerken el sallar, uzun sessizlikte uyur.'],
+      ['mascot', 'Claude robotu', 'Çalışma alanı çubuğunda yaşar: gezinir, sevilir, top getirir, aksesuar takar. Claude çalışırken koşar, onay beklerken el sallar. Sağ tık: oyunlar ve aksesuarlar.'],
     ] as const).map(([key, label, description]) => <label className="setting-row" key={key}><span><strong>{label}</strong><small>{description}</small></span><input type="checkbox" role="switch" className="switch" checked={preferences[key]} onChange={async e => {
       const value = e.target.checked
       try {

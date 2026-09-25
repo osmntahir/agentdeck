@@ -1693,7 +1693,7 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 .mascot-track { position: relative; flex: 1; align-self: stretch; min-width: 64px; }
 .claude-mascot {
   position: absolute;
-  top: 4px;
+  top: 3px;
   left: 0;
   width: 46px;
   min-height: 0;
@@ -1705,7 +1705,7 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
   cursor: pointer;
 }
 .claude-mascot:hover, .claude-mascot:focus-visible { background: transparent; }
-.claude-mascot svg { display: block; width: 42px; height: 31px; margin: 0 auto; overflow: visible; }
+.claude-mascot svg { display: block; width: 42px; height: 34px; margin: 0 auto; overflow: visible; }
 .claude-mascot .m-body > rect, .claude-mascot .m-legs-a rect, .claude-mascot .m-legs-b rect { fill: #d97757; }
 .claude-mascot .m-eyes rect { fill: #17171c; }
 .claude-mascot .m-all, .claude-mascot .m-body, .claude-mascot .m-eyes, .claude-mascot .m-legs-a, .claude-mascot .m-legs-b { transform-box: fill-box; transform-origin: center bottom; }
@@ -1807,3 +1807,76 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 @keyframes m-trip { 0%, 100% { transform: rotate(0deg); } 12% { transform: rotate(-18deg); } 25%, 70% { transform: translate(1px, 1px) rotate(-90deg); } 85% { transform: rotate(8deg); } }
 @keyframes m-chomp { 50% { transform: scaleY(0.88); } }
 @keyframes m-eat { 0% { transform: scale(1); } 100% { transform: scale(0); opacity: 0; } }
+
+/* --- Claude robotu: oyunlar, uğraşlar, aksesuarlar ----------------------- */
+.claude-mascot .m-gaze { transform: translate(calc(var(--gaze, 0) * 1px), var(--eye-drop, 0px)); }
+/* Mutsuzken gözler aşağı bakar; gece gözler yarı kapalı. */
+.claude-mascot[data-pout] { --eye-drop: 0.5px; }
+.claude-mascot[data-night]:not([data-petting]):not([data-snack]) .m-eyes { animation: m-blink-sleepy 3.4s infinite; }
+@keyframes m-blink-sleepy { 0%, 88%, 100% { transform: scaleY(0.55) translateY(0.4px); } 92%, 95% { transform: scaleY(0.12) translateY(0.8px); } }
+/* Hızlı yazılırken ayaklar tempoya uyar. */
+.claude-mascot[data-typing] .m-legs-a { animation: m-step 0.16s steps(1) infinite; }
+.claude-mascot[data-typing] .m-legs-b { animation: m-step 0.16s steps(1) infinite 0.08s; }
+
+/* Uğraşlar ve yeni numaralar. */
+.claude-mascot[data-trick='giggle'] .m-all { animation: m-wiggle 0.14s linear 9; }
+.claude-mascot[data-trick='giggle'] .m-eyes { animation: none; transform: scaleY(0.3) translateY(0.8px); }
+.claude-mascot[data-trick='giggle'] .m-blush rect { opacity: 0.85; }
+.claude-mascot[data-trick='sneeze'] .m-all { animation: m-sneeze 1.1s ease-in-out 1; }
+.claude-mascot[data-trick='sneeze'] .m-eyes { animation: m-sneeze-eyes 1.1s steps(1) 1; }
+.claude-mascot[data-trick='read'] .m-gaze { --eye-drop: 0.8px; }
+.claude-mascot[data-trick='read'] .m-arm-l { animation: m-hold-l 4.2s ease-in-out 1; }
+.claude-mascot[data-trick='read'] .m-arm-r { animation: m-hold-r 4.2s ease-in-out 1; }
+.claude-mascot[data-trick='whistle'] .m-body { animation: m-bob 0.8s ease-in-out 4; }
+.claude-mascot[data-trick='draw'] .m-all { animation: m-lean 0.45s ease-in-out 7; }
+.claude-mascot[data-trick='butterfly'] .m-all { animation: m-hop 0.65s ease-in-out 8; }
+.claude-mascot[data-trick='coffee'] .m-arm-r { animation: m-sip 1.1s ease-in-out 3; }
+.claude-mascot[data-trick='yawn'] .m-body { animation: m-stretch 1.8s ease-in-out 1; }
+.claude-mascot[data-trick='yawn'] .m-eyes { animation: none; transform: scaleY(0.2) translateY(1px); }
+.claude-mascot[data-trick='dizzy'] .m-all { animation: m-wobble 0.5s ease-in-out 5; }
+.claude-mascot[data-trick='dizzy'] .m-eyes { animation: none; transform: scaleY(0.2) translateY(1px); }
+@keyframes m-sneeze { 0%, 100% { transform: none; } 45% { transform: scale(1.06, 0.9); } 55% { transform: translateY(-1.4px) scale(0.95, 1.08); } }
+@keyframes m-sneeze-eyes { 0%, 60% { transform: scaleY(0.15) translateY(1px); } 61%, 100% { transform: scaleY(1.2); } }
+@keyframes m-hold-l { 0%, 100% { transform: none; } 15%, 85% { transform: translate(1.2px, 0.6px); } }
+@keyframes m-hold-r { 0%, 100% { transform: none; } 15%, 85% { transform: translate(-1.2px, 0.6px); } }
+@keyframes m-lean { 50% { transform: rotate(8deg) translateY(0.4px); } }
+@keyframes m-sip { 0%, 100% { transform: none; } 40%, 60% { transform: rotate(-45deg); } }
+@keyframes m-wobble { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(-12deg); } 75% { transform: rotate(12deg); } }
+
+/* Elde tutulanlar: kurabiye, top, kitap, kahve, bayrak. */
+.claude-mascot .m-held { position: absolute; top: 14px; left: 34px; font-size: 12px; line-height: 1; pointer-events: none; }
+.claude-mascot .m-cookie { left: -10px; animation: m-eat 1.5s steps(4) forwards; }
+.claude-mascot .m-book { left: 15px; top: 17px; }
+.claude-mascot .m-flag { left: 36px; top: 8px; font-size: 11px; }
+.claude-mascot .m-orbit { position: absolute; top: 0; left: 15px; font-size: 11px; pointer-events: none; animation: m-orbit 0.8s linear infinite; }
+@keyframes m-orbit { from { transform: rotate(0deg) translateX(10px) rotate(0deg); } to { transform: rotate(360deg) translateX(10px) rotate(-360deg); } }
+
+/* Saklambaç: çubuğun alt kenarına iner, yalnız başı ve gözleri görünür. */
+.claude-mascot[data-scene='hide'] svg { clip-path: inset(0 0 42% 0); transform: translateY(15px); transition: transform 400ms ease-in; }
+.claude-mascot[data-scene='hide'] .m-eyes { animation: m-look 1.6s steps(1) infinite; }
+/* Sürüklenirken havada: ayaklar sallanır, gölge düşer. */
+.claude-mascot[data-scene='drag'] { z-index: 1000; cursor: grabbing; filter: drop-shadow(0 8px 6px #0007); }
+.claude-mascot[data-scene='drag'] .m-legs-a, .claude-mascot[data-scene='drag'] .m-legs-b { animation: m-step 0.2s steps(1) infinite; }
+.claude-mascot[data-scene='drag'] .m-arm-l { transform: rotate(50deg); }
+.claude-mascot[data-scene='drag'] .m-arm-r { transform: rotate(-50deg); }
+.claude-mascot[data-scene='fall'] { z-index: 1000; }
+
+/* Şerit üstündeki oyuncaklar: top, çizimler, kelebek. */
+.mascot-track .m-ball { position: absolute; top: 22px; z-index: 2; font-size: 12px; line-height: 1; pointer-events: none; animation: m-ball-drop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1) 1; }
+.mascot-track .m-doodle { position: absolute; top: 33px; width: 3px; height: 3px; border-radius: 1px; pointer-events: none; animation: m-fade 6s ease-in forwards; }
+.mascot-track .m-butterfly { position: absolute; top: 2px; z-index: 3; font-size: 12px; pointer-events: none; animation: m-flutter 5.2s ease-in-out 1 forwards; }
+@keyframes m-ball-drop { from { transform: translateY(-18px); } }
+@keyframes m-fade { 0% { opacity: 0.9; } 100% { opacity: 0; } }
+@keyframes m-flutter { 0% { transform: translate(40px, 10px) rotate(-10deg); } 25% { transform: translate(10px, -2px) rotate(12deg); } 50% { transform: translate(50px, 2px) rotate(-8deg); } 75% { transform: translate(0, -4px) rotate(10deg); } 100% { transform: translate(70px, -12px); opacity: 0; } }
+
+/* Aksesuarlar. */
+.claude-mascot .m-scarf > rect:not([fill]) { fill: var(--accent); }
+.claude-mascot .m-glasses rect { fill: #121216; }
+.claude-mascot .m-hat rect { fill: #1d1d22; }
+.claude-mascot .m-hat .m-hat-band { fill: var(--accent); }
+.claude-mascot .m-crown { fill: #f5c542; }
+.claude-mascot .m-bow polygon, .claude-mascot .m-bow rect { fill: #ff7eb6; }
+.claude-mascot .m-party polygon { fill: var(--accent); }
+.claude-mascot .m-party .m-party-pom { fill: #fff; }
+.birthday-fields { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+.birthday-fields label { display: grid; gap: 6px; }

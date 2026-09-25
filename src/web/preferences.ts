@@ -24,7 +24,7 @@ export interface Preferences {
   compact: boolean
   /** Kenar çubuğu yalnız simgelerle dar şeritte durur. */
   sidebarCollapsed: boolean
-  /** Claude oturumu varken çalışma alanının sağ üstündeki robot. */
+  /** Çalışma alanı çubuğunda yaşayan Claude robotu. */
   mascot: boolean
   colors: Record<string, string>
   terminalColors: Record<string, string>
