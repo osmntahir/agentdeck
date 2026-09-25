@@ -9,6 +9,13 @@ export { MAX_GRID_PANELS }
  */
 const KEY = 'agentdeck.terminalGrid.v1'
 
+/**
+ * Çalışma alanına ekleme biçimi: etkin gruba öne gelen sekme, arka plan
+ * sekmesi veya yeni bölme. `beside` verilirse bölme o oturumun yanında açılır.
+ */
+export type GridPlacement = 'tab' | 'background' | 'split'
+export interface GridAdd { id: string; place: GridPlacement; beside?: string }
+
 /** Kenar çubuğundan veya karttan sürüklenen oturumun veri türü. */
 export const SESSION_DRAG_TYPE = 'application/x-agentdeck-session'
 
@@ -64,7 +71,7 @@ export function loadGridWorkspaces(): GridWorkspace[] {
       if (grids.length) return grids
     }
   } catch { /* Eski tek grid kaydı korunur. */ }
-  return [{ id: 'default', name: 'Grid 1' }]
+  return [{ id: 'default', name: 'Alan 1' }]
 }
 export function saveGridWorkspaces(grids: GridWorkspace[]): void {
   localStorage.setItem(CATALOG, JSON.stringify(grids))

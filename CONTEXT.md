@@ -71,6 +71,14 @@ Session'ın proje çalışma kopyasıyla ilişkisi: worktree kendi kopyası (kla
 Çalışma dizininde Git'ten o an okunan branch veya ayrık HEAD. Ajan veya kullanıcı değiştirebilir; Session branch açılış kaydının yerine geçmez.
 _Avoid_: Session.branch ile eşanlamlı kullanım
 
+**Çalışma alanı**:
+Oturumların sekme olarak açık tutulduğu Dockview alanı. Birden çok alan olabilir ve her birinin yerleşimi yalnız istemcide tutulur. Bir oturuma tıklamak onu etkin gruba sekme olarak ekler. Sekmeyi bir kenara sürüklemek alanı böler (ADR 0019).
+_Avoid_: Terminal grid (eski ad)
+
+**Sekme**:
+Çalışma alanında açık tutulan bir Session. Oturumun içinde sekme yoktur. Sekmeyi kapatmak oturumu durdurmaz. Arka plandaki sekme "kullanıcı bakıyor" sayılmaz.
+_Avoid_: alt terminal, oturum içi sekme
+
 **Lifecycle**:
 Yönetilen PTY'nin durumu: live, exited veya orphaned. Activity ve çalışma kopyası sağlığı ayrı kavramlardır.
 

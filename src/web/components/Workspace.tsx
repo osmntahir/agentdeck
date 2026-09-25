@@ -229,7 +229,7 @@ export function Workspace({
             <div className="welcome-steps">
               <div><b>1</b><strong>Projeni bağla</strong><span>Bilgisayarındaki klasörü seç.</span></div>
               <div><b>2</b><strong>Ajanı başlat</strong><span>Tek tıkla ya da <kbd>Ctrl K</kbd> ile.</span></div>
-              <div><b>3</b><strong>Yan yana izle</strong><span>Grid'de terminalleri böl, <kbd>Alt+1…9</kbd> ile geç.</span></div>
+              <div><b>3</b><strong>Yan yana izle</strong><span>Oturumlar sekmede açılır; sekmeyi kenara sürükleyip böl, <kbd>Ctrl+PgUp/PgDn</kbd> ile geç.</span></div>
             </div>
           </section>
         ) : (
@@ -243,7 +243,7 @@ export function Workspace({
                   const selected = candidate === session.id
                   const tone = statusTone(session)
                   return (
-                    // Kart içinde ayrı "Grid'e ekle" düğmesi olduğu için kart kendisi düğme değildir.
+                    // Kart içinde ayrı "Yan yana aç" düğmesi olduğu için kart kendisi düğme değildir.
                     <div
                       className={`session-card${selected ? ' candidate' : ''}${session.degraded ? ' is-degraded' : ''}`}
                       data-tone={tone}
@@ -321,8 +321,8 @@ export function Workspace({
                       <div className="card-actions">
                         <button
                           className="icon-button ghost card-grid-add"
-                          title="Grid’e ekle"
-                          aria-label="Grid’e ekle"
+                          title="Yan yana aç"
+                          aria-label="Yan yana aç"
                           tabIndex={-1}
                           onClick={(e) => {
                             e.stopPropagation()

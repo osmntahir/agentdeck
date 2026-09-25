@@ -77,7 +77,12 @@ interface Props {
   view: 'sessions' | 'grid'
   gridCount: number
   onGrid: () => void
+  /** Yan yana aç: çalışma alanında yeni bölme. */
   onAddToGrid: (sessionId: string) => void
+  /** Orta tık: arka plan sekmesi. */
+  onOpenBackground: (sessionId: string) => void
+  /** Satır başka bir satırın üstüne bırakıldı: ikisi yan yana açılır. */
+  onOpenBeside: (targetId: string, draggedId: string) => void
 }
 
 export function Sidebar({
@@ -106,6 +111,8 @@ export function Sidebar({
   gridCount,
   onGrid,
   onAddToGrid,
+  onOpenBackground,
+  onOpenBeside,
 }: Props) {
   const preferences = usePreferences()
   const [colorProject, setColorProject] = useState<{ id: string; name: string } | null>(null)
@@ -190,8 +197,8 @@ export function Sidebar({
           {waiting > 0 && <span className="nav-attention" title={`${waiting} oturum onay veya yanıt bekliyor`}>{waiting}</span>}
           <span className="nav-count">{active.length}</span>
         </button>
-        <button className={`home-nav${activeId === null && view === 'grid' ? ' selected' : ''}`} onClick={onGrid} title="Terminal grid">
-          <Icon name="grid" /> <span className="nav-label">Terminal grid</span> <span className="nav-count">{gridCount}</span>
+        <button className={`home-nav${activeId === null && view === 'grid' ? ' selected' : ''}`} onClick={onGrid} title="Çalışma alanı: açık sekmeler">
+          <Icon name="grid" /> <span className="nav-label">Çalışma alanı</span> <span className="nav-count">{gridCount}</span>
         </button>
       </nav>
       <div className="sidebar-label">
@@ -230,6 +237,13 @@ export function Sidebar({
                 onFocusRow={() => setRowFocus(session.id)}
                 onSelect={() => onSelect(session.id)}
                 onAddToGrid={() => onAddToGrid(session.id)}
+                onBackground={() => onOpenBackground(session.id)}
+                beside={drag?.kind === 'session' && drag.id !== session.id ? {
+                  over: dropTarget === `row:${session.id}`,
+                  enter: () => setDropTarget(`row:${session.id}`),
+                  leave: () => setDropTarget((t) => (t === `row:${session.id}` ? null : t)),
+                  drop: () => { const dragged = drag.id; endDrag(); onOpenBeside(session.id, dragged) },
+                } : null}
                 onMenu={event => onSessionMenu(session.id, event)}
                 onDragStart={() => setDrag({ kind: 'session', id: session.id, projectId: session.projectId, workId: session.workId ?? null })}
                 onDragEnd={endDrag}
@@ -395,6 +409,8 @@ function SessionRow({
   onFocusRow,
   onSelect,
   onAddToGrid,
+  onBackground,
+  beside,
   onMenu,
   onDragStart,
   onDragEnd,
@@ -407,22 +423,30 @@ function SessionRow({
   onFocusRow: () => void
   onSelect: () => void
   onAddToGrid: () => void
+  onBackground: () => void
+  /** Başka bir satır sürüklenirken bu satır "yan yana aç" hedefidir. */
+  beside: { over: boolean; enter: () => void; leave: () => void; drop: () => void } | null
   onMenu: (event: React.MouseEvent<HTMLElement>) => void
   onDragStart: () => void
   onDragEnd: () => void
 }) {
   const preferences = usePreferences()
   return (
-    <div style={terminalStyle(session, preferences)} className={`session-row-wrap${session.attention ? ' needs-attention' : ''}`} onContextMenu={onMenu}>
+    <div style={terminalStyle(session, preferences)} className={`session-row-wrap${session.attention ? ' needs-attention' : ''}`} onContextMenu={onMenu}
+      data-drop={beside?.over ? 'beside' : undefined}
+      // Satırın üstüne bırakılan oturum bu oturumla yan yana açılır; işe taşıma iş başlığına bırakılarak yapılır.
+      onDragOver={beside ? (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; if (!beside.over) beside.enter() } : undefined}
+      onDragLeave={beside ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) beside.leave() } : undefined}
+      onDrop={beside ? (e) => { e.preventDefault(); e.stopPropagation(); beside.drop() } : undefined}>
       <button
         className={`session-row${active ? ' active' : ''}`}
         tabIndex={tabbable ? 0 : -1}
         onClick={onSelect}
-        // Orta tık tarayıcı sekmesi gibi: açmadan grid'e ekler.
+        // Orta tık tarayıcı sekmesi gibi: öne getirmeden arka plan sekmesi açar.
         onMouseDown={(e) => { if (e.button === 1) e.preventDefault() }}
-        onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onAddToGrid() } }}
+        onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onBackground() } }}
         onFocus={onFocusRow}
-        title={`${session.name} · ${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''}${session.conversation?.lastPrompt ? `\nSon istem: ${session.conversation.lastPrompt}` : ''}\nOrta tık veya sürükle: grid'e ekle · Ctrl basılı sürükle: aynı programdan kopya · Başka işe sürükle: işe taşı`}
+        title={`${session.name} · ${stateLabel(session)}${shortcut ? ` · Alt+${shortcut}` : ''}${session.conversation?.lastPrompt ? `\nSon istem: ${session.conversation.lastPrompt}` : ''}\nTıkla: sekmede aç · Orta tık: arka plan sekmesi · Başka bir oturumun üstüne sürükle: yan yana aç · İş başlığına sürükle: işe taşı · Ctrl basılı sürükle: aynı programdan kopya`}
         aria-keyshortcuts={shortcut ? `Alt+${shortcut}` : undefined}
         draggable
         onDragStart={(e) => { e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id); e.dataTransfer.effectAllowed = 'copyMove'; onDragStart() }}
@@ -448,8 +472,8 @@ function SessionRow({
         <button
           className="row-grid-add icon-button ghost"
           tabIndex={-1}
-          title="Terminal grid'e ekle"
-          aria-label={`${session.name} oturumunu terminal grid'e ekle`}
+          title="Yan yana aç"
+          aria-label={`${session.name} oturumunu yan yana aç`}
           onClick={onAddToGrid}
         >
           <Icon name="grid" size={14} />

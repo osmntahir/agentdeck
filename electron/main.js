@@ -110,7 +110,8 @@ function buildMenu() {
           },
           { type: 'separator' },
           // Pencereyi kapatmak daemon'u öldürmez: kalıcılık bunun üzerine kurulu.
-          { label: 'Pencereyi kapat (oturumlar sürer)', accelerator: 'CmdOrCtrl+Shift+W', role: 'quit' },
+          // Ctrl+Shift+W sekmeyi kapatır (GNOME Terminal gibi); pencere Ctrl+Shift+Q ile kapanır.
+          { label: 'Pencereyi kapat (oturumlar sürer)', accelerator: 'CmdOrCtrl+Shift+Q', role: 'quit' },
         ],
       },
       {

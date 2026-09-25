@@ -1,10 +1,10 @@
 /** Grid yerleşimi istemcide tutulur; bu koruma portal açılmadan uygulanır. */
 
-export const MAX_GRID_PANELS = 8
+export const MAX_GRID_PANELS = 16
 export const GRID_LAYOUT_TEXT_LIMIT = 1024 * 1024
 
 /**
- * Kayıt 1 MiB'yi, 8 paneli veya panel/Session kimlik tutarlılığını aşarsa
+ * Kayıt 1 MiB'yi, 16 paneli veya panel/Session kimlik tutarlılığını aşarsa
  * null döner. Dockview'in derin şeması ayrıca fromJSON'da doğrulanır.
  */
 export function parseGridLayoutJson(raw: string | null): { panels: Record<string, { id: string }> } | null {

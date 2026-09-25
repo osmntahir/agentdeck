@@ -10,7 +10,7 @@ import { CommandPalette, type PaletteCommand } from './components/CommandPalette
 import { appShortcut, SHORTCUT_LABELS, type AppShortcut } from '../shared/shortcuts'
 import { stateLabel, statusTone, StatusDot } from './sessionStatus'
 import { duplicateCommand } from '../shared/workspacePolicy'
-import { MAX_GRID_PANELS } from './gridLayout'
+import { MAX_GRID_PANELS, type GridAdd, type GridPlacement } from './gridLayout'
 import type { NoticeKind } from '../shared/notices'
 import type { IconName } from './components/Icon'
 import { useWorkspaceLifecycle } from './useWorkspaceLifecycle'
@@ -120,7 +120,9 @@ export function App() {
   const [grids, setGrids] = useState(loadGridWorkspaces)
   const [gridId, setGridId] = useState(() => loadGridWorkspaces()[0].id)
   const [gridIds, setGridIds] = useState<string[]>(() => savedGridSessionIds(loadGridWorkspaces()[0].id))
-  const [pendingGridAdd, setPendingGridAdd] = useState<{ ids: string[]; focus: boolean } | null>(null)
+  const [pendingGridAdd, setPendingGridAdd] = useState<{ items: GridAdd[]; focus: boolean } | null>(null)
+  /** Çalışma alanında her grubun öndeki sekmesi; arka plandaki sekme bildirim üretmeye devam eder. */
+  const [visibleGridIds, setVisibleGridIds] = useState<string[]>([])
   const [addMenu, setAddMenu] = useState<MenuPosition | null>(null)
   const closeAddMenu = useCallback(() => setAddMenu(null), [])
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -166,7 +168,7 @@ export function App() {
 
   const refresh = () => pollerRef.current?.refresh() ?? Promise.resolve()
   // Kullanıcının o an gördüğü oturumlar bildirim üretmez.
-  const lifecycle = useWorkspaceLifecycle(state, stateHealthy, preferences, activeId ? [activeId] : view === 'grid' ? gridIds : [])
+  const lifecycle = useWorkspaceLifecycle(state, stateHealthy, preferences, activeId ? [activeId] : view === 'grid' ? visibleGridIds : [])
 
   // Yetim keşfi salt okunurdur ve poll edilmez: açılışta ve istenince okunur.
   const refreshOrphans = () =>
@@ -386,31 +388,40 @@ export function App() {
     const projectId = dialogProject.id
     resolveWork(input.work, projectId)
       .then((workId) => api.createSession({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId }))
-      .then((session) => {
+      .then(async (session) => {
         setDialogProject(null)
-        setActiveId(session.id)
-        setTab('terminal')
-        return refresh()
+        await refresh()
+        openInWorkspace(session.id, 'tab', true)
       })
       .catch((e) => setError(e.message))
       .finally(() => setCreating(false))
   }
 
-  const openSession = (id: string) => {
+  /** Ayrıntı görünümü: diff, önceki Run'lar ve tam başlık. Esc geldiğin yere döner. */
+  const openDetail = (id: string, detailTab: 'terminal' | 'diff' = 'terminal') => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     setActiveId(id)
-    setTab('terminal')
+    setTab(detailTab)
   }
 
-  const selectSession = (id: string, focus = false) => {
-    const owner = grids.find(g => (g.id === gridId ? gridIds : savedGridSessionIds(g.id)).includes(id))
-    if (owner) {
-      if (owner.id !== gridId) setGridIds(savedGridSessionIds(owner.id))
-      setGridId(owner.id); setPendingGridAdd({ ids: [id], focus }); setActiveId(null); setView('grid')
-    }
-    else openSession(id)
+  /**
+   * Oturumları çalışma alanında açar (ADR 0019). Açık oldukları bir çalışma
+   * alanı varsa oraya geçilir; yoksa şu anki alana sekme veya bölme olarak girer.
+   */
+  const openItems = (items: GridAdd[], focus: boolean) => {
+    // Arka plan sekmesi tarayıcıdaki gibi bulunulan alana eklenir; görünüm değişmez.
+    if (items.every((item) => item.place === 'background')) { setPendingGridAdd({ items, focus: false }); return }
+    const first = items[0]?.id
+    const owner = first ? grids.find(g => (g.id === gridId ? gridIds : savedGridSessionIds(g.id)).includes(first)) : undefined
+    if (owner && owner.id !== gridId) { setGridIds(savedGridSessionIds(owner.id)); setGridId(owner.id) }
+    setPendingGridAdd({ items, focus })
+    setActiveId(null)
     setPendingDelete(null)
+    setView('grid')
   }
+  const openInWorkspace = (id: string, place: GridPlacement = 'tab', focus = false) => openItems([{ id, place }], focus)
+  const openSession = (id: string) => openInWorkspace(id, 'tab', true)
+  const selectSession = (id: string, focus = false) => openInWorkspace(id, 'tab', focus)
 
   // Paletten tek adımda: proje klasöründe varsayılan adla oturum açılır, grid'deysen grid'e eklenir.
   const quickCreate = (project: ProjectView, preset: Preset) => {
@@ -418,16 +429,32 @@ export function App() {
     setCreating(true)
     setError(null)
     try { updatePreferences({ lastProgram: { ...preferences.lastProgram, [project.id]: preset.label } }) } catch { /* tercih yalnız bu açılışta kalır */ }
-    const intoGrid = view === 'grid' && !active
+    const context = active ?? gridFocusSession()
     api
-      .createSession({ name: '', command: preset.command, isolation: 'shared', projectId: project.id, workId: active?.projectId === project.id ? (active.workId ?? null) : null })
+      .createSession({ name: '', command: preset.command, isolation: 'shared', projectId: project.id, workId: context?.projectId === project.id ? (context.workId ?? null) : null })
       .then(async (session) => {
         await refresh()
-        if (intoGrid) { setPendingGridAdd({ ids: [session.id], focus: true }); setView('grid') }
-        else openSession(session.id)
+        openSession(session.id)
       })
       .catch((e) => setError(e.message))
       .finally(() => setCreating(false))
+  }
+
+  /**
+   * Sol üstteki +: etkin sekmenin projesinde ve işinde, o projede en son
+   * seçilen programla (yoksa kabukla) yeni sekme. Sekme yoksa oturum projesiz açılır.
+   */
+  const newTab = () => {
+    const context = active ?? gridFocusSession()
+    const project = state.projects.find((p) => p.id === context?.projectId)
+    const presetFor = (id: string) => PRESETS.find((p) => p.label === preferences.lastProgram[id]) ?? PRESETS.find((p) => p.command === null)!
+    if (project) return quickCreate(project, presetFor(project.id))
+    if (creating) return
+    setError(null)
+    api
+      .ensureGeneralProject()
+      .then((general) => quickCreate({ ...general, degraded: null }, presetFor(general.id)))
+      .catch((e) => setError(e.message))
   }
 
   const toggleSidebar = () => {
@@ -440,6 +467,16 @@ export function App() {
     if (shortcut.kind === 'sidebar') { toggleSidebar(); return }
     if (shortcut.kind === 'maximize') {
       if (view === 'grid' && !active) window.dispatchEvent(new Event('agentdeck:grid-maximize'))
+      return
+    }
+    const inWorkspace = view === 'grid' && !active
+    if (shortcut.kind === 'new-tab') { newTab(); return }
+    if (shortcut.kind === 'close-tab') {
+      if (inWorkspace) window.dispatchEvent(new Event('agentdeck:tab-close'))
+      return
+    }
+    if (shortcut.kind === 'cycle' && inWorkspace && gridIds.length > 0) {
+      window.dispatchEvent(new CustomEvent('agentdeck:tab-cycle', { detail: shortcut.delta }))
       return
     }
     if (shortcut.kind === 'new-session') {
@@ -473,7 +510,7 @@ export function App() {
     return () => { window.removeEventListener('agentdeck:notification-click', onClick); unsubscribe?.() }
   }, [grids, gridId, gridIds])
   const createGrid = () => {
-    const next = { id: crypto.randomUUID(), name: `Grid ${grids.length + 1}` }
+    const next = { id: crypto.randomUUID(), name: `Alan ${grids.length + 1}` }
     try { saveGridWorkspaces([...grids, next]); setGrids([...grids, next]); setGridId(next.id); setGridIds([]); setPendingGridAdd(null) }
     catch { setError('Grid kaydedilemedi.') }
   }
@@ -489,9 +526,7 @@ export function App() {
   const addLiveToGrid = () => {
     const ids = navigationIds(state).filter((id) => !gridIds.includes(id)).slice(0, Math.max(0, MAX_GRID_PANELS - gridIds.length))
     if (ids.length === 0) return
-    setPendingGridAdd({ ids, focus: false })
-    setActiveId(null)
-    setView('grid')
+    openItems(ids.map((id) => ({ id, place: 'split' })), false)
   }
 
   // Aynı programdan yeni oturum: proje klasöründe açılır, grid'deysen grid'e girer.
@@ -499,24 +534,18 @@ export function App() {
     if (creating) return
     setCreating(true)
     setError(null)
-    const intoGrid = view === 'grid' && !active
     api
       .createSession({ projectId: session.projectId, name: '', command: duplicateCommand(session), isolation: 'shared', workId: session.workId ?? null })
       .then(async (created) => {
         await refresh()
-        if (intoGrid) setPendingGridAdd({ ids: [created.id], focus: true })
-        else openSession(created.id)
+        openSession(created.id)
       })
       .catch((e) => setError(e.message))
       .finally(() => setCreating(false))
   }
 
-  const addToGrid = (id: string) => {
-    setPendingGridAdd({ ids: [id], focus: false })
-    setActiveId(null)
-    setPendingDelete(null)
-    setView('grid')
-  }
+  /** Yan yana aç: oturum çalışma alanında yeni bir bölmeye girer. */
+  const addToGrid = (id: string) => openInWorkspace(id, 'split')
 
   // Arşiv dosyalara dokunmaz; canlı iş yalnız açıkça görünen "durdur ve arşivle" ile kapanır.
   const toggleArchive = (target = active) => {
@@ -643,13 +672,11 @@ export function App() {
     if (creating) return
     setCreating(true)
     setError(null)
-    const intoGrid = view === 'grid' && !active
     api
       .createSession({ projectId: work.projectId, name: agent.name.slice(0, 80), command, isolation: 'shared', workId: work.id })
       .then(async (created) => {
         await refresh()
-        if (intoGrid) setPendingGridAdd({ ids: [created.id], focus: true })
-        else openSession(created.id)
+        openSession(created.id)
       })
       .catch((e) => setError(e.message))
       .finally(() => setCreating(false))
@@ -806,15 +833,16 @@ export function App() {
   const paletteCommands: PaletteCommand[] = [
     ...(active ? [
       { id: 'active-diff', label: `Değişiklikleri incele · ${active.name}`, icon: 'diff' as const, keywords: 'diff fark', run: () => setTab('diff') },
-      { id: 'active-grid', label: `Grid’e ekle · ${active.name}`, icon: 'grid' as const, run: () => addToGrid(active.id) },
+      { id: 'active-grid', label: `Çalışma alanında aç · ${active.name}`, icon: 'grid' as const, keywords: 'sekme grid', run: () => openSession(active.id) },
       { id: 'active-copy', label: `Aynı programla yeni oturum · ${active.name}`, icon: 'copy' as const, keywords: 'kopya çoğalt duplicate', run: () => duplicateSession(active) },
       { id: 'active-launch', label: `Komut çalıştır… · ${active.name}`, icon: 'play' as const, keywords: 'resume devam', run: () => setLaunchOpen(true) },
     ] : []),
     { id: 'home', label: 'Tüm oturumlar', icon: 'list', keywords: 'pano ana sayfa', hint: 'Esc', run: goHome },
-    { id: 'grid', label: 'Terminal grid', icon: 'grid', keywords: 'bölünmüş yan yana', run: goGrid },
-    ...grids.filter(() => grids.length > 1).map(g => ({ id: `grid:${g.id}`, label: `Grid’e geç · ${g.name}`, icon: 'layout' as const, run: () => { leaveToScan(); setGridId(g.id); setGridIds(savedGridSessionIds(g.id)); setPendingGridAdd(null); setView('grid') } })),
-    { id: 'new-grid', label: 'Yeni grid oluştur', icon: 'plus', run: () => { createGrid(); goGrid() } },
-    { id: 'grid-live', label: 'Çalışan oturumları grid’e ekle', icon: 'layout', keywords: 'hepsi tümü canlı', run: addLiveToGrid },
+    { id: 'grid', label: 'Çalışma alanı', icon: 'grid', keywords: 'sekmeler grid bölünmüş yan yana', run: goGrid },
+    { id: 'new-tab', label: 'Yeni sekme', icon: 'plus', hint: SHORTCUT_LABELS.newTab, keywords: 'terminal sekme aç', run: newTab },
+    ...grids.filter(() => grids.length > 1).map(g => ({ id: `grid:${g.id}`, label: `Çalışma alanına geç · ${g.name}`, icon: 'layout' as const, run: () => { leaveToScan(); setGridId(g.id); setGridIds(savedGridSessionIds(g.id)); setPendingGridAdd(null); setView('grid') } })),
+    { id: 'new-grid', label: 'Yeni çalışma alanı oluştur', icon: 'plus', keywords: 'grid', run: () => { createGrid(); goGrid() } },
+    { id: 'grid-live', label: 'Çalışan oturumları yan yana aç', icon: 'layout', keywords: 'hepsi tümü canlı grid', run: addLiveToGrid },
     { id: 'sidebar', label: preferences.sidebarCollapsed ? 'Kenar çubuğunu genişlet' : 'Kenar çubuğunu daralt', icon: 'sidebar', hint: SHORTCUT_LABELS.sidebar, keywords: 'panel gizle', run: toggleSidebar },
     { id: 'new-session', label: 'Yeni oturum…', icon: 'plus', hint: SHORTCUT_LABELS.newSession, keywords: 'ajan terminal başlat', run: () => shortcutRef.current({ kind: 'new-session' }) },
     { id: 'add-project', label: 'Proje ekle…', icon: 'folder', keywords: 'klasör depo', run: () => setAddingProject(true) },
@@ -823,12 +851,13 @@ export function App() {
   ]
   const menuSession = state.sessions.find(session => session.id === menu?.id)
   const menuActions: MenuAction[] = menuSession ? [
-    { label: 'Terminali aç', icon: 'terminal', run: () => openSession(menuSession.id) },
-    { label: 'Değişiklikleri incele', icon: 'diff', run: () => { openSession(menuSession.id); setTab('diff') } },
+    { label: 'Sekmede aç', icon: 'terminal', run: () => openSession(menuSession.id) },
+    { label: 'Yan yana aç', icon: 'grid', description: 'Çalışma alanında yeni bir bölmede açar.', run: () => addToGrid(menuSession.id) },
+    { label: 'Değişiklikleri incele', icon: 'diff', run: () => openDetail(menuSession.id, 'diff') },
+    { label: 'Ayrıntı görünümü', icon: 'external', description: 'Önceki Run’lar ve oturum eylemleri.', run: () => openDetail(menuSession.id) },
     { label: 'Terminal rengi…', icon: 'palette', run: () => setColorSession(menuSession) },
-    { label: 'Grid’e ekle', icon: 'grid', run: () => addToGrid(menuSession.id) },
     { label: menuSession.workId ? 'Başka işe taşı…' : 'İşe bağla…', icon: 'work', description: workOf(menuSession) ? `Şu an: ${workOf(menuSession)!.name}` : undefined, disabled: !stateHealthy, run: () => { setError(null); setAssigning(menuSession) } },
-    { label: 'Aynı programla yeni oturum', icon: 'copy', description: 'Ctrl basılı tutup grid’e sürüklemek de kopya açar.', disabled: !stateHealthy || creating, run: () => duplicateSession(menuSession) },
+    { label: 'Aynı programla yeni sekme', icon: 'copy', description: 'Ctrl basılı tutup çalışma alanına sürüklemek de kopya açar.', disabled: !stateHealthy || creating, run: () => duplicateSession(menuSession) },
     ...(menuSession.archivedAt === null ? sessionWorkActions(menuSession).map(action => ({ label: action.label[0].toLocaleUpperCase('tr') + action.label.slice(1), description: action.description, icon: action.kind === 'stop' ? 'stop' as const : action.kind === 'restart' ? 'refresh' as const : 'play' as const, disabled: !stateHealthy || Boolean(menuSession.degraded && action.kind !== 'stop'), run: () => executeAction(menuSession, action) })) : []),
     { label: menuSession.archivedAt !== null ? 'Arşivden çıkar' : hasRunningProcesses(menuSession) ? 'Durdur ve arşivle' : 'Arşivle', icon: 'archive', disabled: !stateHealthy, run: () => toggleArchive(menuSession) },
     { label: 'Çalışma klasörünün yolunu kopyala', icon: 'copy', run: () => { navigator.clipboard.writeText(menuSession.cwd).catch(() => setError(`Yol kopyalanamadı: ${menuSession.cwd}`)) } },
@@ -881,6 +910,8 @@ export function App() {
           setView('grid')
         })}
         onAddToGrid={(id) => navigate(() => addToGrid(id))}
+        onOpenBackground={(id) => navigate(() => openInWorkspace(id, 'background'))}
+        onOpenBeside={(target, dragged) => navigate(() => openItems([{ id: target, place: 'tab' }, { id: dragged, place: 'split', beside: target }], false))}
         activeId={activeId}
         gridSessionIds={view === 'grid' && !active ? gridIds : []}
         collapsed={preferences.sidebarCollapsed && !narrow}
@@ -952,17 +983,25 @@ export function App() {
             healthy={stateHealthy}
             pendingAdd={pendingGridAdd}
             onPendingHandled={() => setPendingGridAdd(null)}
-            onOpen={openSession}
+            onDetail={openDetail}
             onSessionMenu={showMenu}
             onPanelsChange={setGridIds}
+            onVisibleChange={setVisibleGridIds}
             onAddLive={addLiveToGrid}
-            actions={<button className="ghost-button grid-add-button" title="Grid'e terminal ekle" aria-label="Grid'e terminal ekle" onClick={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect()
-              setAddMenu({ x: rect.right - 280, y: rect.bottom + 4, origin: event.currentTarget })
-            }}><Icon name="plus" size={14} /> Terminal</button>}
-            toolbar={<div className="grid-workspace-tabs" role="navigation" aria-label="Grid çalışma alanları">
+            onNewTab={newTab}
+            toolbar={<>
+              <div className="new-tab-split" role="group" aria-label="Yeni sekme">
+                <button className="new-tab-button" title={`Yeni sekme · ${SHORTCUT_LABELS.newTab}`} aria-label="Yeni sekme" aria-keyshortcuts="Control+Shift+T" disabled={!stateHealthy || creating} onClick={newTab}>
+                  <Icon name="plus" size={15} />
+                </button>
+                <button className="new-tab-more" title="Program veya proje seç" aria-label="Yeni sekme seçenekleri" aria-haspopup="menu" onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setAddMenu({ x: rect.left, y: rect.bottom + 4, origin: event.currentTarget })
+                }}><Icon name="chevron" size={11} /></button>
+              </div>
+              <div className="grid-workspace-tabs" role="navigation" aria-label="Çalışma alanları">
               {grids.map(g => renamingGrid === g.id
-                ? <input key={g.id} className="grid-rename" aria-label="Grid adı" autoFocus defaultValue={g.name} maxLength={60}
+                ? <input key={g.id} className="grid-rename" aria-label="Çalışma alanı adı" autoFocus defaultValue={g.name} maxLength={60}
                     onFocus={(event) => event.currentTarget.select()}
                     onBlur={(event) => renameGrid(g.id, event.currentTarget.value)}
                     onKeyDown={(event) => {
@@ -972,12 +1011,13 @@ export function App() {
                 : <button key={g.id} aria-pressed={gridId === g.id} title="Çift tıkla: yeniden adlandır"
                     onDoubleClick={() => setRenamingGrid(g.id)}
                     onClick={() => { if (g.id !== gridId) { setGridId(g.id); setGridIds(savedGridSessionIds(g.id)); setPendingGridAdd(null) } }}>{g.name}</button>)}
-              <button className="icon-button ghost" title="Ayrı bir terminal gridi oluştur" aria-label="Yeni grid" onClick={createGrid}><Icon name="plus" size={14} /></button>
-              <button className="icon-button ghost" title="Grid işlemleri" aria-label="Grid işlemleri" onClick={(event) => {
+              <button className="icon-button ghost" title="Ayrı bir çalışma alanı oluştur" aria-label="Yeni çalışma alanı" onClick={createGrid}><Icon name="layout" size={14} /></button>
+              <button className="icon-button ghost" title="Çalışma alanı işlemleri" aria-label="Çalışma alanı işlemleri" onClick={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect()
                 setGridMenu({ x: rect.left, y: rect.bottom + 4, origin: event.currentTarget })
               }}><Icon name="more" size={14} /></button>
-            </div>}
+              </div>
+            </>}
           />
           </div>
         )}
@@ -985,7 +1025,7 @@ export function App() {
           <>
             <header className="topbar clean-topbar" style={terminalStyle(active, preferences)} onContextMenu={event => showMenu(active.id, event)}>
               <nav className="crumbs" aria-label="Konum">
-                <button className="topbar-back crumb" aria-keyshortcuts="F6 Escape" title="Oturumlara dön · Esc" aria-label="Oturumlara dön" onClick={leaveToScan}>
+                <button className="topbar-back crumb" aria-keyshortcuts="F6 Escape" title={`${view === 'grid' ? 'Çalışma alanına' : 'Oturumlara'} dön · Esc`} aria-label={view === 'grid' ? 'Çalışma alanına dön' : 'Oturumlara dön'} onClick={leaveToScan}>
                   <Icon name="back" size={14} /><span>{activeProject?.name ?? 'Oturumlar'}</span>
                 </button>
                 <span className="crumb-sep" aria-hidden="true">/</span>
@@ -1010,7 +1050,7 @@ export function App() {
                 <button className={tab === 'diff' ? 'on' : ''} aria-pressed={tab === 'diff'} onClick={() => setTab('diff')}><Icon name="diff" size={14} /> Değişiklikler</button>
               </div>
               {active.archivedAt === null && active.lifecycle !== 'live' && sessionWorkActions(active).filter(action => action.primary).map(action => <button key={action.kind} className="primary" disabled={!stateHealthy || Boolean(active.degraded)} title={action.description} onClick={() => executeAction(active, action)}><Icon name="play" size={14} />{action.kind === 'continue' ? 'Devam et' : 'Yeniden aç'}</button>)}
-              <button className="icon-button ghost" title="Grid'e ekle" aria-label="Grid'e ekle" onClick={() => addToGrid(active.id)}><Icon name="grid" /></button>
+              <button className="icon-button ghost" title="Çalışma alanında sekme olarak aç" aria-label="Çalışma alanında aç" onClick={() => openSession(active.id)}><Icon name="grid" /></button>
               <button className="icon-button ghost" aria-label="Oturum işlemleri" title="Oturum işlemleri · sağ tık" onClick={event => showMenu(active.id, event)}><Icon name="more" /></button>
             </header>
             {(active.degraded || activeProject?.degraded) && <div className="error">{active.degraded ?? activeProject?.degraded}</div>}
@@ -1077,7 +1117,7 @@ export function App() {
                   )}
                   <TerminalPane
                     key={`${state.daemonId}:${active.id}:${inspectRunId ?? active.runId}`}
-                    onLayout={() => addToGrid(active.id)}
+                    onLayout={() => openSession(active.id)}
                     runId={inspectRunId}
                     session={active}
                     daemonId={state.daemonId}
@@ -1127,18 +1167,22 @@ export function App() {
         onCancel={() => { if (!workBusy) setAssigning(null) }}
       />}
       {addMenu && (() => {
-        const focusProject = state.projects.find((p) => p.id === gridFocusSession()?.projectId) ?? state.projects[0]
+        const context = active ?? gridFocusSession()
+        const focusProject = state.projects.find((p) => p.id === context?.projectId)
         const live = navigationIds(state).filter((id) => !gridIds.includes(id)).length
-        return <ActionMenu label="Grid'e terminal ekle" position={addMenu} onClose={closeAddMenu} actions={[
-          ...(focusProject ? PRESETS.map((preset) => ({ label: `${preset.label} · ${focusProject.name}`, icon: 'terminal' as const, leading: <ProgramIcon command={preset.command} />, disabled: !stateHealthy || creating || gridIds.length >= MAX_GRID_PANELS, run: () => quickCreate(focusProject, preset) })) : []),
-          { label: live > 0 ? `Çalışan ${live} oturumu ekle` : 'Çalışan oturumların hepsi grid’de', icon: 'layout', disabled: live === 0 || gridIds.length >= MAX_GRID_PANELS, run: addLiveToGrid },
+        const full = gridIds.length >= MAX_GRID_PANELS
+        return <ActionMenu label="Yeni sekme" position={addMenu} onClose={closeAddMenu} actions={[
+          ...(focusProject ? PRESETS.map((preset) => ({ label: `${preset.label} · ${focusProject.general ? 'projesiz' : focusProject.name}`, icon: 'terminal' as const, leading: <ProgramIcon command={preset.command} />, disabled: !stateHealthy || creating || full, run: () => quickCreate(focusProject, preset) })) : []),
+          ...(!focusProject?.general ? [{ label: 'Projesiz sekme…', icon: 'terminal' as const, description: 'Ev klasöründe; program ve iş seçilir.', disabled: !stateHealthy || full, run: openGeneralSession }] : []),
+          { label: 'Yeni oturum…', icon: 'plus', description: 'Proje, program, iş ve çalışma yeri seçilir.', disabled: !stateHealthy || full, run: () => shortcutRef.current({ kind: 'new-session' }) },
+          { label: live > 0 ? `Çalışan ${live} oturumu yan yana aç` : 'Çalışan oturumların hepsi açık', icon: 'layout', disabled: live === 0 || full, run: addLiveToGrid },
           { label: 'Başka proje veya program…', icon: 'command', run: () => setPaletteOpen(true) },
         ]} />
       })()}
-      {gridMenu && <ActionMenu label="Grid işlemleri" position={gridMenu} onClose={closeGridMenu} actions={[
+      {gridMenu && <ActionMenu label="Çalışma alanı işlemleri" position={gridMenu} onClose={closeGridMenu} actions={[
         { label: 'Yeniden adlandır', icon: 'edit', run: () => setRenamingGrid(gridId) },
-        { label: 'Yeni grid', icon: 'plus', run: createGrid },
-        { label: 'Grid’i kaldır', icon: 'trash', danger: true, disabled: grids.length < 2, description: 'Grid yerleşimini kaldırır; terminaller çalışmaya devam eder.', run: removeGrid },
+        { label: 'Yeni çalışma alanı', icon: 'plus', run: createGrid },
+        { label: 'Çalışma alanını kaldır', icon: 'trash', danger: true, disabled: grids.length < 2, description: 'Sekmeleri ve yerleşimi kaldırır; terminaller çalışmaya devam eder.', run: removeGrid },
       ]} />}
       {paletteOpen && (
         <CommandPalette

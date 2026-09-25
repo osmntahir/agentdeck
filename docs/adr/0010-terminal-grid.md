@@ -1,6 +1,6 @@
 # Terminal grid: birden çok etkileşimli terminal yan yana
 
-Durum: accepted — 2026-09-13. [Spec §4](../specs/agentdeck-v0.md), [ADR 0004](0004-terminal-state-and-scrollback.md) ve [ADR 0008](0008-terminal-slice-implementation.md) içindeki "istemci odakta tek xterm tutar" hükmünü grid görünümü için günceller.
+Durum: accepted — 2026-09-13; [ADR 0019](0019-workspace-tabs.md) grid'i çalışma alanına dönüştürdü: oturumlar artık doğrudan sekme olarak açılıyor. [Spec §4](../specs/agentdeck-v0.md), [ADR 0004](0004-terminal-state-and-scrollback.md) ve [ADR 0008](0008-terminal-slice-implementation.md) içindeki "istemci odakta tek xterm tutar" hükmünü grid görünümü için günceller.
 
 Kullanıcı paralel ajanları aynı anda izleyip yönetmek istiyor; önizleme kartları bunu karşılamıyor. Bu yüzden tek oturum görünümünün yanına ayrı bir **Terminal grid** görünümü eklendi. Tek oturum görünümü ve diff'e geçince terminali bırakma kuralı değişmedi.
 

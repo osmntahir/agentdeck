@@ -21,7 +21,7 @@ import 'dockview-react/dist/styles/dockview.css'
 import type { SessionView, StateResponse } from '../../shared/types'
 import { duplicateCommand } from '../../shared/workspacePolicy'
 import * as client from '../api'
-import { clearGridLayout, loadGridLayout, MAX_GRID_PANELS, saveGridLayout, SESSION_DRAG_TYPE } from '../gridLayout'
+import { clearGridLayout, loadGridLayout, MAX_GRID_PANELS, saveGridLayout, SESSION_DRAG_TYPE, type GridAdd, type GridPlacement } from '../gridLayout'
 import { stateLabel, statusTone, StatusDot } from '../sessionStatus'
 import { Icon } from './Icon'
 import { SHORTCUT_LABELS } from '../../shared/shortcuts'
@@ -34,11 +34,12 @@ interface GridContextValue {
   focusRequest: { sessionId: string; sequence: number; origin: HTMLElement } | null
   onFocusHandled: () => void
   onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
-  onOpen: (sessionId: string) => void
+  onDetail: (sessionId: string, tab: 'terminal' | 'diff') => void
   onLayout: (sessionId: string) => void
   maximized: boolean
   onToggleMaximize: (sessionId: string) => void
   onAddLive: () => void
+  onNewTab: () => void
   liveOutside: number
 }
 
@@ -58,36 +59,54 @@ const DIRECTION: Record<Position, Direction> = {
 }
 
 /**
- * Oturumu grid'e ekler; zaten açıksa yalnız öne getirir. Bırakma konumu yoksa
- * en geniş grup uzun kenarından bölünür ve terminaller dengeli dağılır. Sınır
- * doluysa eklemez ve nedenini döner.
+ * Oturumu çalışma alanına ekler; zaten açıksa yalnız öne getirir (arka plan
+ * isteğinde dokunmaz). Sekme etkin gruba girer. Bölme `beside` oturumunun
+ * yanında, yoksa en geniş grubun uzun kenarında açılır; bırakma konumu varsa
+ * o kullanılır. Sınır doluysa eklemez ve nedenini döner.
  */
 function addSession(
   api: DockviewApi,
   session: Pick<SessionView, 'id' | 'name'>,
-  drop?: { group?: DockviewGroupPanel; position: Position },
+  how: { place: GridPlacement; beside?: string } | { drop: { group?: DockviewGroupPanel; position: Position } },
 ): string | null {
   const existing = api.getPanel(session.id)
   if (existing) {
-    existing.api.setActive()
+    if (!('place' in how) || how.place === 'tab') existing.api.setActive()
+    if ('place' in how && how.place === 'split') {
+      // Aynı gruptaki sekme yan yana istenirse yeni bir bölmeye taşınır; ayrı gruplardaysa ikisi de öne gelir.
+      const neighbor = how.beside ? api.getPanel(how.beside) : undefined
+      neighbor?.api.setActive()
+      const group = existing.group
+      if (group.panels.length > 1 && (!neighbor || neighbor.group === group)) {
+        existing.api.moveTo({ group, position: group.width >= group.height ? 'right' : 'bottom' })
+      }
+      existing.api.setActive()
+    }
     return null
   }
   if (api.panels.length >= MAX_GRID_PANELS) {
-    return `Grid'de en çok ${MAX_GRID_PANELS} terminal açık tutulur; önce bir paneli kapatın.`
+    return `Çalışma alanında en çok ${MAX_GRID_PANELS} sekme açık tutulur; önce bir sekmeyi kapatın.`
   }
   const panel = { id: session.id, component: 'terminal', title: session.name, params: { sessionId: session.id } }
-  if (drop?.group) {
-    api.addPanel({ ...panel, position: { referenceGroup: drop.group, direction: DIRECTION[drop.position] } })
-  } else if (drop && drop.position !== 'center') {
-    api.addPanel({ ...panel, position: { direction: DIRECTION[drop.position] } })
-  } else {
-    const largest = [...api.groups].sort((a, b) => b.width * b.height - a.width * a.height)[0]
-    api.addPanel(
-      largest
-        ? { ...panel, position: { referenceGroup: largest, direction: largest.width >= largest.height ? 'right' : 'below' } }
-        : panel,
-    )
+  if ('drop' in how) {
+    const { drop } = how
+    if (drop.group) api.addPanel({ ...panel, position: { referenceGroup: drop.group, direction: DIRECTION[drop.position] } })
+    else if (drop.position !== 'center') api.addPanel({ ...panel, position: { direction: DIRECTION[drop.position] } })
+    else api.addPanel(panel)
+    return null
   }
+  if (how.place !== 'split') {
+    const group = api.activeGroup ?? api.groups[0]
+    api.addPanel({ ...panel, ...(group ? { position: { referenceGroup: group, direction: 'within' as const } } : {}), inactive: how.place === 'background' && Boolean(group) })
+    return null
+  }
+  const neighbor = how.beside ? api.getPanel(how.beside)?.group : undefined
+  const reference = neighbor ?? [...api.groups].sort((a, b) => b.width * b.height - a.width * a.height)[0]
+  api.addPanel(
+    reference
+      ? { ...panel, position: { referenceGroup: reference, direction: reference.width >= reference.height ? 'right' : 'below' } }
+      : panel,
+  )
   return null
 }
 
@@ -138,7 +157,10 @@ function GroupActions({ activePanel }: IDockviewHeaderActionsProps) {
       <button className="icon-button ghost" title={`${grid.maximized ? 'Önceki yerleşime dön' : 'Paneli büyüt'} · ${SHORTCUT_LABELS.maximize}`} aria-label={grid.maximized ? 'Önceki yerleşime dön' : 'Paneli büyüt'} onClick={() => grid.onToggleMaximize(session.id)}>
         <Icon name={grid.maximized ? 'minimize' : 'maximize'} size={14} />
       </button>
-      <button className="icon-button ghost" title="Tek görünümde aç: diff ve oturum eylemleri" aria-label="Tek görünümde aç" onClick={() => grid.onOpen(session.id)}>
+      <button className="icon-button ghost" title="Değişiklikleri incele" aria-label={`${session.name} değişiklikleri`} onClick={() => grid.onDetail(session.id, 'diff')}>
+        <Icon name="diff" size={14} />
+      </button>
+      <button className="icon-button ghost" title="Ayrıntı görünümü: önceki Run'lar ve oturum eylemleri" aria-label="Ayrıntı görünümünde aç" onClick={() => grid.onDetail(session.id, 'terminal')}>
         <Icon name="external" size={14} />
       </button>
       <button className="icon-button ghost" title="Oturum işlemleri" aria-label={`${session.name} işlemleri`} onClick={event => grid.onSessionMenu(session.id, event)}>
@@ -167,17 +189,20 @@ function EmptyGrid() {
   return (
     <div className="grid-empty">
       <div className="grid-empty-mark" aria-hidden="true">
-        <Icon name="layout" size={24} />
+        <Icon name="terminal" size={24} />
       </div>
-      <strong>Terminalleri yan yana koy</strong>
+      <strong>Açık sekme yok</strong>
       <span>
-        Kenar çubuğundan bir oturumu buraya sürükleyin ya da satırdaki grid simgesine tıklayın. Sekmeyi bir
-        panelin kenarına bırakırsanız ekran bölünür.
+        Yeni bir sekme açın veya kenar çubuğundan bir oturuma tıklayın. Sekmeyi bir panelin kenarına sürüklerseniz
+        ekran bölünür; kenar çubuğunda bir oturumu diğerinin üstüne bırakmak ikisini yan yana açar.
       </span>
-      {grid && grid.liveOutside > 0 && (
-        <button className="primary" onClick={grid.onAddLive}><Icon name="grid" size={14} /> Çalışan {grid.liveOutside} oturumu ekle</button>
-      )}
-      <span className="grid-empty-keys"><kbd>Ctrl</kbd> basılı sürükle: aynı programdan kopya · <kbd>{SHORTCUT_LABELS.maximize}</kbd> paneli büyüt</span>
+      <div className="grid-empty-actions">
+        {grid && <button className="primary" onClick={grid.onNewTab}><Icon name="plus" size={14} /> Yeni sekme</button>}
+        {grid && grid.liveOutside > 0 && (
+          <button className="ghost-button" onClick={grid.onAddLive}><Icon name="grid" size={14} /> Çalışan {grid.liveOutside} oturumu yan yana aç</button>
+        )}
+      </div>
+      <span className="grid-empty-keys"><kbd>{SHORTCUT_LABELS.newTab}</kbd> yeni sekme · <kbd>{SHORTCUT_LABELS.closeTab}</kbd> sekmeyi kapat · <kbd>Ctrl+PgUp/PgDn</kbd> sekmeler arası · <kbd>Ctrl</kbd> basılı sürükle: aynı programdan kopya</span>
     </div>
   )
 }
@@ -192,21 +217,23 @@ interface Props {
   onRefresh: () => Promise<void>
   state: StateResponse
   healthy: boolean
-  /** Başka görünümden eklenmek istenen oturumlar; grid hazır olunca işlenir. focus klavyeyle gelindiğini söyler. */
-  pendingAdd: { ids: string[]; focus: boolean } | null
+  /** Başka görünümden eklenmek istenen oturumlar; alan hazır olunca işlenir. focus klavyeyle gelindiğini söyler. */
+  pendingAdd: { items: GridAdd[]; focus: boolean } | null
   onPendingHandled: () => void
   onSessionMenu: (id: string, event: React.MouseEvent<HTMLElement>) => void
-  onOpen: (sessionId: string) => void
+  onDetail: (sessionId: string, tab: 'terminal' | 'diff') => void
+  /** Açık sekmelerin hepsi. */
   onPanelsChange: (sessionIds: string[]) => void
-  /** Grid seçici; panel gezinmesiyle aynı satırda çizilir. */
+  /** Her grubun öndeki sekmesi: kullanıcının o an gördükleri. */
+  onVisibleChange: (sessionIds: string[]) => void
+  /** Araç çubuğunun solu: yeni sekme ve çalışma alanı seçici. */
   toolbar: ReactNode
-  /** Çubuğun sağ ucundaki eylemler. */
-  actions: ReactNode
-  /** Grid'de olmayan canlı oturumları ekler. */
+  /** Açık sekme olmayan canlı oturumları yan yana açar. */
   onAddLive: () => void
+  onNewTab: () => void
 }
 
-export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, onPendingHandled, onOpen, onSessionMenu, onPanelsChange, toolbar, actions, onAddLive }: Props) {
+export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, onPendingHandled, onDetail, onSessionMenu, onPanelsChange, onVisibleChange, toolbar, onAddLive, onNewTab }: Props) {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
     const tick = () => {
@@ -218,18 +245,14 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
   }, [])
   const [api, setApi] = useState<DockviewApi | null>(null)
   const [panelIds, setPanelIds] = useState<string[]>([])
-  const [candidate, setCandidate] = useState<string | null>(null)
   const [focusRequest, setFocusRequest] = useState<{ sessionId: string; sequence: number; origin: HTMLElement } | null>(null)
   const focusSequence = useRef(0)
-  const navigation = useRef<HTMLDivElement>(null)
-  const count = panelIds.length
-  const candidateId = candidate && panelIds.includes(candidate) ? candidate : panelIds[0]
 
   const [layoutPanel, setLayoutPanel] = useState<string | null>(null)
   const [maximized, setMaximized] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  const latest = useRef({ sessions: state.sessions, onPanelsChange })
-  latest.current = { sessions: state.sessions, onPanelsChange }
+  const latest = useRef({ sessions: state.sessions, onPanelsChange, onVisibleChange })
+  latest.current = { sessions: state.sessions, onPanelsChange, onVisibleChange }
 
   const onReady = ({ api: ready }: DockviewReadyEvent) => {
     const saved = loadGridLayout(gridId)
@@ -237,7 +260,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
       try {
         ready.fromJSON(saved)
       } catch {
-        // Okunamayan yerleşim oturumları etkilemez; grid boş başlar.
+        // Okunamayan yerleşim oturumları etkilemez; alan boş başlar.
         ready.clear()
         clearGridLayout(gridId)
       }
@@ -246,8 +269,10 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
       saveGridLayout(ready.toJSON(), gridId)
       setPanelIds(ready.panels.map((panel) => panel.id))
       latest.current.onPanelsChange(ready.panels.map((panel) => panel.id))
+      latest.current.onVisibleChange(ready.groups.flatMap((group) => (group.activePanel ? [group.activePanel.id] : [])))
     }
     ready.onDidLayoutChange(publish)
+    ready.onDidActivePanelChange(publish)
     ready.onDidMaximizedGroupChange(() => setMaximized(ready.hasMaximizedGroup()))
     ready.onUnhandledDragOver((event) => {
       const native = event.nativeEvent
@@ -258,17 +283,17 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
   }
 
   const onDidDrop = (event: DockviewDidDropEvent) => {
-    // Grid içindeki panel taşımalarını dockview kendisi yapar; yalnız dışarıdan gelen oturum eklenir.
+    // Alan içindeki sekme taşımalarını dockview kendisi yapar; yalnız dışarıdan gelen oturum eklenir.
     if (event.getData() || !(event.nativeEvent instanceof DragEvent)) return
     const id = event.nativeEvent.dataTransfer?.getData(SESSION_DRAG_TYPE)
     const session = latest.current.sessions.find((s) => s.id === id)
     if (!session) return
     // Ctrl basılı bırakma aynı programdan yeni bir terminal açar; özgün oturum yerinde kalır.
     if (event.nativeEvent.ctrlKey) void duplicateInto(session, { group: event.group, position: event.position })
-    else setNotice(addSession(event.api, session, { group: event.group, position: event.position }))
+    else setNotice(addSession(event.api, session, { drop: { group: event.group, position: event.position } }))
   }
 
-  // Grid içindeki sekme Ctrl ile sürüklenirse taşınmaz; bırakılan yere kopyası açılır.
+  // Alan içindeki sekme Ctrl ile sürüklenirse taşınmaz; bırakılan yere kopyası açılır.
   const onWillDrop = (event: DockviewWillDropEvent) => {
     const panelId = event.getData()?.panelId
     if (!panelId || !event.nativeEvent.ctrlKey) return
@@ -281,7 +306,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
   const duplicateInto = async (session: SessionView, drop: { group?: DockviewGroupPanel; position: Position }) => {
     if (!api) return
     if (api.panels.length >= MAX_GRID_PANELS) {
-      setNotice(`Grid'de en çok ${MAX_GRID_PANELS} terminal açık tutulur; önce bir paneli kapatın.`)
+      setNotice(`Çalışma alanında en çok ${MAX_GRID_PANELS} sekme açık tutulur; önce bir sekmeyi kapatın.`)
       return
     }
     setNotice(null)
@@ -290,25 +315,27 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
       await onRefresh()
       // Kopya özgün terminalin arkasına sekme olarak gizlenmesin; ortaya bırakılınca grup bölünür.
       const position: Position = drop.position !== 'center' ? drop.position : drop.group && drop.group.width < drop.group.height ? 'bottom' : 'right'
-      setNotice(addSession(api, created, { ...drop, position }))
+      setNotice(addSession(api, created, { drop: { ...drop, position } }))
     } catch (e) {
       setNotice(`Kopya açılamadı: ${(e as Error).message}`)
     }
   }
 
+  const focusPanel = (sessionId: string) => {
+    if (document.activeElement instanceof HTMLElement) setFocusRequest({ sessionId, sequence: ++focusSequence.current, origin: document.activeElement })
+  }
+
   useEffect(() => {
     if (!api || !pendingAdd || !healthy) return
     let problem: string | null = null
-    for (const id of pendingAdd.ids) {
-      const session = state.sessions.find((s) => s.id === id)
-      problem = (session ? addSession(api, session) : 'Eklenmek istenen oturum artık yok.') ?? problem
+    for (const item of pendingAdd.items) {
+      const session = state.sessions.find((s) => s.id === item.id)
+      problem = (session ? addSession(api, session, item) : 'Açılmak istenen oturum artık yok.') ?? problem
     }
     setNotice(problem)
-    // Kısayolla gelinen panel yazmaya hazır olur; tıklamayla eklenen panel odağı çalmaz.
-    const target = pendingAdd.ids.at(-1)
-    if (target && pendingAdd.focus && api.getPanel(target) && document.activeElement instanceof HTMLElement) {
-      setFocusRequest({ sessionId: target, sequence: ++focusSequence.current, origin: document.activeElement })
-    }
+    // Kısayolla veya yeni sekmeyle gelinen panel yazmaya hazır olur; tıklamayla eklenen panel odağı çalmaz.
+    const target = pendingAdd.items.filter((item) => item.place !== 'background').at(-1)?.id
+    if (target && pendingAdd.focus && api.getPanel(target)) focusPanel(target)
     onPendingHandled()
   }, [api, pendingAdd, healthy])
 
@@ -319,12 +346,44 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
     // Tek grup zaten tüm alanı kaplar; büyütülecek bir şey yoktur.
     if (panel && api.groups.length > 1) api.maximizeGroup(panel)
   }
-  const toggleRef = useRef(toggleMaximize)
-  toggleRef.current = toggleMaximize
+
+  /**
+   * Sekmeler arasında dolaşır: etkin grupta birden çok sekme varsa onların
+   * arasında, yoksa gruplar arasında. Öne gelen terminal odak alır.
+   */
+  const cycle = (delta: 1 | -1) => {
+    if (!api) return
+    const group = api.activeGroup ?? api.groups[0]
+    if (!group) return
+    let next: string | undefined
+    if (group.panels.length > 1) {
+      const index = group.panels.findIndex((panel) => panel.id === group.activePanel?.id)
+      next = group.panels[(index + delta + group.panels.length) % group.panels.length]?.id
+    } else {
+      const groups = api.groups
+      const index = groups.indexOf(group)
+      next = groups[(index + delta + groups.length) % groups.length]?.activePanel?.id
+    }
+    const panel = next ? api.getPanel(next) : undefined
+    if (!panel) return
+    panel.api.setActive()
+    focusPanel(panel.id)
+  }
+
+  const handlers = useRef({ toggleMaximize, cycle, close: () => api?.activePanel?.api.close() })
+  handlers.current = { toggleMaximize, cycle, close: () => api?.activePanel?.api.close() }
   useEffect(() => {
-    const onMaximize = () => toggleRef.current()
+    const onMaximize = () => handlers.current.toggleMaximize()
+    const onCycle = (event: Event) => handlers.current.cycle((event as CustomEvent<1 | -1>).detail)
+    const onClose = () => handlers.current.close()
     window.addEventListener('agentdeck:grid-maximize', onMaximize)
-    return () => window.removeEventListener('agentdeck:grid-maximize', onMaximize)
+    window.addEventListener('agentdeck:tab-cycle', onCycle)
+    window.addEventListener('agentdeck:tab-close', onClose)
+    return () => {
+      window.removeEventListener('agentdeck:grid-maximize', onMaximize)
+      window.removeEventListener('agentdeck:tab-cycle', onCycle)
+      window.removeEventListener('agentdeck:tab-close', onClose)
+    }
   }, [])
 
   // Restored Dockview tabs keep their saved title unless explicitly refreshed.
@@ -336,7 +395,7 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
     }
   }, [api, state.sessions])
 
-  // Silinen oturumun paneli kapanır; kaydı olmayan terminal gösterilmez.
+  // Silinen oturumun sekmesi kapanır; kaydı olmayan terminal gösterilmez.
   useEffect(() => {
     if (!api || !healthy) return
     const known = new Set(state.sessions.map((s) => s.id))
@@ -344,53 +403,9 @@ export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, on
   }, [api, healthy, state.sessions])
 
   return (
-    <GridContext.Provider value={{ state, healthy, onOpen, onSessionMenu, onLayout: setLayoutPanel, focusRequest, onFocusHandled: () => setFocusRequest(null), maximized, onToggleMaximize: toggleMaximize, onAddLive, liveOutside: state.sessions.filter((s) => s.archivedAt === null && s.lifecycle === 'live' && !panelIds.includes(s.id)).length }}>
+    <GridContext.Provider value={{ state, healthy, onDetail, onSessionMenu, onLayout: setLayoutPanel, focusRequest, onFocusHandled: () => setFocusRequest(null), maximized, onToggleMaximize: toggleMaximize, onAddLive, onNewTab, liveOutside: state.sessions.filter((s) => s.archivedAt === null && s.lifecycle === 'live' && !panelIds.includes(s.id)).length }}>
       <section className="terminal-grid">
-        <div className="grid-toolbar">
-        {toolbar}
-        {panelIds.length > 0 && (
-          <div className="grid-panel-navigation" role="toolbar" aria-label="Grid terminalleri" ref={navigation}>
-            <span className="grid-count" title={`En çok ${MAX_GRID_PANELS} panel`}>{count}/{MAX_GRID_PANELS}</span>
-            {panelIds.map((id) => (
-              <button
-                key={id}
-                type="button"
-                data-grid-session={id}
-                tabIndex={id === candidateId ? 0 : -1}
-                onFocus={() => setCandidate(id)}
-                onKeyDown={(event) => {
-                  if (event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) return
-                  const index = panelIds.indexOf(id)
-                  let next: number
-                  switch (event.key) {
-                    case 'ArrowRight': case 'ArrowDown': next = (index + 1) % panelIds.length; break
-                    case 'ArrowLeft': case 'ArrowUp': next = (index + panelIds.length - 1) % panelIds.length; break
-                    case 'Home': next = 0; break
-                    case 'End': next = panelIds.length - 1; break
-                    default: return
-                  }
-                  event.preventDefault()
-                  navigation.current?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus()
-                }}
-                onClick={(event) => {
-                  const origin = event.currentTarget
-                  origin.focus()
-                  const panel = api?.getPanel(id)
-                  if (!panel) return
-                  panel.api.setActive()
-                  setFocusRequest({ sessionId: id, sequence: ++focusSequence.current, origin })
-                }}
-              >
-                {(() => {
-                  const session = state.sessions.find((item) => item.id === id)
-                  return session ? <><StatusDot session={session} />{session.name}</> : id
-                })()}
-              </button>
-            ))}
-          </div>
-        )}
-        {actions}
-        </div>
+        <div className="grid-toolbar">{toolbar}</div>
 
         {layoutPanel && api && <GridLayoutDialog projects={state.projects} healthy={healthy} onRefresh={onRefresh} api={api} panelId={layoutPanel} sessions={state.sessions} works={state.works ?? []}
           onClose={() => setLayoutPanel(null)} />}

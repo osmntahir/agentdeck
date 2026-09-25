@@ -31,3 +31,10 @@ test('yeni oturum ve panel büyütme Ctrl+Shift ailesindedir', () => {
   // Ctrl+B kabukta imleci geri alır; terminalde kalır.
   assert.equal(appShortcut(key({ code: 'KeyB', key: 'b', ctrlKey: true }), true), null)
 })
+
+test('sekme kısayolları GNOME Terminal gibidir; Ctrl+T ve Ctrl+W kabukta kalır', () => {
+  assert.deepEqual(appShortcut(key({ code: 'KeyT', key: 'T', ctrlKey: true, shiftKey: true }), true), { kind: 'new-tab' })
+  assert.deepEqual(appShortcut(key({ code: 'KeyW', key: 'W', ctrlKey: true, shiftKey: true }), true), { kind: 'close-tab' })
+  assert.equal(appShortcut(key({ code: 'KeyT', key: 't', ctrlKey: true }), true), null)
+  assert.equal(appShortcut(key({ code: 'KeyW', key: 'w', ctrlKey: true }), true), null)
+})

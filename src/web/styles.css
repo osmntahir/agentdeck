@@ -1130,33 +1130,14 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
 .grid-workspace-tabs > button[aria-pressed='true'] { background: var(--surface-4); color: var(--text); box-shadow: 0 1px 0 #ffffff0d inset; }
 .grid-workspace-tabs .icon-button { width: 28px; min-width: 28px; min-height: 28px; }
 .grid-rename { width: 150px; min-height: 28px; }
-.grid-panel-navigation {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.grid-panel-navigation::-webkit-scrollbar, .grid-workspace-tabs::-webkit-scrollbar { display: none; }
-.grid-count { flex: none; margin-right: 4px; color: var(--text-3); font: 11px var(--font-mono); }
-.grid-panel-navigation button {
-  flex: none;
-  gap: 7px;
-  max-width: 180px;
-  min-height: 26px;
-  padding: 0 9px;
-  border-color: var(--border);
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.grid-panel-navigation button:hover { background: var(--surface-3); color: var(--text); }
-.grid-add-button { flex: none; min-height: 28px; border-color: var(--border-2); }
+.grid-workspace-tabs::-webkit-scrollbar { display: none; }
+/* Sol üstte yeni sekme: + yeni sekmeyi açar, ok program ve proje seçtirir. */
+.new-tab-split { display: inline-flex; flex: none; align-items: stretch; overflow: hidden; border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface-2); }
+.new-tab-split > button { min-height: 28px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-2); }
+.new-tab-split > button:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.new-tab-button { width: 32px; color: var(--accent) !important; }
+.new-tab-more { width: 20px; border-left: 1px solid var(--border-2) !important; }
+.new-tab-more .icon { transform: rotate(90deg); }
 .grid-stage { flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 6px; }
 .grid-dock { height: 100%; }
 .terminal-grid .dockview-theme-dark {
@@ -1245,7 +1226,8 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
 .grid-panel { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; background: var(--terminal-bg); }
 .grid-empty { display: grid; place-content: center; justify-items: center; gap: 8px; height: 100%; padding: 24px; color: var(--text-3); text-align: center; }
 .grid-empty strong { color: var(--text); font-size: 15px; font-weight: 600; }
-.grid-empty > span { max-width: 380px; line-height: 1.6; }
+.grid-empty > span { max-width: 420px; line-height: 1.6; }
+.grid-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
 .grid-empty-keys { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: 8px; font-size: 12px; }
 .grid-empty-mark { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 8px; border: 1px solid var(--border-2); border-radius: 14px; background: var(--surface-2); color: var(--accent); }
 /* Grid imleçleri odaktan bağımsız olarak birlikte yanıp söner (tarayıcı testi bunu doğrular). */
@@ -1656,7 +1638,7 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
 .work-block.collapsed .work-block-head { margin-bottom: 0; }
 
 /* Proje başlığına tıklayınca proje kapanır/açılır; satır sürüklenince bırakma hedefi vurgulanır. */
-button.project-name { min-height: 0; padding: 0; border: 0; background: transparent; font: inherit; font-size: 13px; font-weight: 650; text-align: left; }
+button.project-name { justify-content: flex-start; min-height: 0; padding: 0; border: 0; background: transparent; font: inherit; font-size: 13px; font-weight: 650; text-align: left; }
 button.project-name:hover > span:first-child { color: var(--project-color); }
 .project.collapsed .project-name .work-chevron { transform: none; }
 .project-head[data-drop='over'], .project-sessions[data-drop='over'], .work-group[data-drop='over'] > .work-head {
@@ -1664,3 +1646,7 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
   outline-offset: -1px;
   background: color-mix(in srgb, var(--project-color) 12%, transparent);
 }
+
+/* Kenar çubuğunda bir oturum başka bir oturumun üstüne sürüklenince: ikisi yan yana açılır. */
+.session-row-wrap[data-drop='beside'] > .session-row { outline: 1px dashed var(--accent); outline-offset: -1px; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.session-row-wrap[data-drop='beside'] > .session-row::after { content: 'yan yana aç'; margin-left: auto; color: var(--accent); font-size: 10.5px; font-weight: 600; }
