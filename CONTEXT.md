@@ -168,3 +168,18 @@ _Avoid_: fatura, maliyet (kesin tutar anlamında)
 
 **Konuşma araması**:
 Claude konuşmalarındaki kullanıcı istemlerinde ve ajanın düz metin yanıtlarında yapılan metin arama. Araç çıktılarını kapsamaz. Dizin daemon belleğinde yaşar.
+
+**Ajan turu**:
+Claude kancalarından türetilen durum: istem gönderilince çalışıyor, tur bitince (Stop) bekliyor. Yalnız ön planda Claude varken anlamlıdır; kalıcı kayda yazılmaz (ADR 0024).
+_Avoid_: idle (Activity ile karışır)
+
+**İstem kuyruğu**:
+Oturumun, ajan turunu bitirdikçe sırayla gönderilecek istemleri. Onay veya soru varken, duraklatılmışken ya da ön planda Claude yokken gönderim yapılmaz.
+_Avoid_: iş kuyruğu, görev listesi
+
+**Hazır istem**:
+Adlandırılmış, bir veya birkaç adımlı istem. Gönderilince adımları sırayla istem kuyruğuna girer.
+_Avoid_: şablon, makro, preset (başlangıç Command'ıyla karışır)
+
+**Tekrar önerisi**:
+Konuşmalarda sık yazılan bir istemin veya arka arkaya yazılan bir istem dizisinin hazır istem olarak kaydedilmesi önerisi. Kullanıcı kaydetmeden hiçbir şey otomatikleşmez.

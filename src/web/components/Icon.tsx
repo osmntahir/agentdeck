@@ -2,7 +2,7 @@ export type IconName =
   | 'settings' | 'more' | 'play' | 'stop' | 'branch' | 'copy' | 'archive' | 'trash' | 'grid' | 'terminal'
   | 'diff' | 'refresh' | 'plus' | 'back' | 'list' | 'search' | 'bell' | 'close' | 'maximize' | 'minimize'
   | 'chevron' | 'folder' | 'external' | 'palette' | 'command' | 'edit' | 'check' | 'alert' | 'layout' | 'sidebar'
-  | 'chat' | 'work' | 'wrap' | 'rows' | 'columns' | 'globe'
+  | 'chat' | 'work' | 'wrap' | 'rows' | 'columns' | 'globe' | 'queue' | 'bolt' | 'pause'
 /** 24px ızgarada çizilmiş, tek renkli ve ince çizgili simgeler. */
 const paths: Record<IconName, string[]> = {
   settings: ['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z', 'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z'],
@@ -28,6 +28,9 @@ const paths: Record<IconName, string[]> = {
   chevron: ['m9 18 6-6-6-6'],
   folder: ['M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'],
   external: ['M15 3h6v6', 'M10 14 21 3', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'],
+  queue: ['M4 6h12', 'M4 12h12', 'M4 18h7', 'm16 15 4 3-4 3Z'],
+  bolt: ['M13 2 4 14h7l-1 8 9-12h-7Z'],
+  pause: ['M8 5v14', 'M16 5v14'],
   globe: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M3 12h18', 'M12 3a14 14 0 0 1 0 18', 'M12 3a14 14 0 0 0 0 18'],
   palette: ['M12 21a9 9 0 1 1 9-9c0 2-1.5 3-3 3h-2a2 2 0 0 0-1 3.7c.6.5.5 2.3-3 2.3Z', 'M7.5 10.5h.01', 'M12 7.5h.01', 'M16.5 10.5h.01'],
   command: ['M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3Z'],

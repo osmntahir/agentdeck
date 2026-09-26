@@ -1,5 +1,6 @@
 import { AGENTS } from './agents'
 import type { ConversationUsage, TokenUsage } from './usage'
+import type { QueuedPrompt, SavedPrompt } from './prompts'
 export type Isolation = 'worktree' | 'shared'
 
 /** Yönetilen PTY'nin durumu. Activity ve çalışma kopyası sağlığı ayrı kavramlardır. */
@@ -80,6 +81,10 @@ export interface Session {
    * program başka porttan dinleyebilir; gerçek adres dinlenen portlardan okunur.
    */
   port?: number
+  /** Ajan turunu bitirince sırayla gönderilecek istemler (ADR 0024). */
+  promptQueue?: QueuedPrompt[]
+  /** Kuyruk duraklatıldı: tur bitse de istem gönderilmez. */
+  queuePaused?: true
 }
 
 export interface SessionPullRequest {
@@ -198,6 +203,8 @@ export interface PersistedState {
   sessions: Session[]
   /** Alan eklenmeden önceki kayıtlarda yoktur. */
   works?: Work[]
+  /** Hazır istemler (ADR 0024). */
+  prompts?: SavedPrompt[]
 }
 
 /** Kalıcı kayda türetilmiş alanların eklendiği API görünümü. */
@@ -218,6 +225,12 @@ export interface SessionView extends Session {
   usage?: ConversationUsage | null
   /** Canlı Run'ın süreç ağacında dinlenen TCP portları; artan sırada. */
   ports?: number[]
+  /**
+   * Claude kancalarından türetilen tur: working istem işleniyor, waiting
+   * ajan kullanıcıyı bekliyor. Kanca olayı gelmemiş veya ön planda Claude
+   * yoksa null; kuyruk yalnız waiting'de gönderir.
+   */
+  agentTurn?: 'working' | 'waiting' | null
 }
 
 /** Proje kökü kullanılamıyorsa nedeni; kayıt ve oturumlar olduğu gibi kalır. */
@@ -250,6 +263,8 @@ export interface StateResponse {
   workConversationCounts?: Record<string, number>
   /** İş kimliği → konuşmalarının toplam kullanımı (önbellekten). */
   workUsage?: Record<string, TokenUsage>
+  /** Hazır istemler; sık kullanılan önce. */
+  prompts?: SavedPrompt[]
   /** Claude konuşma takibinin durumu; kanca kurulamadıysa nedeni. */
   conversationTracking?: { active: boolean; message: string | null }
   serviceError: string | null

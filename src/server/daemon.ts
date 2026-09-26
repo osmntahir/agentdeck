@@ -31,6 +31,7 @@ import { createTranscriptIndex, type TranscriptEntry } from './claudeTranscripts
 import { createTranscriptSearch, type SearchFile } from './transcriptSearch'
 import { allocatePort, scanListeningPorts } from './listeningPorts'
 import { addUsage, emptyUsage, type ConversationUsage, type TokenUsage } from '../shared/usage'
+import { detectRepeatedPrompts, PROMPT_NAME_MAX, PROMPT_STEP_MAX_CHARS, PROMPT_STEPS_MAX, QUEUE_MAX, type QueuedPrompt, type SavedPrompt } from '../shared/prompts'
 import { lastLaunchFor, repeatLaunchCommand } from '../shared/launchPolicy'
 import { resumeTargetFromTerminalText } from '../shared/resumeDetection'
 import { terminalAttentionFromText } from '../shared/terminalAttention'
@@ -106,6 +107,10 @@ const PORT_SCAN_MS = 2500
 /** Konuşma araması bir istekte en çok bu kadar dizinler; kalanı sonraki istekte. */
 const SEARCH_BUDGET_MS = 700
 const SEARCH_QUERY_MAX = 200
+/** Tur bitince TUI girdi kutusuna dönsün ve ekrandaki soru/onay değerlendirilsin (ATTENTION_QUIET_MS) diye beklenir. */
+const QUEUE_AFTER_STOP_MS = 1200
+/** Tekrar tespiti bir istekte en çok bu kadar dizinler. */
+const SUGGESTION_BUDGET_MS = 1500
 
 export interface DaemonOptions {
   dataDir: string
@@ -371,6 +376,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       degraded: cwdProblem === null ? null : `Çalışma dizini ${cwdProblem}: ${session.cwd}`,
       conversation: latestConversation(session),
       usage: sessionUsage(session),
+      agentTurn: agentTurn(session),
       ports: session.lifecycle === 'live' ? (listeningPorts.bySession[session.id] ?? []) : [],
     }
   }
@@ -483,7 +489,74 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       // Store serviceError'u taşır; kayıt sonraki olayda yeniden denenmez, kanca yeniden başlatmada tekrar bildirir.
     })
   }
-  const inbox = openHookInbox(hookDir, recordConversations)
+  /**
+   * Ajan turu (ADR 0024): UserPromptSubmit çalışıyor, Stop ve SessionStart
+   * bekliyor demektir. Kayıt Run'a bağlıdır; yeni Run eskisinin turunu taşımaz.
+   */
+  const agentTurns = new Map<string, { runId: string; state: 'working' | 'waiting'; at: number }>()
+  function recordTurns(events: HookEvent[]): void {
+    const waiting = new Set<string>()
+    for (const event of [...events].sort((a, b) => a.at - b.at)) {
+      const known = agentTurns.get(event.sessionId)
+      if (known && known.runId === event.runId && known.at > event.at) continue
+      const state = event.kind === 'prompt' ? 'working' : 'waiting'
+      agentTurns.set(event.sessionId, { runId: event.runId, state, at: event.at })
+      if (state === 'waiting') waiting.add(event.sessionId)
+      else waiting.delete(event.sessionId)
+    }
+    for (const id of waiting) scheduleQueue(id, QUEUE_AFTER_STOP_MS)
+  }
+
+  function agentTurn(session: Session): 'working' | 'waiting' | null {
+    const turn = agentTurns.get(session.id)
+    if (!turn || turn.runId !== session.runId || session.lifecycle !== 'live') return null
+    // Claude'dan çıkılıp kabuğa dönüldüyse bekleyen tur kabuğun istemi değildir.
+    return sessions.foregroundAgent(session.id) === 'claude' ? turn.state : null
+  }
+
+  /**
+   * Kuyruktaki ilk istemi gönderir: Claude bekliyorsa, onay veya soru yoksa ve
+   * kuyruk duraklatılmamışsa. Gönderim anında koşullar yeniden denetlenir;
+   * metin asla kabuğa veya başka bir programa yazılmaz.
+   */
+  const queueTimers = new Map<string, NodeJS.Timeout>()
+  function scheduleQueue(sessionId: string, delayMs: number): void {
+    clearTimeout(queueTimers.get(sessionId))
+    const timer = setTimeout(() => {
+      queueTimers.delete(sessionId)
+      void sendQueuedPrompt(sessionId)
+    }, delayMs)
+    timer.unref?.()
+    queueTimers.set(sessionId, timer)
+  }
+
+  async function sendQueuedPrompt(sessionId: string): Promise<void> {
+    const session = findSession(sessionId)
+    const next = session?.promptQueue?.[0]
+    if (!session || !next || session.queuePaused || session.archivedAt !== null) return
+    const runId = session.runId
+    if (!runId || !sessions.isLive(session.id, runId) || agentTurn(session) !== 'waiting') return
+    if (terminalAttention(session.id, runId)) return
+    try {
+      await store.commit((draft) => {
+        const target = draft.sessions.find((s) => s.id === sessionId)
+        if (!target?.promptQueue?.length || target.promptQueue[0]!.id !== next.id) throw new HttpError(409, 'queue_changed', 'Kuyruk değişti')
+        target.promptQueue = target.promptQueue.slice(1)
+        if (target.promptQueue.length === 0) delete target.promptQueue
+      })
+    } catch {
+      return
+    }
+    // Kanca onaylayana kadar tur çalışıyor sayılır; ikinci istem üst üste gönderilmez.
+    agentTurns.set(sessionId, { runId, state: 'working', at: Date.now() })
+    sessions.write(sessionId, bracketedPaste(next.text))
+    setTimeout(() => { if (sessions.isLive(sessionId, runId)) sessions.write(sessionId, '\r') }, AGENT_SUBMIT_DELAY_MS)
+  }
+
+  const inbox = openHookInbox(hookDir, (events) => {
+    recordConversations(events.filter((e) => e.kind === 'start'))
+    recordTurns(events)
+  })
 
   const claudeAgents = options.claudeAgents
     ? createClaudeAgents({ ...options.claudeAgents, env: process.env })
@@ -960,6 +1033,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       claudeSessions: workClaudeSessions(),
       workConversationCounts: workStats.counts,
       workUsage: workStats.usage,
+      prompts: [...(state.prompts ?? [])].sort((a, b) => (b.uses ?? 0) - (a.uses ?? 0) || (b.lastUsedAt ?? b.createdAt) - (a.lastUsedAt ?? a.createdAt)),
       conversationTracking,
       previews,
       terminals: Object.fromEntries(state.sessions.filter((s) => s.runId).map((s) => [s.id, {
@@ -1509,6 +1583,24 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : ''
     if (query.length > SEARCH_QUERY_MAX) return jsonError(res, 400, 'validation', `Arama en çok ${SEARCH_QUERY_MAX} karakter olabilir`)
     if (query === '') return res.json({ hits: [], pending: 0 })
+    try {
+      const known = await knownTranscripts()
+      const { matches, pending } = await transcriptSearch.search([...known.values()].map((k) => k.file), query, SEARCH_BUDGET_MS)
+      // Sonuç satırının başlığı transcript özetinden gelir; kısa süre beklenir.
+      await transcripts.settle(matches.map((m) => m.path), 400)
+      const hits: ConversationSearchHit[] = matches.map((match) => ({
+        ...known.get(match.path)!.view(),
+        snippet: { role: match.role, text: match.snippet.text, ranges: match.snippet.ranges, at: match.at },
+        matches: match.matches,
+      }))
+      res.json({ hits, pending })
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  /** Bilinen Claude transcript'leri: yol → dosya bilgisi ve konuşma görünümü. */
+  async function knownTranscripts(): Promise<Map<string, { file: SearchFile; view: () => Omit<ConversationSearchHit, 'snippet' | 'matches'> }>> {
     const state = store.get()
     const known = new Map<string, { file: SearchFile; view: () => Omit<ConversationSearchHit, 'snippet' | 'matches'> }>()
     // İç içe projelerde (ör. ev klasöründeki Genel) konuşma en özel projeye düşer.
@@ -1534,20 +1626,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         })
       }
     }
-    try {
-      const { matches, pending } = await transcriptSearch.search([...known.values()].map((k) => k.file), query, SEARCH_BUDGET_MS)
-      // Sonuç satırının başlığı transcript özetinden gelir; kısa süre beklenir.
-      await transcripts.settle(matches.map((m) => m.path), 400)
-      const hits: ConversationSearchHit[] = matches.map((match) => ({
-        ...known.get(match.path)!.view(),
-        snippet: { role: match.role, text: match.snippet.text, ranges: match.snippet.ranges, at: match.at },
-        matches: match.matches,
-      }))
-      res.json({ hits, pending })
-    } catch (err) {
-      sendError(res, err)
-    }
-  })
+    return known
+  }
 
   app.get('/api/sessions/:id/conversations', async (req, res) => {
     const session = findSession(req.params.id)
@@ -2487,6 +2567,143 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     res.json({ ok: true })
   })
 
+  /** Hazır istem gövdesi: ad ve 1–12 boş olmayan adım. */
+  function readPromptBody(body: unknown): { name: string; steps: string[] } {
+    const raw = (body ?? {}) as { name?: unknown; steps?: unknown }
+    const name = typeof raw.name === 'string' ? raw.name.replace(/\s+/g, ' ').trim() : ''
+    if (!name || name.length > PROMPT_NAME_MAX) throw new HttpError(400, 'validation', `Ad 1–${PROMPT_NAME_MAX} karakter olmalı`)
+    if (!Array.isArray(raw.steps)) throw new HttpError(400, 'validation', 'steps bir dizi olmalı')
+    const steps = raw.steps.map((step) => (typeof step === 'string' ? step.trim() : '')).filter((step) => step !== '')
+    if (steps.length === 0 || steps.length > PROMPT_STEPS_MAX) throw new HttpError(400, 'validation', `Hazır istem 1–${PROMPT_STEPS_MAX} adım olmalı`)
+    if (steps.some((step) => step.length > PROMPT_STEP_MAX_CHARS)) throw new HttpError(400, 'validation', `Bir adım en çok ${PROMPT_STEP_MAX_CHARS} karakter olabilir`)
+    return { name, steps }
+  }
+
+  app.post('/api/prompts', async (req, res) => {
+    try {
+      const { name, steps } = readPromptBody(req.body)
+      const prompt: SavedPrompt = { id: crypto.randomBytes(8).toString('hex'), name, steps, createdAt: Date.now() }
+      await store.commit((draft) => { draft.prompts = [...(draft.prompts ?? []), prompt] })
+      res.json(prompt)
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  app.patch('/api/prompts/:id', async (req, res) => {
+    try {
+      const { name, steps } = readPromptBody(req.body)
+      if (!(store.get().prompts ?? []).some((p) => p.id === req.params.id)) throw new HttpError(404, 'not_found', 'Hazır istem yok')
+      await store.commit((draft) => {
+        const target = (draft.prompts ?? []).find((p) => p.id === req.params.id)
+        if (target) Object.assign(target, { name, steps })
+      })
+      res.json((store.get().prompts ?? []).find((p) => p.id === req.params.id))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  app.delete('/api/prompts/:id', async (req, res) => {
+    try {
+      await store.commit((draft) => {
+        draft.prompts = (draft.prompts ?? []).filter((p) => p.id !== req.params.id)
+        if (draft.prompts.length === 0) delete draft.prompts
+      })
+      res.json({ ok: true })
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  /** Konuşmalarda tekrarlanan istemler ve istem dizileri; kayıtlı olanlar önerilmez. */
+  app.get('/api/prompts/suggestions', async (_req, res) => {
+    try {
+      const known = await knownTranscripts()
+      const { histories, pending } = await transcriptSearch.userPrompts([...known.values()].map((k) => k.file), SUGGESTION_BUDGET_MS)
+      res.json({ suggestions: detectRepeatedPrompts(histories, store.get().prompts ?? []), pending })
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  /**
+   * İstem kuyruğuna ekler: düz metin veya hazır istemin bütün adımları.
+   * Claude o an bekliyorsa ilk istem hemen gider.
+   */
+  app.post('/api/sessions/:id/queue', async (req, res) => {
+    try {
+      const session = findSession(req.params.id)
+      if (!session) throw new HttpError(404, 'not_found', 'Oturum yok')
+      if (session.archivedAt !== null) throw new HttpError(409, 'session_archived', 'Oturum arşivde')
+      const body = (req.body ?? {}) as { text?: unknown; promptId?: unknown }
+      let items: QueuedPrompt[]
+      const now = Date.now()
+      const id = () => crypto.randomBytes(8).toString('hex')
+      if (typeof body.promptId === 'string') {
+        const prompt = (store.get().prompts ?? []).find((p) => p.id === body.promptId)
+        if (!prompt) throw new HttpError(404, 'not_found', 'Hazır istem yok')
+        items = prompt.steps.map((text) => ({ id: id(), text, addedAt: now, from: prompt.name }))
+      } else if (typeof body.text === 'string' && body.text.trim() !== '') {
+        if (Buffer.byteLength(body.text) > AGENT_INPUT_BYTES) throw new HttpError(400, 'input_too_large', 'Metin 128 KiB sınırını aşıyor')
+        items = [{ id: id(), text: body.text.trim(), addedAt: now }]
+      } else {
+        throw new HttpError(400, 'validation', 'text veya promptId gerekli')
+      }
+      if ((session.promptQueue?.length ?? 0) + items.length > QUEUE_MAX) throw new HttpError(409, 'queue_full', `Kuyrukta en çok ${QUEUE_MAX} istem durabilir`)
+      await store.commit((draft) => {
+        const target = draft.sessions.find((s) => s.id === session.id)
+        if (!target) throw new HttpError(404, 'not_found', 'Oturum yok')
+        target.promptQueue = [...(target.promptQueue ?? []), ...items]
+        if (typeof body.promptId === 'string') {
+          const prompt = (draft.prompts ?? []).find((p) => p.id === body.promptId)
+          if (prompt) Object.assign(prompt, { uses: (prompt.uses ?? 0) + 1, lastUsedAt: now })
+        }
+      })
+      await sendQueuedPrompt(session.id)
+      res.json(sessionView(findSession(session.id)!))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  /** Kuyruktan tek istemi veya (itemId yoksa) hepsini kaldırır. */
+  const removeQueued: express.RequestHandler = async (req, res) => {
+    try {
+      const session = findSession(String(req.params.id))
+      if (!session) throw new HttpError(404, 'not_found', 'Oturum yok')
+      await store.commit((draft) => {
+        const target = draft.sessions.find((s) => s.id === session.id)
+        if (!target) return
+        target.promptQueue = req.params.itemId ? (target.promptQueue ?? []).filter((q) => q.id !== req.params.itemId) : []
+        if (target.promptQueue.length === 0) delete target.promptQueue
+      })
+      res.json(sessionView(findSession(session.id)!))
+    } catch (err) {
+      sendError(res, err)
+    }
+  }
+  app.delete('/api/sessions/:id/queue', removeQueued)
+  app.delete('/api/sessions/:id/queue/:itemId', removeQueued)
+
+  app.post('/api/sessions/:id/queue/pause', async (req, res) => {
+    try {
+      const session = findSession(req.params.id)
+      if (!session) throw new HttpError(404, 'not_found', 'Oturum yok')
+      const paused = req.body?.paused === true
+      await store.commit((draft) => {
+        const target = draft.sessions.find((s) => s.id === session.id)
+        if (!target) return
+        if (paused) target.queuePaused = true
+        else delete target.queuePaused
+      })
+      if (!paused) await sendQueuedPrompt(session.id)
+      res.json(sessionView(findSession(session.id)!))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
   /** GitHub işlemleri çalışma alanındaki bir depoda yapılır; repo taramada yoksa reddedilir. */
   async function githubRepoDir(session: Session, rawRepo: unknown): Promise<string> {
     const repo = typeof rawRepo === 'string' && rawRepo !== '' ? rawRepo : '.'
@@ -2975,6 +3192,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       closed = (async () => {
         shuttingDown = true
         inbox.close()
+        for (const timer of queueTimers.values()) clearTimeout(timer)
         claudeLogin?.cancel()
         for (const client of wss.clients) client.close(1001, 'kapanıyor')
         await new Promise<void>((resolve) => wss.close(() => resolve()))

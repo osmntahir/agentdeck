@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import { foldText, makeSnippet, searchTerms, type Snippet } from '../shared/textSearch'
 import { userPromptText } from './transcripts'
+import type { PromptHistory } from '../shared/prompts'
 
 /**
  * Claude konuşmalarında tam metin arama (ADR 0023). Dizin yalnız kullanıcı
@@ -122,6 +123,8 @@ export interface TranscriptSearch {
    * dosyalar pending'de sayılır; sonraki arama kaldığı yerden sürer.
    */
   search(files: SearchFile[], query: string, budgetMs: number): Promise<{ matches: SearchMatch[]; pending: number }>
+  /** Tekrar tespiti için her konuşmanın kullanıcı istemleri (ADR 0024). */
+  userPrompts(files: SearchFile[], budgetMs: number): Promise<{ histories: PromptHistory[]; pending: number }>
 }
 
 export function createTranscriptSearch(): TranscriptSearch {
@@ -188,30 +191,49 @@ export function createTranscriptSearch(): TranscriptSearch {
     return done
   }
 
+  /**
+   * Dosyaları yeniden eskiye dizinler ve her birinin mesajlarını verir.
+   * Hiç okunmamış dosya bütçe içinde beklenir; eski dizini olan dosya o haliyle
+   * kullanılır. Bütçede yetişmeyen dosya sayısı döner.
+   */
+  async function collect(files: SearchFile[], budgetMs: number, visit: (file: SearchFile, messages: Message[]) => void): Promise<number> {
+    const deadline = Date.now() + budgetMs
+    let pending = 0
+    for (const file of [...files].sort((a, b) => b.mtimeMs - a.mtimeMs)) {
+      const doc = ensure(file)
+      if (doc.reading) {
+        const remaining = deadline - Date.now()
+        if (doc.mtimeMs < 0 && (remaining <= 0 || !(await settle(doc.reading, remaining)))) {
+          pending++
+          continue
+        }
+      }
+      visit(file, doc.messages)
+    }
+    return pending
+  }
+
   return {
     async search(files, query, budgetMs) {
       const terms = searchTerms(query)
-      const deadline = Date.now() + budgetMs
       const found: Array<SearchMatch & { score: number; mtimeMs: number }> = []
-      let pending = 0
-      for (const file of [...files].sort((a, b) => b.mtimeMs - a.mtimeMs)) {
-        const doc = ensure(file)
-        if (doc.reading) {
-          const remaining = deadline - Date.now()
-          // Dizini hiç okunmamış dosya bekletilir; eski dizini olan dosya o haliyle aranır.
-          if (doc.mtimeMs < 0 && (remaining <= 0 || !(await settle(doc.reading, remaining)))) {
-            pending++
-            continue
-          }
-        }
-        const match = matchMessages(doc.messages, terms)
+      const pending = await collect(files, budgetMs, (file, messages) => {
+        const match = matchMessages(messages, terms)
         if (match) found.push({ ...match, path: file.path, mtimeMs: file.mtimeMs })
-      }
+      })
       found.sort((a, b) => b.score - a.score || b.mtimeMs - a.mtimeMs)
       return {
         matches: found.slice(0, RESULT_LIMIT).map(({ score: _score, mtimeMs: _mtime, ...match }) => match),
         pending,
       }
+    },
+    async userPrompts(files, budgetMs) {
+      const histories: PromptHistory[] = []
+      const pending = await collect(files, budgetMs, (_file, messages) => {
+        const prompts = messages.filter((m) => m.role === 'user').map((m) => ({ text: m.text, at: m.at }))
+        if (prompts.length > 0) histories.push({ prompts })
+      })
+      return { histories, pending }
     },
   }
 }

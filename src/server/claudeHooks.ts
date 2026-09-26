@@ -13,6 +13,13 @@ import type { ConversationSource } from '../shared/types'
 /** Kancayı tanıma işareti; bu metni içeren eski girişin yerine güncel komut yazılır. */
 const MARKER = 'AGENTDECK_HOOK_DIR'
 
+/**
+ * Aynı komut üç olaya kurulur. SessionStart konuşma kaydını (ADR 0018),
+ * UserPromptSubmit ve Stop ajanın turunu verir: istem kuyruğu tur bitince
+ * sıradakini gönderir (ADR 0024).
+ */
+export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop'] as const
+
 /** stdout'a yazmaz: SessionStart çıktısı Claude'un bağlamına eklenirdi. */
 export const HOOK_COMMAND =
   'if [ -n "$AGENTDECK_HOOK_DIR" ]; then f="$AGENTDECK_HOOK_DIR/$AGENTDECK_SESSION.$AGENTDECK_RUN.$$"; ' +
@@ -51,29 +58,34 @@ export function installClaudeHook(settingsFile: string): HookInstall {
 
   const hooks = settings.hooks ?? {}
   if (!isObject(hooks)) return { active: false, message: `${settingsFile} içindeki hooks alanı nesne değil; kanca eklenmedi` }
-  const groups = hooks.SessionStart ?? []
-  if (!Array.isArray(groups)) return { active: false, message: `${settingsFile} içindeki hooks.SessionStart dizi değil; kanca eklenmedi` }
+  for (const name of HOOK_EVENTS) {
+    if (hooks[name] !== undefined && !Array.isArray(hooks[name])) return { active: false, message: `${settingsFile} içindeki hooks.${name} dizi değil; kanca eklenmedi` }
+  }
 
-  let found = false
   let changed = false
-  const nextGroups = groups.map((group) => {
-    if (!isObject(group) || !Array.isArray(group.hooks)) return group
-    const entries = group.hooks.map((entry) => {
-      if (!isObject(entry) || typeof entry.command !== 'string' || !entry.command.includes(MARKER)) return entry
-      found = true
-      if (entry.command === HOOK_COMMAND && entry.type === 'command') return entry
-      changed = true
-      return { ...entry, type: 'command', command: HOOK_COMMAND }
+  const nextHooks: Record<string, unknown> = { ...hooks }
+  for (const name of HOOK_EVENTS) {
+    let found = false
+    const nextGroups = ((hooks[name] ?? []) as unknown[]).map((group) => {
+      if (!isObject(group) || !Array.isArray(group.hooks)) return group
+      const entries = group.hooks.map((entry) => {
+        if (!isObject(entry) || typeof entry.command !== 'string' || !entry.command.includes(MARKER)) return entry
+        found = true
+        if (entry.command === HOOK_COMMAND && entry.type === 'command') return entry
+        changed = true
+        return { ...entry, type: 'command', command: HOOK_COMMAND }
+      })
+      return { ...group, hooks: entries }
     })
-    return { ...group, hooks: entries }
-  })
-  if (!found) {
-    nextGroups.push({ hooks: [{ type: 'command', command: HOOK_COMMAND }] })
-    changed = true
+    if (!found) {
+      nextGroups.push({ hooks: [{ type: 'command', command: HOOK_COMMAND }] })
+      changed = true
+    }
+    nextHooks[name] = nextGroups
   }
   if (!changed) return { active: true, changed: false }
 
-  const next = { ...settings, hooks: { ...hooks, SessionStart: nextGroups } }
+  const next = { ...settings, hooks: nextHooks }
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true })
     const tmp = `${target}.agentdeck-${process.pid}.tmp`
@@ -86,6 +98,8 @@ export function installClaudeHook(settingsFile: string): HookInstall {
 }
 
 export interface HookEvent {
+  /** start: konuşma açıldı; prompt: kullanıcı istem gönderdi; stop: ajan turunu bitirdi. */
+  kind: 'start' | 'prompt' | 'stop'
   sessionId: string
   runId: string
   conversationId: string
@@ -112,12 +126,16 @@ export function parseHookEvent(fileName: string, raw: string, at: number): HookE
     return null
   }
   if (!isObject(input)) return null
-  if (input.hook_event_name !== undefined && input.hook_event_name !== 'SessionStart') return null
+  // Olay adı yoksa eski kanca sürümünün SessionStart girdisidir.
+  const kind = input.hook_event_name === undefined || input.hook_event_name === 'SessionStart' ? 'start'
+    : input.hook_event_name === 'UserPromptSubmit' ? 'prompt'
+      : input.hook_event_name === 'Stop' ? 'stop' : null
+  if (kind === null) return null
   const conversationId = input.session_id
   if (typeof conversationId !== 'string' || !UUID.test(conversationId)) return null
   const source = SOURCES.includes(input.source as ConversationSource) ? (input.source as ConversationSource) : 'other'
   const transcriptPath = typeof input.transcript_path === 'string' && path.isAbsolute(input.transcript_path) ? input.transcript_path : null
-  return { sessionId, runId, conversationId: conversationId.toLowerCase(), source, transcriptPath, at }
+  return { kind, sessionId, runId, conversationId: conversationId.toLowerCase(), source, transcriptPath, at }
 }
 
 export interface HookInbox {

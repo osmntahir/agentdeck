@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import type { QueuedPrompt, SavedPrompt } from '../shared/prompts'
 import type { ConversationRecord, ConversationSource, Isolation, LastLaunch, Lifecycle, PersistedState, Project, Session, SessionPullRequest, SessionWorktree, Work } from '../shared/types'
 
 export const SCHEMA_VERSION = 2
@@ -195,6 +196,34 @@ function session(raw: unknown): Session {
     ...(raw.conversations !== undefined ? { conversations: conversations(raw.conversations) } : {}),
     ...(raw.pullRequest !== undefined ? { pullRequest: pullRequestRef(raw.pullRequest) } : {}),
     ...(raw.port !== undefined ? { port: portNumber(raw.port) } : {}),
+    ...(raw.promptQueue !== undefined ? { promptQueue: promptQueue(raw.promptQueue) } : {}),
+    ...(raw.queuePaused === true ? { queuePaused: true as const } : {}),
+  }
+}
+
+function promptQueue(raw: unknown): QueuedPrompt[] {
+  if (!Array.isArray(raw)) corrupt('session.promptQueue')
+  return raw.map((entry) => {
+    if (!isObject(entry)) corrupt('session.promptQueue kaydı')
+    return {
+      id: str(entry.id, 'promptQueue.id'),
+      text: str(entry.text, 'promptQueue.text'),
+      addedAt: num(entry.addedAt, 'promptQueue.addedAt'),
+      ...(entry.from !== undefined ? { from: str(entry.from, 'promptQueue.from') } : {}),
+    }
+  })
+}
+
+function savedPrompt(raw: unknown): SavedPrompt {
+  if (!isObject(raw)) corrupt('prompt kaydı')
+  if (!Array.isArray(raw.steps) || raw.steps.length === 0) corrupt('prompt.steps')
+  return {
+    id: str(raw.id, 'prompt.id'),
+    name: str(raw.name, 'prompt.name'),
+    steps: raw.steps.map((step) => str(step, 'prompt.steps')),
+    createdAt: num(raw.createdAt, 'prompt.createdAt'),
+    ...(raw.uses !== undefined ? { uses: num(raw.uses, 'prompt.uses') } : {}),
+    ...(raw.lastUsedAt !== undefined ? { lastUsedAt: num(raw.lastUsedAt, 'prompt.lastUsedAt') } : {}),
   }
 }
 
@@ -278,12 +307,15 @@ function parseKnownSchema(raw: unknown): { state: PersistedState; migrated: bool
   }
   if (raw.works !== undefined && !Array.isArray(raw.works)) corrupt('works dizisi')
   const works = raw.works === undefined ? undefined : raw.works.map(work)
+  if (raw.prompts !== undefined && !Array.isArray(raw.prompts)) corrupt('prompts dizisi')
+  const prompts = raw.prompts === undefined ? undefined : raw.prompts.map(savedPrompt)
   return {
     state: {
       schemaVersion: SCHEMA_VERSION,
       projects,
       sessions: raw.sessions.map(session),
       ...(works !== undefined ? { works } : {}),
+      ...(prompts !== undefined ? { prompts } : {}),
     },
     migrated: false,
   }

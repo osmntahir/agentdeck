@@ -4,6 +4,7 @@ import { Icon } from './components/Icon'
 import { AgentMark, ProgramIcon } from './components/AgentMark'
 import { BranchPicker } from './components/BranchPicker'
 import { ContextMeter, PortLinks } from './components/SessionInsights'
+import { PromptQueueButton, PromptsDialog } from './components/Prompts'
 import { SettingsDialog } from './components/SettingsDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { usePreferences, terminalStyle, updatePreferences, THEMES, type ThemeName } from './preferences'
@@ -131,6 +132,13 @@ export function App() {
   const closeAddMenu = useCallback(() => setAddMenu(null), [])
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [paletteScope, setPaletteScope] = useState<PaletteScope>('all')
+  /** Hazır istemler penceresi; hedef, Gönder düğmesinin oturumudur. */
+  const [promptsFor, setPromptsFor] = useState<{ sessionId: string | null } | null>(null)
+  useEffect(() => {
+    const open = (event: Event) => setPromptsFor({ sessionId: ((event as CustomEvent).detail as string | null) ?? null })
+    window.addEventListener('agentdeck:manage-prompts', open)
+    return () => window.removeEventListener('agentdeck:manage-prompts', open)
+  }, [])
   const [renamingGrid, setRenamingGrid] = useState<string | null>(null)
   const [gridMenu, setGridMenu] = useState<MenuPosition | null>(null)
   const closeGridMenu = useCallback(() => setGridMenu(null), [])
@@ -894,6 +902,7 @@ export function App() {
       { id: 'active-launch', label: `Komut çalıştır… · ${active.name}`, icon: 'play' as const, keywords: 'resume devam', run: () => setLaunchOpen(true) },
     ] : []),
     { id: 'search-conversations', label: 'Konuşmalarda ara…', icon: 'chat', hint: SHORTCUT_LABELS.searchConversations, keywords: 'claude geçmiş transcript bul metin', keepOpen: true, run: () => setPaletteScope('conversations') },
+    { id: 'prompts', label: 'Hazır istemler ve öneriler…', icon: 'bolt', keywords: 'şablon tekrar otomatik kuyruk sıra makro istem', run: () => setPromptsFor({ sessionId: active?.id ?? document.querySelector<HTMLElement>('.dv-active-group [data-session-id]')?.dataset.sessionId ?? null }) },
     { id: 'home', label: 'Tüm oturumlar', icon: 'list', keywords: 'pano ana sayfa', hint: 'Esc', run: goHome },
     { id: 'grid', label: 'Çalışma alanı', icon: 'grid', keywords: 'sekmeler grid bölünmüş yan yana', run: goGrid },
     { id: 'new-tab', label: 'Yeni sekme', icon: 'plus', hint: SHORTCUT_LABELS.newTab, keywords: 'terminal sekme aç', run: newTab },
@@ -1117,6 +1126,7 @@ export function App() {
               <BranchPicker key={active.id} session={active} healthy={stateHealthy} />
               <PortLinks session={active} />
               <ContextMeter usage={active.usage} live={active.lifecycle === 'live' && Boolean(active.conversation?.current)} />
+              <PromptQueueButton session={active} prompts={state.prompts ?? []} />
               <span className="topbar-spacer" />
               <div className="segmented tabs" role="group" aria-label="Görünüm">
                 <button className={tab === 'terminal' ? 'on' : ''} aria-pressed={tab === 'terminal'} onClick={() => setTab('terminal')}><Icon name="terminal" size={14} /> Terminal</button>
@@ -1277,7 +1287,21 @@ export function App() {
           scope={paletteScope}
           onScope={setPaletteScope}
           onResumeConversation={resumeConversation}
+          resolveTarget={() => active?.id ?? document.querySelector<HTMLElement>('.dv-active-group [data-session-id]')?.dataset.sessionId ?? null}
+          onSendPrompt={(prompt, sessionId) => {
+            setError(null)
+            api.enqueuePrompt(sessionId, { promptId: prompt.id }).then(() => refresh()).catch((e) => setError(e.message))
+          }}
+          onManagePrompts={(sessionId) => setPromptsFor({ sessionId })}
           onClose={() => { setPaletteOpen(false); setPaletteScope('all') }}
+        />
+      )}
+      {promptsFor && (
+        <PromptsDialog
+          prompts={state.prompts ?? []}
+          target={state.sessions.find((s) => s.id === promptsFor.sessionId) ?? null}
+          onChanged={() => void refresh()}
+          onClose={() => setPromptsFor(null)}
         />
       )}
       {colorSession && <ColorDialog id={colorSession.id} projectId={colorSession.projectId} name={colorSession.name} onClose={() => setColorSession(null)} />}

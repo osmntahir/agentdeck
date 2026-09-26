@@ -1984,6 +1984,133 @@ mark.word-del { border-radius: 3px; background: var(--diff-del-word); color: inh
 @container (max-width: 380px) { .grid-group-actions .context-meter { display: none; } }
 .usage-amount { font-variant-numeric: tabular-nums; cursor: default; }
 
+/* İstem sırası ve hazır istemler (ADR 0024) */
+.link-button { min-height: 0; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12px; font-weight: 500; }
+.link-button:hover { color: var(--accent-2, var(--accent)); text-decoration: underline; text-underline-offset: 3px; }
+.danger-text { color: var(--red); }
+.danger-text:hover { background: var(--red-soft); color: var(--red); }
+button.compact { min-height: 28px; padding: 0 10px; font-size: 12px; }
+
+.queue-trigger {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.queue-trigger:hover { background: var(--surface-3); color: var(--text); }
+.queue-trigger.has-items { border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: var(--accent-soft); color: var(--accent); }
+.queue-trigger.has-items[data-tone='paused'], .queue-trigger.has-items[data-tone='blocked'] { border-color: color-mix(in srgb, var(--amber) 40%, transparent); background: var(--amber-soft); color: var(--amber); }
+.queue-count { min-width: 14px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; }
+
+.queue-dialog, .prompts-dialog { width: 560px; }
+.queue-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: -6px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.queue-status-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+.queue-status[data-tone='working'] .queue-status-dot { background: var(--green); animation: soft-blink 1.2s ease-in-out infinite; }
+.queue-status[data-tone='waiting'] .queue-status-dot { background: var(--accent); }
+.queue-status[data-tone='blocked'], .queue-status[data-tone='paused'] { background: var(--amber-soft); color: var(--amber); }
+.queue-status[data-tone='blocked'] .queue-status-dot, .queue-status[data-tone='paused'] .queue-status-dot { background: var(--amber); }
+.queue-list { display: grid; gap: 6px; max-height: 260px; margin: 0; padding: 0; overflow: auto; list-style: none; counter-reset: none; }
+.queue-item { display: flex; align-items: flex-start; gap: 10px; padding: 9px 8px 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); animation: pop 160ms var(--ease); }
+.queue-item:first-child { border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.queue-index {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 6px;
+  background: var(--surface-4);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.queue-item:first-child .queue-index { background: var(--accent); color: var(--accent-ink); }
+.queue-text { display: grid; flex: 1; gap: 4px; min-width: 0; }
+.queue-text p { display: -webkit-box; margin: 0; overflow: hidden; color: var(--text); font-size: 13px; line-height: 1.45; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.queue-text small { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); font-size: 11px; }
+.queue-item .icon-button { width: 26px; min-width: 26px; min-height: 26px; }
+.queue-empty { margin: 0; padding: 14px; border: 1px dashed var(--border-2); border-radius: 9px; color: var(--text-3); font-size: 12.5px; line-height: 1.55; text-align: center; }
+.queue-composer { display: grid; gap: 8px; }
+.queue-composer textarea { min-height: 72px; resize: vertical; font-size: 13px; line-height: 1.5; }
+.queue-composer-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11.5px; }
+.queue-composer-row kbd { height: 16px; font-size: 10px; }
+.queue-saved { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--border); }
+.queue-saved-head { display: flex; align-items: center; justify-content: space-between; color: var(--text-2); font-size: 12px; font-weight: 500; }
+.queue-saved .muted { margin: 0; font-size: 12px; }
+.prompt-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.prompt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 11px 0 9px;
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+}
+.prompt-chip svg { color: var(--amber); }
+.prompt-chip:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
+.prompt-chip-steps { color: var(--text-3); font-size: 11px; }
+.queue-actions { align-items: center; }
+.queue-actions button { display: inline-flex; align-items: center; gap: 6px; }
+
+.prompts-section { display: grid; gap: 8px; }
+.prompts-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; }
+.prompts-section-head h3 { color: var(--text-2); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.prompts-section-head .scanning { font-size: 11.5px; }
+.prompts-empty { margin: 0; padding: 12px 14px; border: 1px dashed var(--border-2); border-radius: 9px; font-size: 12.5px; line-height: 1.55; }
+.prompt-list { display: grid; gap: 6px; max-height: 240px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.prompt-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px 10px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.prompt-row:hover { border-color: var(--border-2); }
+.prompt-row-icon { display: grid; flex: none; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--amber-soft); color: var(--amber); }
+.prompt-row.suggestion .prompt-row-icon { background: var(--accent-soft); color: var(--accent); }
+.prompt-row-text { display: grid; flex: 1; gap: 3px; min-width: 0; }
+.prompt-row-text strong { overflow: hidden; font-size: 13px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-row-text small { color: var(--text-3); font-size: 11px; }
+.prompt-step-text { margin: 0; overflow: hidden; color: var(--text-2); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-step-list { display: grid; gap: 1px; margin: 0; padding: 0; color: var(--text-2); font-size: 12.5px; list-style-position: inside; }
+.prompt-step-list li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-step-list li::marker { color: var(--text-3); font-size: 11px; }
+.prompt-row .icon-button { width: 28px; min-width: 28px; min-height: 28px; }
+.prompt-row .primary.compact, .prompt-row .ghost-button { display: inline-flex; flex: none; align-items: center; gap: 5px; }
+.prompts-notice { display: flex; align-items: center; gap: 7px; margin: -4px 0 0; color: var(--green); font-size: 12.5px; }
+.prompt-editor { display: grid; gap: 16px; }
+.prompt-steps { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; }
+.prompt-steps legend { padding: 0; }
+.prompt-step { display: flex; align-items: flex-start; gap: 8px; }
+.prompt-step .queue-index { margin-top: 8px; }
+.prompt-step textarea { flex: 1; min-height: 44px; resize: vertical; font-size: 13px; line-height: 1.5; }
+.prompt-step .icon-button { margin-top: 4px; }
+.add-step { justify-self: start; }
+.palette-prompt-lead { color: var(--amber); }
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-item { animation: none; }
+  .queue-status[data-tone='working'] .queue-status-dot { animation: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .port-pulse, .palette-status::before { animation: none; }
   .context-ring-fill { transition: none; }

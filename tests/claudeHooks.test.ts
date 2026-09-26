@@ -19,7 +19,7 @@ test('kanca yoksa ayar dosyası oluşturulur, ikinci kurulum dosyayı değiştir
   try {
     const file = path.join(dir, 'settings.json')
     assert.deepEqual(installClaudeHook(file), { active: true, changed: true })
-    assert.equal(readJson(file).hooks.SessionStart[0].hooks[0].command, HOOK_COMMAND)
+    for (const name of ['SessionStart', 'UserPromptSubmit', 'Stop']) assert.equal(readJson(file).hooks[name][0].hooks[0].command, HOOK_COMMAND)
     const before = fs.readFileSync(file, 'utf8')
     assert.deepEqual(installClaudeHook(file), { active: true, changed: false })
     assert.equal(fs.readFileSync(file, 'utf8'), before)
@@ -43,7 +43,7 @@ test('kullanıcının diğer ayarları ve kancaları korunur; eski AgentDeck kan
     assert.deepEqual(installClaudeHook(file), { active: true, changed: true })
     const next = readJson(file)
     assert.equal(next.model, 'opus')
-    assert.deepEqual(next.hooks.Stop, [{ hooks: [own] }])
+    assert.deepEqual(next.hooks.Stop, [{ hooks: [own] }, { hooks: [{ type: 'command', command: HOOK_COMMAND }] }])
     assert.equal(next.hooks.SessionStart.length, 1)
     assert.equal(next.hooks.SessionStart[0].matcher, 'startup')
     assert.deepEqual(next.hooks.SessionStart[0].hooks, [own, { type: 'command', command: HOOK_COMMAND }])
@@ -99,7 +99,7 @@ test('kanca komutu AgentDeck dışında hiçbir şey yazmaz; içinde olay dosyas
     assert.equal(inside.length, 0, 'SessionStart çıktısı Claude bağlamına girerdi')
     const [name] = fs.readdirSync(dir)
     const event = parseHookEvent(name!, fs.readFileSync(path.join(dir, name!), 'utf8'), 1)
-    assert.deepEqual(event, { sessionId: SID, runId: RUN, conversationId: CONVERSATION, source: 'clear', transcriptPath: null, at: 1 })
+    assert.deepEqual(event, { kind: 'start', sessionId: SID, runId: RUN, conversationId: CONVERSATION, source: 'clear', transcriptPath: null, at: 1 })
   } finally {
     removeDir(dir)
   }
@@ -110,7 +110,9 @@ test('olay ayrıştırma yalnız geçerli kimlikleri kabul eder', () => {
   assert.equal(parseHookEvent(`${SID}.${RUN}.1.json`, body({ source: 'startup', transcript_path: '/t.jsonl' }), 5)?.transcriptPath, '/t.jsonl')
   assert.equal(parseHookEvent(`${SID}.${RUN}.1.json`, body({ source: 'yeni-bir-sey' }), 5)?.source, 'other')
   assert.equal(parseHookEvent(`${SID}.${RUN}.1.json`, body({ transcript_path: 'goreli.jsonl' }), 5)?.transcriptPath, null)
-  assert.equal(parseHookEvent(`${SID}.${RUN}.1.json`, body({ hook_event_name: 'Stop' }), 5), null)
+  assert.equal(parseHookEvent(`${SID}.${RUN}.1.json`, body({ hook_event_name: 'Stop' }), 5)?.kind, 'stop')
+  assert.equal(parseHookEvent(`${SID}.${RUN}.1.json`, body({ hook_event_name: 'UserPromptSubmit', prompt: 'x' }), 5)?.kind, 'prompt')
+  assert.equal(parseHookEvent(`${SID}.${RUN}.1.json`, body({ hook_event_name: 'PreToolUse' }), 5), null)
   assert.equal(parseHookEvent(`../x.${RUN}.1.json`, body({}), 5), null)
   assert.equal(parseHookEvent(`${SID}.${RUN}.1.json`, JSON.stringify({ session_id: 'latest' }), 5), null)
   assert.equal(parseHookEvent(`${SID}.${RUN}.1.json`, '{bozuk', 5), null)

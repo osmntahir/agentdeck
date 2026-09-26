@@ -25,6 +25,7 @@ flowchart LR
 - **Ports and previews** – every session gets its own `PORT`, so parallel dev servers don't collide. Ports a session is actually listening on show up as `:5173 ↗` links on its tab and card, whatever port the program picked.
 - **Usage at a glance** – a context ring on the tab shows how full the live Claude conversation is. Cards, works and conversations show tokens and an API-price estimate (not what a subscription bills).
 - **Search every conversation** – `Ctrl+Shift+F` searches the prompts and replies of all Claude conversations. The search ignores case and Turkish accents. Press Enter to resume a result.
+- **Prompt queue and saved prompts** – queue prompts for a Claude session. Each one is sent when Claude finishes its turn, but never while it asks for approval and never into a shell. Save prompts you repeat, including multi-step ones like "run tests → commit → open PR", and send them with one click. agentdeck spots the prompts and prompt sequences you keep typing and suggests saving them. This adds `UserPromptSubmit` and `Stop` entries next to the `SessionStart` hook.
 - **Claude account switching** – sign in to several Claude accounts once, switch with one click from the sidebar.
 - **Keyboard first** – command palette (`Ctrl+K`), `Alt+1…9` to jump between sessions, themes in settings.
 

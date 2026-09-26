@@ -17,6 +17,7 @@ import type {
   Work,
 } from '../shared/types'
 import { createMutationIds } from '../shared/mutationIds'
+import type { PromptSuggestion, SavedPrompt } from '../shared/prompts'
 
 // Token URL'den bir kez alınır, sonra adres çubuğundan temizlenir.
 const fromUrl = new URLSearchParams(location.search).get('token')
@@ -325,3 +326,18 @@ export const moveConversations = (workId: string, ids: string[]) =>
   call<Work>(`/api/works/${workId}/conversation-refs`, { method: 'POST', body: JSON.stringify({ ids }) })
 export const unmoveConversation = (workId: string, id: string) =>
   call<Work>(`/api/works/${workId}/conversation-refs/${id}`, { method: 'DELETE' })
+
+/** Hazır istemler ve oturumun istem kuyruğu (ADR 0024). */
+export const createPrompt = (input: { name: string; steps: string[] }) =>
+  call<SavedPrompt>('/api/prompts', { method: 'POST', body: JSON.stringify(input) })
+export const updatePrompt = (id: string, input: { name: string; steps: string[] }) =>
+  call<SavedPrompt>(`/api/prompts/${id}`, { method: 'PATCH', body: JSON.stringify(input) })
+export const deletePrompt = (id: string) => call(`/api/prompts/${id}`, { method: 'DELETE' })
+export const getPromptSuggestions = () =>
+  call<{ suggestions: PromptSuggestion[]; pending: number }>('/api/prompts/suggestions')
+export const enqueuePrompt = (sessionId: string, input: { text: string } | { promptId: string }) =>
+  call<SessionView>(`/api/sessions/${sessionId}/queue`, { method: 'POST', body: JSON.stringify(input) })
+export const removeQueuedPrompt = (sessionId: string, itemId?: string) =>
+  call<SessionView>(`/api/sessions/${sessionId}/queue${itemId ? `/${itemId}` : ''}`, { method: 'DELETE' })
+export const pauseQueue = (sessionId: string, paused: boolean) =>
+  call<SessionView>(`/api/sessions/${sessionId}/queue/pause`, { method: 'POST', body: JSON.stringify({ paused }) })

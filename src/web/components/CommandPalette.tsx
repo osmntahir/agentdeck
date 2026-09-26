@@ -7,6 +7,7 @@ import { stateLabel, statusTone, StatusDot } from '../sessionStatus'
 import { AgentMark, ProgramIcon } from './AgentMark'
 import { Icon, type IconName } from './Icon'
 import { SHORTCUT_LABELS } from '../../shared/shortcuts'
+import type { SavedPrompt } from '../../shared/prompts'
 
 export interface PaletteCommand {
   id: string
@@ -90,7 +91,7 @@ function Highlighted({ text, ranges }: { text: string; ranges: Array<[number, nu
  * Tek giriş noktası: oturuma atla, yeni ajan başlat veya komut çalıştır.
  * Enter seçili satırı çalıştırır; palet kendiliğinden kapanır.
  */
-export function CommandPalette({ state, sessionOrder, commands, scope, onScope, onSelectSession, onQuickCreate, onResumeConversation, onClose }: {
+export function CommandPalette({ state, sessionOrder, commands, scope, onScope, onSelectSession, onQuickCreate, onResumeConversation, resolveTarget, onSendPrompt, onManagePrompts, onClose }: {
   state: StateResponse
   /** Kenar çubuğu sırası; ilk dokuzu Alt+rakam ipucu alır. */
   sessionOrder: string[]
@@ -101,6 +102,10 @@ export function CommandPalette({ state, sessionOrder, commands, scope, onScope, 
   scope: PaletteScope
   onScope: (scope: PaletteScope) => void
   onResumeConversation: (conversation: ConversationView, projectId: string) => void
+  /** Hazır istemin gideceği oturum; palet açılırken bir kez okunur (odaktaki sekme veya açık oturum). */
+  resolveTarget: () => string | null
+  onSendPrompt: (prompt: SavedPrompt, sessionId: string) => void
+  onManagePrompts: (sessionId: string | null) => void
   onClose: () => void
 }) {
   const preferences = usePreferences()
@@ -108,6 +113,7 @@ export function CommandPalette({ state, sessionOrder, commands, scope, onScope, 
   const list = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
+  const [targetId] = useState(resolveTarget)
   const input = useRef<HTMLInputElement>(null)
   useEffect(() => { dialog.current?.showModal() }, [])
   useEffect(() => { input.current?.focus() }, [scope])
@@ -138,6 +144,26 @@ export function CommandPalette({ state, sessionOrder, commands, scope, onScope, 
           <span className="palette-lead" style={projectStyle(s.projectId, preferences)}><AgentMark session={s} /><StatusDot session={s} /></span>
           <span className="palette-main"><strong>{s.name}</strong><small>{projectName(s.projectId)} · {stateLabel(s)}</small></span>
           {jump >= 0 && jump < 9 && <kbd>Alt+{jump + 1}</kbd>}
+        </>,
+      })
+    }
+    const target = state.sessions.find((s) => s.id === targetId && s.lifecycle === 'live' && s.archivedAt === null) ?? null
+    const prompts = state.prompts ?? []
+    // Aramasızken yalnız hedef oturum varsa en sık kullanılan üç hazır istem önerilir.
+    for (const prompt of searching ? prompts : target ? prompts.slice(0, 3) : []) {
+      const immediate = target?.agentTurn === 'waiting' && !target.promptQueue?.length && !target.queuePaused
+      push({
+        id: `prompt:${prompt.id}`,
+        section: 'Hazır istemler',
+        text: `${prompt.name} ${prompt.steps.join(' ')} hazır istem`,
+        run: () => (target ? onSendPrompt(prompt, target.id) : onManagePrompts(null)),
+        render: <>
+          <span className="palette-lead palette-prompt-lead"><Icon name="bolt" /></span>
+          <span className="palette-main">
+            <strong>{prompt.name}</strong>
+            <small>{target ? `${target.name} oturumuna` : prompt.steps[0]}{prompt.steps.length > 1 ? ` · ${prompt.steps.length} adım` : ''}</small>
+          </span>
+          <span className="palette-tag">{target ? (immediate ? 'Gönder' : 'Sıraya ekle') : 'Yönet'}</span>
         </>,
       })
     }
@@ -173,7 +199,7 @@ export function CommandPalette({ state, sessionOrder, commands, scope, onScope, 
         </>,
       })
     }
-    const sections = ['Oturumlar', 'Yeni oturum', 'Komutlar']
+    const sections = ['Oturumlar', 'Hazır istemler', 'Yeni oturum', 'Komutlar']
     const local: Item[] = conversationsOnly ? [] : sections.flatMap((section) => {
       const inSection = scored.filter((item) => item.section === section)
       return searching ? inSection.sort((a, b) => b.score - a.score) : inSection
@@ -197,7 +223,7 @@ export function CommandPalette({ state, sessionOrder, commands, scope, onScope, 
       })
     }
     return [...local, ...conversationItems]
-  }, [query, state, sessionOrder, commands, preferences, onSelectSession, onQuickCreate, search, trimmed, conversationsOnly, onScope])
+  }, [query, state, sessionOrder, commands, preferences, onSelectSession, onQuickCreate, search, trimmed, conversationsOnly, onScope, targetId, onSendPrompt, onManagePrompts])
 
   function conversationItem(hit: ConversationSearchHit, project: string): Item {
     const c = hit.conversation
