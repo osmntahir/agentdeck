@@ -3,10 +3,11 @@ import { ActionMenu, type MenuAction, type MenuPosition } from './components/Act
 import { Icon } from './components/Icon'
 import { AgentMark, ProgramIcon } from './components/AgentMark'
 import { BranchPicker } from './components/BranchPicker'
+import { ContextMeter, PortLinks } from './components/SessionInsights'
 import { SettingsDialog } from './components/SettingsDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { usePreferences, terminalStyle, updatePreferences, THEMES, type ThemeName } from './preferences'
-import { CommandPalette, type PaletteCommand } from './components/CommandPalette'
+import { CommandPalette, type PaletteCommand, type PaletteScope } from './components/CommandPalette'
 import { appShortcut, SHORTCUT_LABELS, type AppShortcut } from '../shared/shortcuts'
 import { stateLabel, statusTone, StatusDot } from './sessionStatus'
 import { duplicateCommand } from '../shared/workspacePolicy'
@@ -129,6 +130,7 @@ export function App() {
   const [addMenu, setAddMenu] = useState<MenuPosition | null>(null)
   const closeAddMenu = useCallback(() => setAddMenu(null), [])
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [paletteScope, setPaletteScope] = useState<PaletteScope>('all')
   const [renamingGrid, setRenamingGrid] = useState<string | null>(null)
   const [gridMenu, setGridMenu] = useState<MenuPosition | null>(null)
   const closeGridMenu = useCallback(() => setGridMenu(null), [])
@@ -333,7 +335,7 @@ export function App() {
       if (!shortcut) return
       // Açık pencere veya menü klavyeyi sahiplenir; palet açıkken yalnız kendi kısayolu onu kapatır.
       if (document.querySelector('dialog[open]:not(.palette-modal), [role=menu]')) return
-      if (document.querySelector('dialog.palette-modal[open]') && shortcut.kind !== 'palette') return
+      if (document.querySelector('dialog.palette-modal[open]') && shortcut.kind !== 'palette' && shortcut.kind !== 'search-conversations') return
       event.preventDefault()
       event.stopPropagation()
       shortcutRef.current(shortcut)
@@ -512,7 +514,8 @@ export function App() {
 
   const shortcutRef = useRef<(shortcut: AppShortcut) => void>(() => {})
   shortcutRef.current = (shortcut) => {
-    if (shortcut.kind === 'palette') { setPaletteOpen((open) => !open); return }
+    if (shortcut.kind === 'palette') { setPaletteScope('all'); setPaletteOpen((open) => !open); return }
+    if (shortcut.kind === 'search-conversations') { setPaletteScope('conversations'); setPaletteOpen(true); return }
     if (shortcut.kind === 'sidebar') { toggleSidebar(); return }
     if (shortcut.kind === 'maximize') {
       if (view === 'grid' && !active) window.dispatchEvent(new Event('agentdeck:grid-maximize'))
@@ -616,7 +619,7 @@ export function App() {
    * terminalde açılır. Claude konuşmaları klasöre bağlıdır: izole kopyadaki
    * konuşma başka klasörde açılamaz.
    */
-  const resumeConversation = (conversation: ConversationView) => {
+  const resumeConversation = (conversation: ConversationView, knownProjectId?: string) => {
     setError(null)
     // Claude oturumunun güncel konuşması o oturuma attach edilerek açılır.
     if (conversation.current && conversation.claudeSessionId) {
@@ -639,7 +642,7 @@ export function App() {
     // Claude konuşmaları klasöre bağlıdır: konuşma alt klasörde açıldıysa orada sürdürülür.
     const work = works.find((w) => w.id === session?.workId) ??
       works.find((w) => w.conversationRefs?.includes(conversation.id) || (conversation.claudeSessionId !== null && w.claudeSessions?.includes(conversation.claudeSessionId)))
-    const projectId = session?.projectId ?? work?.projectId
+    const projectId = session?.projectId ?? work?.projectId ?? knownProjectId
     const project = state.projects.find((p) => p.id === projectId)
     if (!project) return setError('Konuşmanın projesi bulunamadı.')
     const cwd = conversation.cwd ?? session?.cwd ?? project.path
@@ -890,6 +893,7 @@ export function App() {
       { id: 'active-copy', label: `Aynı programla yeni oturum · ${active.name}`, icon: 'copy' as const, keywords: 'kopya çoğalt duplicate', run: () => duplicateSession(active) },
       { id: 'active-launch', label: `Komut çalıştır… · ${active.name}`, icon: 'play' as const, keywords: 'resume devam', run: () => setLaunchOpen(true) },
     ] : []),
+    { id: 'search-conversations', label: 'Konuşmalarda ara…', icon: 'chat', hint: SHORTCUT_LABELS.searchConversations, keywords: 'claude geçmiş transcript bul metin', keepOpen: true, run: () => setPaletteScope('conversations') },
     { id: 'home', label: 'Tüm oturumlar', icon: 'list', keywords: 'pano ana sayfa', hint: 'Esc', run: goHome },
     { id: 'grid', label: 'Çalışma alanı', icon: 'grid', keywords: 'sekmeler grid bölünmüş yan yana', run: goGrid },
     { id: 'new-tab', label: 'Yeni sekme', icon: 'plus', hint: SHORTCUT_LABELS.newTab, keywords: 'terminal sekme aç', run: newTab },
@@ -1111,6 +1115,8 @@ export function App() {
               </span>
               {active.isolation === 'worktree' && <span className="chip" title="Kendi worktree'sinde çalışır">İzole</span>}
               <BranchPicker key={active.id} session={active} healthy={stateHealthy} />
+              <PortLinks session={active} />
+              <ContextMeter usage={active.usage} live={active.lifecycle === 'live' && Boolean(active.conversation?.current)} />
               <span className="topbar-spacer" />
               <div className="segmented tabs" role="group" aria-label="Görünüm">
                 <button className={tab === 'terminal' ? 'on' : ''} aria-pressed={tab === 'terminal'} onClick={() => setTab('terminal')}><Icon name="terminal" size={14} /> Terminal</button>
@@ -1268,7 +1274,10 @@ export function App() {
           commands={paletteCommands}
           onSelectSession={(id) => selectSession(id, true)}
           onQuickCreate={quickCreate}
-          onClose={() => setPaletteOpen(false)}
+          scope={paletteScope}
+          onScope={setPaletteScope}
+          onResumeConversation={resumeConversation}
+          onClose={() => { setPaletteOpen(false); setPaletteScope('all') }}
         />
       )}
       {colorSession && <ColorDialog id={colorSession.id} projectId={colorSession.projectId} name={colorSession.name} onClose={() => setColorSession(null)} />}

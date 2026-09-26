@@ -41,6 +41,8 @@ export interface RunIdentity {
   runId: string
   /** Claude konuşma kancasının olay dizini (ADR 0018); yoksa kanca hiçbir şey yazmaz. */
   hookDir?: string
+  /** Oturuma ayrılan port (ADR 0023); PORT olarak verilir, kullanıcı ortamı ezebilir. */
+  port?: number
 }
 
 const USER_ENVIRONMENT_MAX_BYTES = 64 * 1024
@@ -124,6 +126,8 @@ export function runEnv(
     if (value === undefined) continue
     if (ALLOWED.includes(key) || key.startsWith('LC_')) env[key] = value
   }
+  // PORT kullanıcının environment.json değeriyle ezilebilir; AGENTDECK_PORT her zaman ayrılan porttur.
+  if (ids.port !== undefined) env.PORT = String(ids.port)
   Object.assign(env, user)
 
   // Ekran tarafımızdaki xterm truecolor'ı destekler; miras varsa kullanıcının
@@ -135,6 +139,7 @@ export function runEnv(
   env.AGENTDECK_SESSION = ids.sessionId
   env.AGENTDECK_RUN = ids.runId
   if (ids.hookDir) env.AGENTDECK_HOOK_DIR = ids.hookDir
+  if (ids.port !== undefined) env.AGENTDECK_PORT = String(ids.port)
 
   return env
 }

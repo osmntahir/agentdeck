@@ -11,6 +11,11 @@ test('palet her yerde Ctrl+Shift+P ile, terminal dışında Ctrl+K ile açılır
   assert.equal(appShortcut(key({ code: 'KeyK', key: 'k', ctrlKey: true }), true), null)
 })
 
+test('Ctrl+Shift+F terminal içinde de konuşmalarda arar; Ctrl+F terminale kalır', () => {
+  assert.deepEqual(appShortcut(key({ code: 'KeyF', key: 'F', ctrlKey: true, shiftKey: true }), true), { kind: 'search-conversations' })
+  assert.equal(appShortcut(key({ code: 'KeyF', key: 'f', ctrlKey: true }), true), null)
+})
+
 test('Alt+rakam klavye düzeninden bağımsız olarak oturuma atlar', () => {
   assert.deepEqual(appShortcut(key({ code: 'Digit3', key: '3', altKey: true }), true), { kind: 'jump', index: 2 })
   assert.equal(appShortcut(key({ code: 'Digit0', key: '0', altKey: true }), true), null)

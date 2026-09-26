@@ -1,4 +1,5 @@
 import { AGENTS } from './agents'
+import type { ConversationUsage, TokenUsage } from './usage'
 export type Isolation = 'worktree' | 'shared'
 
 /** Yönetilen PTY'nin durumu. Activity ve çalışma kopyası sağlığı ayrı kavramlardır. */
@@ -74,6 +75,11 @@ export interface Session {
   conversations?: ConversationRecord[]
   /** PR üzerinde başlatılan oturumun PR'ı; worktree o PR'ın head commit'inden açılmıştır. */
   pullRequest?: SessionPullRequest
+  /**
+   * Oturuma ayrılan port; Run'a PORT olarak verilir (ADR 0023). Uymayan
+   * program başka porttan dinleyebilir; gerçek adres dinlenen portlardan okunur.
+   */
+  port?: number
 }
 
 export interface SessionPullRequest {
@@ -166,6 +172,23 @@ export interface ConversationView extends ConversationSummary {
   cwd: string | null
   /** Şu an bir terminalde veya Claude oturumunda açık olan konuşma. */
   current: boolean
+  /** Transcript'ten okunan token kullanımı; henüz okunmadıysa boştur. */
+  usage?: ConversationUsage
+}
+
+/** Konuşma metninde arama sonucu; snippet.ranges eşleşen parçaların snippet içindeki konumlarıdır. */
+export interface ConversationSearchHit {
+  conversation: ConversationView
+  projectId: string
+  snippet: { role: 'user' | 'assistant'; text: string; ranges: Array<[number, number]>; at: number | null }
+  /** Terimlerden en az birini içeren mesaj sayısı. */
+  matches: number
+}
+
+export interface ConversationSearchResponse {
+  hits: ConversationSearchHit[]
+  /** Henüz dizinlenmemiş konuşma sayısı; sıfır değilse sonuç eksik olabilir. */
+  pending: number
 }
 
 /** Diske yazılan kayıt. Activity, health ve preview buraya girmez. */
@@ -191,6 +214,10 @@ export interface SessionView extends Session {
   degraded: string | null
   /** En son gözlenen konuşmanın özeti; özet henüz okunmadıysa alanları null'dur. */
   conversation?: (ConversationSummary & { id: string; current: boolean }) | null
+  /** Oturumun konuşmalarının toplam kullanımı ve son konuşmanın bağlamı; konuşma yoksa null. */
+  usage?: ConversationUsage | null
+  /** Canlı Run'ın süreç ağacında dinlenen TCP portları; artan sırada. */
+  ports?: number[]
 }
 
 /** Proje kökü kullanılamıyorsa nedeni; kayıt ve oturumlar olduğu gibi kalır. */
@@ -221,6 +248,8 @@ export interface StateResponse {
   claudeSessions?: Record<string, ClaudeAgentView[]>
   /** İş kimliği → konuşma sayısı (önbellekten; tarama sürerken eksik olabilir). */
   workConversationCounts?: Record<string, number>
+  /** İş kimliği → konuşmalarının toplam kullanımı (önbellekten). */
+  workUsage?: Record<string, TokenUsage>
   /** Claude konuşma takibinin durumu; kanca kurulamadıysa nedeni. */
   conversationTracking?: { active: boolean; message: string | null }
   serviceError: string | null

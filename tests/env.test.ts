@@ -120,3 +120,14 @@ test('tanımsız değer taşınmaz', () => {
   assert.equal('HOME' in env, false)
   assert.equal(env.USER, 'x')
 })
+
+test('ayrılan port PORT olarak verilir; miras düşer, kullanıcı ortamı ezebilir', () => {
+  const withPort = { ...ids, port: 4803 }
+  const env = runEnv({ PORT: '3000' }, withPort)
+  assert.equal(env.PORT, '4803')
+  assert.equal(env.AGENTDECK_PORT, '4803')
+  const user = runEnv({}, withPort, { PORT: '3000' })
+  assert.equal(user.PORT, '3000')
+  assert.equal(user.AGENTDECK_PORT, '4803')
+  assert.equal(runEnv({ PORT: '3000' }, ids).PORT, undefined)
+})

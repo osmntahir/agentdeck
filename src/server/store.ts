@@ -194,7 +194,14 @@ function session(raw: unknown): Session {
     ...(raw.workId !== undefined ? { workId: str(raw.workId, 'session.workId') } : {}),
     ...(raw.conversations !== undefined ? { conversations: conversations(raw.conversations) } : {}),
     ...(raw.pullRequest !== undefined ? { pullRequest: pullRequestRef(raw.pullRequest) } : {}),
+    ...(raw.port !== undefined ? { port: portNumber(raw.port) } : {}),
   }
+}
+
+function portNumber(raw: unknown): number {
+  const port = num(raw, 'session.port')
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) corrupt('session.port')
+  return port
 }
 
 function pullRequestRef(raw: unknown): SessionPullRequest {

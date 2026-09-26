@@ -3,6 +3,7 @@ import type { ClaudeAgentView, ConversationSource, ConversationView, SessionView
 import { formatAge } from '../../shared/types'
 import { ActionMenu, type MenuPosition } from './ActionMenu'
 import { Icon } from './Icon'
+import { UsageAmount } from './SessionInsights'
 
 const SOURCE_LABELS: Record<ConversationSource, string> = {
   startup: 'yeni',
@@ -78,6 +79,7 @@ export function ConversationList({ load, sessions, claude, works, currentWorkId,
                   <span>{age === 'az önce' ? age : `${age} önce`}</span>
                   {session && <><span aria-hidden="true">·</span><span title="Konuşmanın görüldüğü terminal">{session.name}</span></>}
                   {item.title && <><span aria-hidden="true">·</span><span title="Claude'da /rename ile verilen ad; /clear sonrası yeni konuşmaya da kopyalanır">“{item.title}”</span></>}
+                  {item.usage && item.usage.total.output > 0 && <><span aria-hidden="true">·</span><UsageAmount total={item.usage.total} heading="Bu konuşmanın toplamı" /></>}
                   <span aria-hidden="true">·</span><code title="Konuşma kimliği">{item.id.slice(0, 8)}</code>
                 </span>
               </div>

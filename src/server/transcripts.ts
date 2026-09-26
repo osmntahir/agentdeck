@@ -1,5 +1,7 @@
 import fs from 'node:fs'
 import type { ConversationSummary } from '../shared/types'
+import type { ConversationUsage } from '../shared/usage'
+import { applyUsageLines, emptyUsageState, type UsageState } from './transcriptUsage'
 
 /**
  * Claude transcript'inden konuşma özeti. Dosya yalnız sona eklenir; bu yüzden
@@ -19,6 +21,7 @@ interface Entry {
   size: number
   checkedAt: number
   summary: ConversationSummary
+  usage: UsageState
   reading: Promise<void> | null
 }
 
@@ -31,8 +34,8 @@ function clean(text: string): string | null {
   return value.length > PROMPT_MAX_CHARS ? `${value.slice(0, PROMPT_MAX_CHARS - 1)}…` : value
 }
 
-/** Kullanıcının kendi yazdığı istem; komut, meta ve araç sonucu satırları değil. */
-function userPrompt(entry: Record<string, unknown>): string | null {
+/** Kullanıcının kendi yazdığı istemin tam metni; komut, meta ve araç sonucu satırları değil. */
+export function userPromptText(entry: Record<string, unknown>): string | null {
   if (entry.type !== 'user' || entry.isMeta === true || entry.isSidechain === true) return null
   const message = entry.message as { content?: unknown } | undefined
   let text: string | null = null
@@ -44,7 +47,12 @@ function userPrompt(entry: Record<string, unknown>): string | null {
   if (text === null) return null
   const trimmed = text.trim()
   if (trimmed.startsWith('<command-') || trimmed.startsWith('<local-command') || trimmed.startsWith('<bash-')) return null
-  return clean(trimmed)
+  return trimmed
+}
+
+function userPrompt(entry: Record<string, unknown>): string | null {
+  const text = userPromptText(entry)
+  return text === null ? null : clean(text)
 }
 
 /** Yeni tam satırları özete işler; son yarım satır sonraki okumaya kalır. */
@@ -80,6 +88,8 @@ export function applyTranscriptLines(summary: ConversationSummary, text: string)
 export interface TranscriptSummaries {
   /** Önbellekteki özet; gerekiyorsa arka planda tazelenir. */
   get(file: string): ConversationSummary
+  /** Önbellekteki token kullanımı; get ile aynı okumadan gelir. */
+  usage(file: string): ConversationUsage
   /** Verilen dosyaların bekleyen okumalarını en çok timeoutMs bekler; liste isteği boş özet göstermesin. */
   settle(files: string[], timeoutMs: number): Promise<void>
 }
@@ -95,6 +105,7 @@ export function createTranscriptSummaries(onUpdate: () => void = () => undefined
       if (stat.size < entry.offset) {
         entry.offset = 0
         entry.summary = { title: null, firstPrompt: null, lastPrompt: null, updatedAt: stat.mtimeMs }
+        entry.usage = emptyUsageState()
       }
       entry.size = stat.size
       if (stat.size === entry.offset) return
@@ -106,6 +117,7 @@ export function createTranscriptSummaries(onUpdate: () => void = () => undefined
         const text = buffer.subarray(0, bytesRead).toString('utf8')
         const { summary, consumed } = applyTranscriptLines(entry.summary, text)
         entry.summary = summary
+        if (consumed > 0) entry.usage = applyUsageLines(entry.usage, text)
         // Tek satır adım sınırını aşıyorsa atlanır; aksi halde okuma ilerlemezdi.
         entry.offset += consumed > 0 ? consumed : bytesRead === READ_STEP_BYTES ? bytesRead : 0
       } finally {
@@ -123,7 +135,7 @@ export function createTranscriptSummaries(onUpdate: () => void = () => undefined
   function entryFor(file: string): Entry {
     let entry = cache.get(file)
     if (!entry) {
-      entry = { offset: 0, size: 0, checkedAt: 0, reading: null, summary: { title: null, firstPrompt: null, lastPrompt: null, updatedAt: null } }
+      entry = { offset: 0, size: 0, checkedAt: 0, reading: null, usage: emptyUsageState(), summary: { title: null, firstPrompt: null, lastPrompt: null, updatedAt: null } }
       cache.set(file, entry)
     }
     const behind = entry.offset < entry.size
@@ -133,6 +145,7 @@ export function createTranscriptSummaries(onUpdate: () => void = () => undefined
 
   return {
     get: (file) => entryFor(file).summary,
+    usage: (file) => entryFor(file).usage.usage,
     async settle(files, timeoutMs) {
       const pending = files.map((file) => entryFor(file).reading).filter((p): p is Promise<void> => p !== null)
       if (pending.length === 0) return

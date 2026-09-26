@@ -90,6 +90,8 @@ export interface SpawnInput {
   userEnv?: Record<string, string>
   /** Claude konuşma kancasının olay dizini. */
   hookDir?: string
+  /** Oturuma ayrılan port; PORT ve AGENTDECK_PORT olarak verilir. */
+  port?: number
   /** Ham PTY çıktısı; sıralı ekran modeline verilir. */
   onData: (chunk: string) => void
   onExit: (exit: RunExit) => void
@@ -112,7 +114,7 @@ export function spawn(input: SpawnInput): { runId: string; pid: number } {
     cols: input.cols ?? DEFAULT_COLS,
     rows: input.rows ?? DEFAULT_ROWS,
     cwd: input.cwd,
-    env: runEnv(process.env, { sessionId: input.sessionId, runId: input.runId, hookDir: input.hookDir }, input.userEnv),
+    env: runEnv(process.env, { sessionId: input.sessionId, runId: input.runId, hookDir: input.hookDir, port: input.port }, input.userEnv),
   })
 
   let markExited!: () => void
@@ -166,6 +168,11 @@ export function isLive(sessionId: string, runId?: string): boolean {
 
 export function currentRunId(sessionId: string): string | null {
   return live.get(sessionId)?.runId ?? null
+}
+
+/** Canlı Run'ların PTY lider pid'leri; dinlenen port taraması için. */
+export function livePids(): Map<string, number> {
+  return new Map([...live].map(([sessionId, entry]) => [sessionId, entry.pid]))
 }
 
 export function liveCount(): number {

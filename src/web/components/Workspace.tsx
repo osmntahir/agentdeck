@@ -11,6 +11,8 @@ import { stateLabel, statusTone, StatusDot } from '../sessionStatus'
 import { SESSION_DRAG_TYPE } from '../gridLayout'
 import { ProtectedBranches } from './ProtectedBranches'
 import { SHORTCUT_LABELS } from '../../shared/shortcuts'
+import { PortLinks, UsageAmount } from './SessionInsights'
+import type { TokenUsage } from '../../shared/usage'
 
 interface Props {
   state: StateResponse
@@ -291,6 +293,8 @@ export function Workspace({
                         <span title={session.cwd}>{session.isolation === 'worktree' ? 'İzole çalışma' : 'Proje klasörü'}</span>
                         <span aria-hidden="true">·</span>
                         <span className="card-age">{session.archivedAt !== null && 'Arşivde · '}{formatAge(sessionAgeMs(session, now))}</span>
+                        {session.usage && <><span aria-hidden="true">·</span><UsageAmount total={session.usage.total} heading="Bu oturumun toplamı" /></>}
+                        <PortLinks session={session} />
                       </div>
                       {session.conversation && (session.conversation.lastPrompt || session.conversation.firstPrompt) && (
                         <div className="card-conversation" title={`Claude konuşması${session.conversation.current ? ' (açık)' : ''}\nİlk istem: ${session.conversation.firstPrompt ?? '—'}\nSon istem: ${session.conversation.lastPrompt ?? '—'}`}>
@@ -380,6 +384,7 @@ export function Workspace({
                       onLinkClaude={() => onLinkClaude(work)}
                       works={(state.works ?? []).filter((w) => w.projectId === project.id)}
                       conversationCount={state.workConversationCounts?.[work.id] ?? 0}
+                      usage={state.workUsage?.[work.id] ?? null}
                       onMove={(conversation, to) => onMoveConversation(conversation, work, to)}
                       onUnmove={(conversation) => onUnmoveConversation(conversation, work)}
                     >
@@ -461,7 +466,7 @@ function projectGroups(state: StateResponse, owned: SessionView[], projectId: st
 }
 
 /** Bir iş: terminalleri ve istenince Claude konuşma geçmişi. */
-function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen, claude, projectPath, onOpenClaude, onUnlinkClaude, onLinkClaude, works, conversationCount, onMove, onUnmove, children }: {
+function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen, claude, projectPath, onOpenClaude, onUnlinkClaude, onLinkClaude, works, conversationCount, usage, onMove, onUnmove, children }: {
   work: Work
   /** İşin tüm oturumları (arşiv ve filtre dışı dahil); özet ve konuşmalar bunlardan okunur. */
   sessions: SessionView[]
@@ -478,6 +483,8 @@ function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen
   onLinkClaude: () => void
   works: Work[]
   conversationCount: number
+  /** İşin konuşmalarının toplam kullanımı. */
+  usage: TokenUsage | null
   onMove: (conversation: ConversationView, toWorkId: string) => Promise<void>
   onUnmove: (conversation: ConversationView) => Promise<void>
   children: React.ReactNode
@@ -501,6 +508,7 @@ function WorkBlock({ work, sessions, now, onMenu, onNewSession, onResume, onOpen
           {waiting > 0 && <span className="stat stat-attention"><span className="status-dot" data-tone="attention" /> {waiting} bekliyor</span>}
           {live > 0 && <span className="stat"><span className="status-dot" data-tone="active" /> {live} çalışıyor</span>}
           <span className="stat">{current.length} terminal</span>
+          <UsageAmount total={usage} heading={`“${work.name}” işinin toplamı`} className="stat" />
           {lastActive > 0 && <span className="stat muted">{formatAge(now - lastActive)}</span>}
         </span>
         <span className="topbar-spacer" />

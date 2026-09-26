@@ -2,6 +2,7 @@ import type {
   ClaudeAccountsResponse,
   ClaudeAgentView,
   ClaudeLoginView,
+  ConversationSearchResponse,
   ConversationView,
   DiffResult,
   DiffScope,
@@ -307,6 +308,9 @@ export const getWorkConversations = (id: string) =>
   call<{ conversations: ConversationView[] }>(`/api/works/${id}/conversations`)
 export const getSessionConversations = (id: string) =>
   call<{ conversations: ConversationView[] }>(`/api/sessions/${id}/conversations`)
+/** Bütün Claude konuşmalarında metin arama; pending > 0 ise dizin hâlâ doluyor. */
+export const searchConversations = (query: string, signal?: AbortSignal) =>
+  call<ConversationSearchResponse>(`/api/conversations/search?q=${encodeURIComponent(query)}`, { signal })
 
 export type ClaudeSessionListing = { supported: boolean; error: string | null; sessions: (ClaudeAgentView & { workId: string | null })[] }
 /** Projenin Claude arka plan oturumları (`claude agents`). */

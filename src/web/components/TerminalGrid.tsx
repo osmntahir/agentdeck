@@ -30,6 +30,7 @@ import type { MenuAction } from './ActionMenu'
 import { SHORTCUT_LABELS } from '../../shared/shortcuts'
 import { TerminalPane } from './TerminalPane'
 import { GridLayoutDialog } from './GridLayoutDialog'
+import { ContextMeter, PortLinks } from './SessionInsights'
 
 interface GridContextValue {
   state: StateResponse
@@ -194,6 +195,8 @@ function GroupActions({ activePanel }: IDockviewHeaderActionsProps) {
           <Icon name="alert" size={14} />
         </button>
       )}
+      <PortLinks session={session} />
+      <ContextMeter usage={session.usage} live={session.lifecycle === 'live' && Boolean(session.conversation?.current)} />
       <BranchPicker session={session} healthy={grid.healthy} />
       <button className="icon-button ghost" title={`${grid.maximized ? 'Önceki yerleşime dön' : 'Paneli büyüt'} · ${SHORTCUT_LABELS.maximize}`} aria-label={grid.maximized ? 'Önceki yerleşime dön' : 'Paneli büyüt'} onClick={() => grid.onToggleMaximize(session.id)}>
         <Icon name={grid.maximized ? 'minimize' : 'maximize'} size={14} />

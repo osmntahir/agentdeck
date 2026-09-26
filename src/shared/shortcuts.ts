@@ -5,6 +5,7 @@
  */
 export type AppShortcut =
   | { kind: 'palette' }
+  | { kind: 'search-conversations' }
   | { kind: 'jump'; index: number }
   | { kind: 'cycle'; delta: 1 | -1 }
   | { kind: 'new-session' }
@@ -29,6 +30,8 @@ export function appShortcut(event: KeyLike, inTerminal: boolean): AppShortcut | 
   // Ctrl+K kabukta satır silmedir; terminal dışında paleti açar, terminalde Ctrl+Shift+P kullanılır.
   if (mod && shift && !alt && code === 'KeyP') return { kind: 'palette' }
   if (mod && !shift && !alt && code === 'KeyK' && !inTerminal) return { kind: 'palette' }
+  // GNOME Terminal'deki "bul" gibi: Ctrl+Shift+F konuşmalarda arar.
+  if (mod && shift && !alt && code === 'KeyF') return { kind: 'search-conversations' }
   if (alt && !mod && !shift && /^Digit[1-9]$/.test(code)) return { kind: 'jump', index: Number(code.slice(5)) - 1 }
   if (ctrl && !alt && !meta && !shift && (key === 'PageDown' || key === 'PageUp')) return { kind: 'cycle', delta: key === 'PageDown' ? 1 : -1 }
   // GNOME Terminal gibi: Ctrl+Shift+PgUp/PgDn sekmeyi sola/sağa taşır.
@@ -45,6 +48,7 @@ export function appShortcut(event: KeyLike, inTerminal: boolean): AppShortcut | 
 /** Kısayol ipucu metni; menü ve paletteki etiketlerle aynı yazım. */
 export const SHORTCUT_LABELS = {
   palette: 'Ctrl+Shift+P',
+  searchConversations: 'Ctrl+Shift+F',
   jump: 'Alt+1…9',
   cycle: 'Ctrl+PgUp / PgDn',
   newSession: 'Ctrl+Shift+N',

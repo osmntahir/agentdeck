@@ -154,3 +154,17 @@ _Avoid_: GitHub entegrasyonu hesabı, token
 **PR oturumu**:
 Bir pull request'in head commit'inden açılmış izole Session. Aynı depodaki PR'da branch'i PR branch'inin adını taşır ve uzak branch'i izler; ajanın push'u PR'a gider. Fork PR'ında veya ad yerelde doluysa ayrı bir agentdeck/ branch'i açılır ve push PR'a gitmez. Başlangıç commit'i PR head'idir; "Bu çalışma" PR'ın kendisini değil, üzerine yapılanı gösterir.
 _Avoid_: PR checkout, review oturumu
+
+**Ayrılan port**:
+Oturum açılırken ona ayrılan, sonraki Run'larda değişmeyen port; Run'a `PORT` ve `AGENTDECK_PORT` olarak verilir. Programın bu porttan dinlediğini kanıtlamaz (ADR 0023).
+_Avoid_: önizleme portu, dev sunucu portu
+
+**Dinlenen port**:
+Canlı Run'ın süreç ağacında o an LISTEN durumundaki TCP portu. Önizleme adresi buradan gelir; kalıcı kayda yazılmaz.
+
+**Kullanım**:
+Bir konuşmanın transcript'indeki usage alanlarından okunan token sayıları ve bağlam büyüklüğü. Tutar, standart API fiyatıyla yapılmış bir tahmindir; abonelikte ödenen tutar değildir.
+_Avoid_: fatura, maliyet (kesin tutar anlamında)
+
+**Konuşma araması**:
+Claude konuşmalarındaki kullanıcı istemlerinde ve ajanın düz metin yanıtlarında yapılan metin arama. Araç çıktılarını kapsamaz. Dizin daemon belleğinde yaşar.

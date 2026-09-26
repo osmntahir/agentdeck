@@ -28,6 +28,9 @@ import { installClaudeHook, openHookInbox, type HookEvent } from './claudeHooks'
 import { createTranscriptSummaries } from './transcripts'
 import { createClaudeAgents, isClaudeAgentId } from './claudeAgents'
 import { createTranscriptIndex, type TranscriptEntry } from './claudeTranscripts'
+import { createTranscriptSearch, type SearchFile } from './transcriptSearch'
+import { allocatePort, scanListeningPorts } from './listeningPorts'
+import { addUsage, emptyUsage, type ConversationUsage, type TokenUsage } from '../shared/usage'
 import { lastLaunchFor, repeatLaunchCommand } from '../shared/launchPolicy'
 import { resumeTargetFromTerminalText } from '../shared/resumeDetection'
 import { terminalAttentionFromText } from '../shared/terminalAttention'
@@ -48,6 +51,7 @@ import {
   type SessionPullRequest,
   type PullRequestSummary,
   type ConversationRecord,
+  type ConversationSearchHit,
   type ConversationView,
   type ClaudeAgentView,
   type Work,
@@ -97,6 +101,11 @@ const MAX_CONVERSATIONS_PER_SESSION = 100
 /** Kaydı henüz yazılmamış oturumun kanca olayı bu süre bekletilir. */
 const HOOK_EVENT_GRACE_MS = 60_000
 const WORK_NAME_MAX = 80
+/** Dinlenen port taraması en çok bu sıklıkla yapılır; durum görünümü önbelleği okur. */
+const PORT_SCAN_MS = 2500
+/** Konuşma araması bir istekte en çok bu kadar dizinler; kalanı sonraki istekte. */
+const SEARCH_BUDGET_MS = 700
+const SEARCH_QUERY_MAX = 200
 
 export interface DaemonOptions {
   dataDir: string
@@ -361,7 +370,46 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       remainingProcessGroup: sessions.hasLingeringGroup(session.id),
       degraded: cwdProblem === null ? null : `Çalışma dizini ${cwdProblem}: ${session.cwd}`,
       conversation: latestConversation(session),
+      usage: sessionUsage(session),
+      ports: session.lifecycle === 'live' ? (listeningPorts.bySession[session.id] ?? []) : [],
     }
+  }
+
+  /** Oturumun konuşmalarının toplamı; bağlam son konuşmanındır. */
+  function sessionUsage(session: Session): ConversationUsage | null {
+    const records = (session.conversations ?? []).filter((c) => c.transcriptPath)
+    if (records.length === 0) return null
+    let total = emptyUsage()
+    for (const record of records) total = addUsage(total, transcripts.usage(record.transcriptPath!).total)
+    const latest = session.conversations!.at(-1)!
+    return { total, context: latest.transcriptPath ? transcripts.usage(latest.transcriptPath).context : null }
+  }
+
+  /**
+   * Canlı Run'ların dinlediği portlar. Tarama arka planda yapılır; durum
+   * görünümü son sonucu okur ve eskiyse yeni taramayı başlatır.
+   */
+  const listeningPorts: { at: number; bySession: Record<string, number[]>; running: boolean } = { at: 0, bySession: {}, running: false }
+  function refreshListeningPorts(): void {
+    if (listeningPorts.running || Date.now() - listeningPorts.at < PORT_SCAN_MS) return
+    listeningPorts.running = true
+    const roots = sessions.livePids()
+    scanListeningPorts(roots)
+      .then((found) => { listeningPorts.bySession = found })
+      .catch(() => undefined)
+      .finally(() => {
+        listeningPorts.at = Date.now()
+        listeningPorts.running = false
+      })
+  }
+
+  /** Aralıkta kayda ayrılmamış port; eşzamanlı açılışlar aynı portu almaz. */
+  const portsBeingReserved = new Set<number>()
+  async function reservePort(): Promise<number | null> {
+    const taken = new Set([...portsBeingReserved, ...store.get().sessions.flatMap((s) => (s.port ? [s.port] : []))])
+    const port = await allocatePort(taken)
+    if (port !== null) portsBeingReserved.add(port)
+    return port
   }
 
   function latestConversation(session: Session): SessionView['conversation'] {
@@ -474,6 +522,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       transcriptPath: record.transcriptPath,
       cwd: session.cwd,
       current: latest === record && session.lifecycle === 'live' && record.runId === session.runId,
+      ...(record.transcriptPath ? { usage: transcripts.usage(record.transcriptPath) } : {}),
     }
   }
 
@@ -489,6 +538,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       transcriptPath: entry.path,
       cwd: entry.cwd,
       current,
+      usage: transcripts.usage(entry.path),
     }
   }
 
@@ -527,17 +577,20 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
   const transcriptIndex = options.claudeAgents ? createTranscriptIndex(path.join(options.claudeAgents.claudeDir, 'projects')) : null
 
-  /** Durum görünümü için iş başına konuşma sayısı; yalnız önbellekten okunur, tarama beklenmez. */
-  function workConversationCounts(): Record<string, number> {
+  /** Durum görünümü için iş başına konuşma sayısı ve toplam kullanım; yalnız önbellekten okunur, tarama beklenmez. */
+  function workConversationStats(): { counts: Record<string, number>; usage: Record<string, TokenUsage> } {
     const state = store.get()
     const counts: Record<string, number> = {}
+    const usage: Record<string, TokenUsage> = {}
     for (const work of state.works ?? []) {
       const project = state.projects.find((p) => p.id === work.projectId)
       const entries = project && transcriptIndex && (work.claudeSessions?.length || work.conversationRefs?.length) ? transcriptIndex.cached(project.path) : []
-      const count = workConversations(work, entries).length
-      if (count > 0) counts[work.id] = count
+      const conversations = workConversations(work, entries)
+      if (conversations.length === 0) continue
+      counts[work.id] = conversations.length
+      usage[work.id] = conversations.reduce((sum, c) => (c.usage ? addUsage(sum, c.usage.total) : sum), emptyUsage())
     }
-    return counts
+    return { counts, usage }
   }
 
   /** Oturumların konuşmaları, en yeni önce; aynı konuşma birden çok oturumda görüldüyse en son görüleni kalır. */
@@ -893,6 +946,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         : { state: 'unavailable', reason: 'Oturum kaydı yok' }
     }
 
+    refreshListeningPorts()
+    const workStats = workConversationStats()
     res.json({
       protocolVersion: PROTOCOL_VERSION,
       daemonId,
@@ -903,7 +958,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       sessions: state.sessions.map(sessionView),
       works: state.works ?? [],
       claudeSessions: workClaudeSessions(),
-      workConversationCounts: workConversationCounts(),
+      workConversationCounts: workStats.counts,
+      workUsage: workStats.usage,
       conversationTracking,
       previews,
       terminals: Object.fromEntries(state.sessions.filter((s) => s.runId).map((s) => [s.id, {
@@ -1162,6 +1218,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         }
 
         const runId = crypto.randomBytes(16).toString('hex')
+        const port = await reservePort()
         openTerminal(sid, runId)
         try {
           sessions.spawn({
@@ -1171,6 +1228,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
             cwd,
             userEnv,
             hookDir,
+            port: port ?? undefined,
             onData: (chunk) => recordTerminalOutput(sid, runId, chunk),
             onExit: (exit) => recordExit(sid, exit),
           })
@@ -1181,6 +1239,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           if (isolation === 'worktree') {
             detail.worktree = (await rollbackWorktrees(project, cwd, targets)) === 'removed' ? 'kaldırıldı' : 'korundu'
           }
+          if (port !== null) portsBeingReserved.delete(port)
           throw new HttpError(500, 'spawn_failed', `Oturum başlatılamadı: ${(err as Error).message}`, detail)
         }
 
@@ -1205,6 +1264,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           lastLaunch: { mode: 'command', command: program },
           ...(workId ? { workId } : {}),
           ...(pullRequest ? { pullRequest: pullRequest.ref } : {}),
+          ...(port !== null ? { port } : {}),
         }
 
         try {
@@ -1214,6 +1274,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
             draft.sessions.push(session)
           })
         } catch (err) {
+          if (port !== null) portsBeingReserved.delete(port)
           // PTY doğdu ama kayıt yazılamadı: yalnız kendi grubumuz durdurulur.
           await sessions.stop(sid)
           await host.discard(sid, runId)
@@ -1223,6 +1284,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           }
           throw new HttpError(503, 'persistence', `Oturum kaydedilemedi: ${(err as Error).message}`, detail)
         }
+        if (port !== null) portsBeingReserved.delete(port)
         persistObservedResumeTarget(sid, runId)
         await host.publish(sid, runId)
         return session
@@ -1436,6 +1498,57 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
   })
 
+  const transcriptSearch = createTranscriptSearch()
+
+  /**
+   * Bilinen bütün Claude konuşmalarında metin arama (ADR 0023): projelerin
+   * transcript'leri ve oturum kayıtlarındaki konuşmalar (izole kopyalar dahil).
+   * Aynı konuşmayı oturum kaydı tanıyorsa sonuç o oturuma bağlanır.
+   */
+  app.get('/api/conversations/search', async (req, res) => {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : ''
+    if (query.length > SEARCH_QUERY_MAX) return jsonError(res, 400, 'validation', `Arama en çok ${SEARCH_QUERY_MAX} karakter olabilir`)
+    if (query === '') return res.json({ hits: [], pending: 0 })
+    const state = store.get()
+    const known = new Map<string, { file: SearchFile; view: () => Omit<ConversationSearchHit, 'snippet' | 'matches'> }>()
+    // İç içe projelerde (ör. ev klasöründeki Genel) konuşma en özel projeye düşer.
+    const projects = [...state.projects].sort((a, b) => a.path.length - b.path.length)
+    if (transcriptIndex) {
+      for (const project of projects) {
+        for (const entry of await transcriptIndex.list(project.path)) {
+          known.set(entry.path, {
+            file: { path: entry.path, mtimeMs: entry.mtimeMs },
+            view: () => ({ conversation: transcriptView(entry, entry.job ? 'claude-session' : 'reference', false), projectId: project.id }),
+          })
+        }
+      }
+    }
+    for (const session of state.sessions) {
+      for (const record of session.conversations ?? []) {
+        if (!record.transcriptPath) continue
+        const seen = known.get(record.transcriptPath)
+        const mtimeMs = Math.max(seen?.file.mtimeMs ?? 0, record.lastSeenAt)
+        known.set(record.transcriptPath, {
+          file: { path: record.transcriptPath, mtimeMs },
+          view: () => ({ conversation: conversationView(session, record), projectId: session.projectId }),
+        })
+      }
+    }
+    try {
+      const { matches, pending } = await transcriptSearch.search([...known.values()].map((k) => k.file), query, SEARCH_BUDGET_MS)
+      // Sonuç satırının başlığı transcript özetinden gelir; kısa süre beklenir.
+      await transcripts.settle(matches.map((m) => m.path), 400)
+      const hits: ConversationSearchHit[] = matches.map((match) => ({
+        ...known.get(match.path)!.view(),
+        snippet: { role: match.role, text: match.snippet.text, ranges: match.snippet.ranges, at: match.at },
+        matches: match.matches,
+      }))
+      res.json({ hits, pending })
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
   app.get('/api/sessions/:id/conversations', async (req, res) => {
     const session = findSession(req.params.id)
     if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
@@ -1570,6 +1683,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
 
     const runId = crypto.randomBytes(16).toString('hex')
+    // Port ayrılmadan açılmış eski oturum ilk yeni Run'ında port alır; sonra hep aynı kalır.
+    const newPort = current.port === undefined ? await reservePort() : null
+    const port = current.port ?? newPort ?? undefined
     openTerminal(current.id, runId)
     try {
       sessions.spawn({
@@ -1579,11 +1695,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         cwd: current.cwd,
         userEnv,
         hookDir,
+        port,
         onData: (chunk) => recordTerminalOutput(current.id, runId, chunk),
         onExit: (exit) => recordExit(current.id, exit),
       })
     } catch (err) {
       await host.discard(current.id, runId)
+      if (newPort !== null) portsBeingReserved.delete(newPort)
       throw new HttpError(500, 'spawn_failed', `Run başlatılamadı: ${(err as Error).message}`)
     }
 
@@ -1597,6 +1715,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         target.exitSignal = null
         target.endedAt = null
         target.lastLaunch = lastLaunch
+        if (newPort !== null) target.port = newPort
         if (autoResumeAttempted) target.autoResumeAttempted = true
         else delete target.autoResumeAttempted
       })
@@ -1605,6 +1724,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       await host.discard(current.id, runId)
       if (err instanceof HttpError) throw err
       throw new HttpError(503, 'persistence', `Yeni Run kaydedilemedi: ${(err as Error).message}`)
+    } finally {
+      if (newPort !== null) portsBeingReserved.delete(newPort)
     }
     // PTY çok hızlı footer yazdıysa, artık kalıcı Run kimliğiyle ilişkilendirilebilir.
     persistObservedResumeTarget(current.id, runId)
