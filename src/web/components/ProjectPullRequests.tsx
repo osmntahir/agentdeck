@@ -146,7 +146,7 @@ export function ProjectPullRequests({ project, sessions, selected, onSelect, onB
       <button className="pr-row" onClick={() => onSelect(ref)}>
         <span className={`pr-dot ${pr.isDraft ? 'draft' : 'open'}`} aria-hidden="true"><Icon name="branch" size={13} /></span>
         <span className="pr-row-main">
-          <span className="pr-row-title"><strong>{pr.title}</strong><span className="muted">#{pr.number}</span>{pr.isDraft && <span className="badge">taslak</span>}</span>
+          <span className="pr-row-title"><span className="pr-number">#{pr.number}</span><strong>{pr.title}</strong>{pr.isDraft && <span className="badge">taslak</span>}</span>
           <span className="pr-row-meta">
             <code>{pr.headRefName}</code><span aria-hidden="true">→</span><code>{pr.baseRefName}</code>
             {pr.author && <span>@{pr.author}</span>}

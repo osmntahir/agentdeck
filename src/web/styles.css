@@ -1411,7 +1411,24 @@ mark.word-del { border-radius: 3px; background: var(--diff-del-word); color: inh
 .pr-dot.open { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
 .pr-dot.draft { background: var(--surface-4); color: var(--text-3); }
 .pr-row-main { display: grid; flex: 1; gap: 5px; min-width: 0; }
-.pr-row-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.pr-row-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* PR numarası göze çarpar: vurgu renginde, eş aralıklı hap; taslakta sönük. */
+.pr-number {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: 650 12px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  vertical-align: 2px;
+}
+.prs-items li:has(.pr-dot.draft) .pr-number { border-color: var(--border-2); background: var(--surface-3); color: var(--text-2); }
 .pr-row-title strong { overflow: hidden; color: var(--text); font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .pr-row-title .muted { flex: none; font-size: 12.5px; }
 .pr-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-3); font-size: 12px; }

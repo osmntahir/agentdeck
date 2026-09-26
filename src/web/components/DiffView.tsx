@@ -714,7 +714,7 @@ function PullRequestHeader({ detail, onDraft }: { detail: PullRequestDetail; onD
   return <header className="pr-header">
     <div className="pr-title-row">
       <span className={`pr-state ${state}`}><Icon name="branch" size={12} />{pr.isDraft && pr.state === 'OPEN' ? 'Taslak' : PR_STATE[pr.state]}</span>
-      <h2>{pr.title} <span className="muted">#{pr.number}</span></h2>
+      <h2><span className="pr-number">#{pr.number}</span> {pr.title}</h2>
       {pr.state === 'OPEN' && (pr.isDraft
         ? <button className="primary pr-ready" disabled={busy} onClick={toggle} title="Taslağı kaldırır; inceleyicilere bildirim gider">
             <Icon name={busy ? 'refresh' : 'check'} size={13} />{busy ? 'Güncelleniyor…' : 'İncelemeye hazır'}

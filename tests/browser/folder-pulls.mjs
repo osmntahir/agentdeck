@@ -83,6 +83,7 @@ try {
   assert.match(await groups.nth(0).locator('.prs-repo-note').innerText(), /GitHub deposu değil/)
   assert.equal(await groups.nth(1).locator('.prs-items li').count(), 2)
   assert.equal(await groups.nth(2).locator('.pr-row-action').getAttribute('href'), 'https://github.com/o/r/pull/42')
+  assert.deepEqual(await groups.nth(1).locator('.pr-number').allTextContents(), ['#42', '#43'])
   if (shots) await page.screenshot({ path: path.join(shots, 'folder-pulls-list.png') })
 
   // Aynı numaralı PR'lar karışmaz: kiosk-web#42 açılır ve kendi farkını gösterir.
