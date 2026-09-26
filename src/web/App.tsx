@@ -415,6 +415,14 @@ export function App() {
     const timer = window.setInterval(poll, 180_000)
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [gitProjectIds])
+  useEffect(() => {
+    const onCount = (event: Event) => {
+      const { projectId, count } = (event as CustomEvent<{ projectId: string; count: number }>).detail
+      setPullCounts(c => c[projectId] === count ? c : { ...c, [projectId]: count })
+    }
+    window.addEventListener('agentdeck:pull-count', onCount)
+    return () => window.removeEventListener('agentdeck:pull-count', onCount)
+  }, [])
 
   /** Projesiz oturum: ev klasöründeki "Genel" kayıt ilk seferde oluşturulur. */
   const openGeneralSession = () => {

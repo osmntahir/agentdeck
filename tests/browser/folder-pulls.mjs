@@ -86,6 +86,21 @@ try {
   assert.deepEqual(await groups.nth(1).locator('.pr-number').allTextContents(), ['#42', '#43'])
   if (shots) await page.screenshot({ path: path.join(shots, 'folder-pulls-list.png') })
 
+  // Yenile: GitHub'da yeni açılan PR daemon önbelleği atlanarak gelir; kenar çubuğu da güncellenir.
+  lists['kiosk-web'].push(pr(44, 'Yeni kampanya bandı', 'feat/bant'))
+  fs.writeFileSync(path.join(root, 'kiosk-web.json'), JSON.stringify(lists['kiosk-web']))
+  await page.getByRole('button', { name: 'PR listesini yenile' }).click()
+  await groups.nth(2).locator('.prs-items li').nth(1).waitFor()
+  await page.waitForFunction(() => document.querySelector('.project-prs')?.textContent?.replace(/\s+/g, '') === '4PR')
+  assert.match(await page.locator('.prs-updated').innerText(), /güncellendi/)
+  // R kısayolu da yeniler.
+  lists['kiosk-web'].pop()
+  fs.writeFileSync(path.join(root, 'kiosk-web.json'), JSON.stringify(lists['kiosk-web']))
+  await page.locator('.prs-repo-head').first().click()
+  await page.keyboard.press('r')
+  await page.waitForFunction(() => document.querySelectorAll('.prs-repo')[2]?.querySelectorAll('.prs-items li').length === 1)
+  if (shots) await page.screenshot({ path: path.join(shots, 'folder-pulls-refresh.png'), clip: { x: 256, y: 0, width: 1104, height: 120 } })
+
   // Aynı numaralı PR'lar karışmaz: kiosk-web#42 açılır ve kendi farkını gösterir.
   await groups.nth(2).locator('.pr-row').click()
   await page.locator('.repo-crumb', { hasText: 'kiosk-web' }).waitFor()

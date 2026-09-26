@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../api'
 import { formatAge, type Project, type ProjectPullRequestList, type PullRequestSummary, type SessionView } from '../../shared/types'
 import { DiffView } from './DiffView'
@@ -67,16 +67,56 @@ export function ProjectPullRequests({ project, sessions, selected, onSelect, onB
   }
   const [now, setNow] = useState(() => Date.now())
 
+  /** Son başarılı okuma; "şu kadar önce güncellendi" ve kendiliğinden yenileme buna bakar. */
+  const [loadedAt, setLoadedAt] = useState<number | null>(null)
   const load = useCallback((fresh: boolean) => {
     setLoading(true)
     api.listProjectPullRequests(project.id, fresh)
-      .then(({ pullRequests, repos }) => { setList(pullRequests); setRepos(repos ?? null); setError(null); setNow(Date.now()) })
+      .then(({ pullRequests, repos }) => {
+        setList(pullRequests); setRepos(repos ?? null); setError(null); setNow(Date.now()); setLoadedAt(Date.now())
+        // Kenar çubuğundaki sayı da hemen güncellenir; periyodik yoklamayı beklemez.
+        window.dispatchEvent(new CustomEvent('agentdeck:pull-count', { detail: { projectId: project.id, count: pullRequests.length } }))
+      })
       .catch((e: api.ApiCallError) => setError({ code: e.code, message: e.message }))
       .finally(() => setLoading(false))
   }, [project.id])
   useEffect(() => { load(false) }, [load])
 
+  // GitHub'daki değişiklik kaçmasın: sayfa açıkken dakikada bir, pencereye dönülünce
+  // de (son okuma 20 sn'den eskiyse) daemon önbelleği atlanarak yeniden okunur.
+  const loadedRef = useRef<number | null>(null)
+  loadedRef.current = loadedAt
+  useEffect(() => {
+    const stale = (ms: number) => loadedRef.current === null || Date.now() - loadedRef.current >= ms
+    const timer = window.setInterval(() => { if (!document.hidden && stale(55_000)) load(true) }, 60_000)
+    const onVisible = () => { if (!document.hidden && stale(20_000)) load(true) }
+    const tick = window.setInterval(() => setNow(Date.now()), 15_000)
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      window.clearInterval(timer)
+      window.clearInterval(tick)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [load])
+
   // PR oturumu yalnız git projesinde açılır; klasör projesindeki PR'ın ajanı olmaz.
+  // R: listeyi yeniler (yazı alanında ve değiştirici tuşla çalışmaz).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'r' && event.key !== 'R') return
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return
+      if (target instanceof Element && target.closest('.xterm, dialog')) return
+      event.preventDefault()
+      load(true)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [load])
+
   const agentsFor = useCallback((pr: PullRef) => pr.repo ? [] : sessions.filter(s => s.archivedAt === null && s.pullRequest?.number === pr.number), [sessions])
   const counts = useMemo(() => ({
     all: list?.length ?? 0,
@@ -120,7 +160,12 @@ export function ProjectPullRequests({ project, sessions, selected, onSelect, onB
     </div>}
     {selected !== null && current && agentsFor(refOf(current)).map(s =>
       <button key={s.id} className="ghost-button" onClick={() => onOpenSession(s.id)} title="Bu PR üzerindeki ajanı aç"><Icon name="terminal" size={13} />{s.name}</button>)}
-    {selected === null && <button className="icon-button ghost" title="Yenile" aria-label="PR listesini yenile" disabled={loading} onClick={() => load(true)}><Icon name="refresh" size={14} /></button>}
+    {loadedAt !== null && <span className="prs-updated" title={new Date(loadedAt).toLocaleString('tr-TR')}>
+      {loading ? 'Güncelleniyor…' : `${formatAge(now - loadedAt) === 'az önce' ? 'az önce' : `${formatAge(now - loadedAt)} önce`} güncellendi`}
+    </span>}
+    <button className={`ghost-button prs-refresh${loading ? ' loading' : ''}`} title="GitHub'dan güncel PR listesini çek · R" aria-label="PR listesini yenile" disabled={loading} onClick={() => load(true)}>
+      <Icon name="refresh" size={14} />Yenile
+    </button>
   </header>
 
   if (selected !== null) {
