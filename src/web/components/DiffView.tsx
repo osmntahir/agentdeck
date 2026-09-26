@@ -3,7 +3,7 @@ import * as api from '../api'
 import type { DiffResult, GithubStatus, PullRequestDetail, PullRequestNote, PullRequestSummary, SessionView } from '../../shared/types'
 import { diffFiles, type DiffFile } from '../../shared/diffFiles'
 import { fileKey, fileTree, treeOrder } from '../../shared/diffLayout'
-import { composeReviewMessage, locateComment, sourceLabel, type ReviewComment } from '../../shared/review'
+import { composeReviewMessage, locateComment, nextUnviewed, sourceLabel, type ReviewComment } from '../../shared/review'
 import { diffDigest, useReviewDraft, useReviewPrefs } from '../reviewDrafts'
 import { DiffFileView, type GithubThread, type NewComment, type PlacedComment } from './DiffFileView'
 import { DiffFileTree, type TreeRepo } from './DiffFileTree'
@@ -47,7 +47,9 @@ const DECISION: Record<string, string> = { APPROVED: 'Onaylandı', CHANGES_REQUE
  */
 export type ReviewTarget =
   | { kind: 'session'; session: SessionView; projectKind: 'git' | 'folder' | undefined }
-  | { kind: 'project'; projectId: string; pr: number; sessions: SessionView[]; onStartAgent: () => void; onChanged?: () => void }
+  | { kind: 'project'; projectId: string; pr: number; sessions: SessionView[]; onStartAgent: () => void; onChanged?: () => void
+      /** Önceki/sonraki PR'a geçer; odak modunda üst çubuk gizliyken de [ ve ] ile kullanılır. */
+      onStep?: (delta: 1 | -1) => void }
 
 export function DiffView({ target }: { target: ReviewTarget }) {
   const session = target.kind === 'session' ? target.session : null
@@ -69,6 +71,8 @@ export function DiffView({ target }: { target: ReviewTarget }) {
   const [sending, setSending] = useState<{ text: string; busy: boolean; error: string | null } | null>(null)
   const [status, setStatus] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const [pendingJump, setPendingJump] = useState<ReviewComment | null>(null)
+  const [focus, setFocus] = useState(false)
+  const [help, setHelp] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   // Oturumun branch durumu ve PR seçici yalnız oturum incelemesinde vardır.
   const githubCapable = target.kind === 'session' && target.projectKind === 'git'
@@ -132,8 +136,13 @@ export function DiffView({ target }: { target: ReviewTarget }) {
     // viewed bilerek bağımlılık değil: işaretleme kendi kapama davranışını yönetir.
   }, [allFiles, digests, source])
 
+  const single = prefs.fileMode === 'single'
   const matches = useCallback((file: DiffFile) => file.path.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()), [query])
-  const visible = useMemo(() => allFiles.filter(({ file }) => matches(file)), [allFiles, matches])
+  // Görülenler gizliyken tek dosya modunda ekrandaki dosya, kullanıcı ilerleyene kadar kaybolmaz.
+  const visible = useMemo(() => allFiles.filter(({ file, id }) =>
+    matches(file) && (!prefs.hideViewed || !viewed.has(id) || (single && id === current))), [allFiles, matches, prefs.hideViewed, viewed, single, current])
+  const singleId = single ? (visible.find(v => v.id === current)?.id ?? visible[0]?.id ?? null) : null
+  const allViewed = allFiles.length > 0 && viewed.size === allFiles.length
 
   const prNumber = prNumberOf(source)
   const detail = loaded?.kind === 'pr' ? loaded.detail : null
@@ -195,6 +204,25 @@ export function DiffView({ target }: { target: ReviewTarget }) {
     return next
   }), [])
 
+  const scrollToFile = useCallback((id: string) => {
+    const section = scroller.current?.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(id)}"]`)
+    if (!section || !scroller.current) return
+    scroller.current.scrollTo({ top: section.offsetTop - 8, behavior: 'smooth' })
+    setCurrent(id)
+  }, [])
+
+  /** Dosyayı açar: tek dosya modunda ekrana getirir, listede ona kayar. Kaldığın yer olarak kaydedilir. */
+  const openFile = useCallback((id: string) => {
+    if (single) {
+      setCurrent(id)
+      scroller.current?.scrollTo({ top: 0 })
+    } else {
+      setCollapsed(previous => { if (!previous.has(id)) return previous; const next = new Set(previous); next.delete(id); return next })
+      requestAnimationFrame(() => scrollToFile(id))
+    }
+    updateDraft(d => d.positions[source] === id ? d : { ...d, positions: { ...d.positions, [source]: id } })
+  }, [single, scrollToFile, updateDraft, source])
+
   const toggleViewed = useCallback((id: string) => {
     const key = viewedKey(id)
     const digest = digests.get(id)
@@ -205,25 +233,33 @@ export function DiffView({ target }: { target: ReviewTarget }) {
       if (nowViewed) next[key] = digest; else delete next[key]
       return { ...d, viewed: next }
     })
-    // Görülen dosya kapanır; ekranda kalan bir sonraki dosyaya geçilir.
     setCollapsed(previous => {
       const next = new Set(previous)
       if (nowViewed) next.add(id); else next.delete(id)
       return next
     })
-  }, [digests, draft.viewed, updateDraft, viewedKey])
+    // Görülen dosya kapanır ve sıradaki görülmemiş dosyaya geçilir; hepsi görüldüyse yerinde kalınır.
+    if (nowViewed) {
+      const after = new Set(viewed).add(id)
+      const next = nextUnviewed(visible.map(v => v.id), after, id)
+      if (next) openFile(next)
+    }
+  }, [digests, draft.viewed, updateDraft, viewedKey, viewed, visible, openFile])
 
-  const scrollToFile = useCallback((id: string) => {
-    const section = scroller.current?.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(id)}"]`)
-    if (!section || !scroller.current) return
-    scroller.current.scrollTo({ top: section.offsetTop - 8, behavior: 'smooth' })
-    setCurrent(id)
-  }, [])
+  const resetViewed = useCallback(() => {
+    updateDraft(d => ({ ...d, viewed: Object.fromEntries(Object.entries(d.viewed).filter(([k]) => !k.startsWith(`${source}|`))) }))
+    setCollapsed(new Set(allFiles.filter(({ file }) => file.lines.length > LARGE_FILE_LINES).map(({ id }) => id)))
+  }, [updateDraft, source, allFiles])
 
-  const openFile = useCallback((id: string) => {
-    setCollapsed(previous => { if (!previous.has(id)) return previous; const next = new Set(previous); next.delete(id); return next })
-    requestAnimationFrame(() => scrollToFile(id))
-  }, [scrollToFile])
+  // İncelemeye dönünce kaynağın en son açılan dosyasından devam edilir.
+  const resumed = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!loaded || resumed.current.has(source)) return
+    resumed.current.add(source)
+    const id = draft.positions[source]
+    if (id && allFiles.some(f => f.id === id)) openFile(id)
+    // Yalnız kaynağın ilk yüklenişinde çalışır.
+  }, [loaded, source])
 
   // Kaydırırken ağaçta işaretlenen dosya: üst kenarı geçmiş son dosya.
   useEffect(() => {
@@ -365,27 +401,66 @@ export function DiffView({ target }: { target: ReviewTarget }) {
     }, 120)
   }, [pendingJump, loading, loaded, openFile])
 
-  // j/k dosyalar arasında gezinir, v görüldü işaretler; yazı alanı veya pencere açıkken çalışmaz.
+  const focused = single ? singleId : current
+  const onStep = target.kind === 'project' ? target.onStep : undefined
+  // Klavye (bkz. KEYS): yazı alanında, açık pencerede veya menüde çalışmaz.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return
-      const target = event.target as HTMLElement | null
-      if (target && (target.closest('input, textarea, select, [contenteditable], .xterm') || document.querySelector('dialog[open], [role=menu]'))) return
+      const el = event.target as HTMLElement | null
+      if (el && (el.closest('input, textarea, select, [contenteditable], .xterm') || document.querySelector('dialog[open], [role=menu]'))) return
       const ids = visible.map(v => v.id)
-      if (ids.length === 0) return
-      const index = current ? ids.indexOf(current) : -1
-      if (event.key === 'j' || event.key === 'k') {
-        event.preventDefault()
-        const next = ids[Math.max(0, Math.min(ids.length - 1, index + (event.key === 'j' ? 1 : -1)))]
-        if (next) openFile(next)
-      } else if (event.key === 'v' && current) {
-        event.preventDefault()
-        toggleViewed(current)
+      const index = focused ? ids.indexOf(focused) : -1
+      const act = (fn: () => void) => { event.preventDefault(); fn() }
+      switch (event.key) {
+        case 'j': case 'k': {
+          const next = ids[Math.max(0, Math.min(ids.length - 1, index + (event.key === 'j' ? 1 : -1)))]
+          if (next) act(() => openFile(next))
+          return
+        }
+        case 'n': { const next = nextUnviewed(ids, viewed, focused); if (next) act(() => openFile(next)); return }
+        case 'v': if (focused) act(() => toggleViewed(focused)); return
+        case 'x': if (focused && !single) act(() => toggleCollapsed(focused)); return
+        case 's': act(() => updatePrefs({ fileMode: single ? 'all' : 'single' })); return
+        case 'h': act(() => updatePrefs({ hideViewed: !prefs.hideViewed })); return
+        case 'f': act(() => setFocus(on => !on)); return
+        case '[': case ']': if (onStep) act(() => onStep(event.key === ']' ? 1 : -1)); return
+        case '?': act(() => setHelp(true)); return
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [visible, current, openFile, toggleViewed])
+  }, [visible, focused, viewed, single, prefs.hideViewed, openFile, toggleViewed, toggleCollapsed, updatePrefs, onStep])
+
+  /**
+   * Odak modu: uygulamanın kenar ve üst çubukları gizlenir, pencere tam ekrana
+   * geçer. Esc veya tam ekrandan çıkış odağı kapatır; Esc uygulamaya
+   * ulaşmaz, yoksa geldiğin sayfaya da dönülürdü.
+   */
+  useEffect(() => {
+    if (!focus) return
+    const root = document.documentElement
+    root.dataset.reviewFocus = ''
+    let entered = false
+    if (!document.fullscreenElement && root.requestFullscreen) root.requestFullscreen().then(() => { entered = true }, () => {})
+    const onChange = () => { if (entered && !document.fullscreenElement) setFocus(false) }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      const el = event.target as HTMLElement | null
+      if (el?.closest('input, textarea, select, .xterm') || document.querySelector('dialog[open], [role=menu]')) return
+      event.preventDefault()
+      event.stopPropagation()
+      setFocus(false)
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      delete root.dataset.reviewFocus
+      document.removeEventListener('fullscreenchange', onChange)
+      window.removeEventListener('keydown', onKey, true)
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+    }
+  }, [focus])
 
   const showPrMenu = (origin: HTMLElement) => {
     const rect = origin.getBoundingClientRect()
@@ -427,17 +502,28 @@ export function DiffView({ target }: { target: ReviewTarget }) {
     }
   }
 
+  const visibleIds = useMemo(() => new Set(visible.map(v => v.id)), [visible])
   const totals = useMemo(() => allFiles.reduce((sum, { file }) => ({ added: sum.added + file.added, removed: sum.removed + file.removed }), { added: 0, removed: 0 }), [allFiles])
   const treeRepos: TreeRepo[] = useMemo(() => repos.map(repo => {
-    const files = repo.files.map((file, i) => ({ file, id: repo.ids[i] })).filter(({ file }) => matches(file))
+    const files = repo.files.map((file, i) => ({ file, id: repo.ids[i] })).filter(({ id }) => visibleIds.has(id))
     return { path: repo.path, label: repo.path === '.' ? repo.branch : repo.path, files, tree: fileTree(files.map(f => f.file.path)) }
-  }), [repos, matches])
+  }), [repos, visibleIds])
   const uncommitted = loaded?.kind === 'local' ? loaded.result.repos.some(r => r.status !== '') : null
   const pr = github?.pullRequest ?? null
   const canCreatePr = github?.state === 'ready' && !pr && github.branch !== null && github.branch !== github.defaultBranch
 
-  return <div className={`diff-view review-view${prefs.tree ? '' : ' no-tree'}${prefs.panel ? '' : ' no-panel'}`}>
+  const singleIndex = singleId ? visible.findIndex(v => v.id === singleId) : -1
+  const prevFile = singleIndex > 0 ? visible[singleIndex - 1] : null
+  const nextFile = singleIndex !== -1 && singleIndex < visible.length - 1 ? visible[singleIndex + 1] : null
+  const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1)
+
+  return <div className={`diff-view review-view${prefs.tree ? '' : ' no-tree'}${prefs.panel ? '' : ' no-panel'}${focus ? ' focus-mode' : ''}`}>
     <div className="diff-bar">
+      {focus && onStep && <div className="pr-step-inline" role="group" aria-label="PR'lar arasında geç">
+        <button className="icon-button ghost" onClick={() => onStep(-1)} title="Önceki PR · [" aria-label="Önceki PR"><Icon name="back" size={14} /></button>
+        <strong>PR #{prNumber}</strong>
+        <button className="icon-button ghost" onClick={() => onStep(1)} title="Sonraki PR · ]" aria-label="Sonraki PR"><Icon name="chevron" size={14} /></button>
+      </div>}
       {session && <div className="tabs" aria-label="İncelenen fark" role="group">
         {session.isolation === 'worktree' && <button className={source === 'work' ? 'on' : ''} aria-pressed={source === 'work'} onClick={() => setSource('work')} title="Oturum başladığından beri bütün değişiklikler">Bu çalışma</button>}
         <button className={source === 'uncommitted' ? 'on' : ''} aria-pressed={source === 'uncommitted'} onClick={() => setSource('uncommitted')} title="Son commit'ten sonraki değişiklikler">Commit edilmemiş</button>
@@ -461,13 +547,21 @@ export function DiffView({ target }: { target: ReviewTarget }) {
         </span>}
       </span>
       <span className="topbar-spacer" />
+      <div className="tabs" role="group" aria-label="Dosya gösterimi">
+        <button className={!single ? 'on' : ''} aria-pressed={!single} onClick={() => updatePrefs({ fileMode: 'all' })} title="Bütün dosyalar alt alta · S">Tüm dosyalar</button>
+        <button className={single ? 'on' : ''} aria-pressed={single} onClick={() => updatePrefs({ fileMode: 'single' })} title="Yalnız seçili dosya · S">Tek dosya</button>
+      </div>
       <div className="tabs" role="group" aria-label="Fark düzeni">
-        <button className={prefs.layout === 'unified' ? 'on' : ''} aria-pressed={prefs.layout === 'unified'} onClick={() => updatePrefs({ layout: 'unified' })}>Birleşik</button>
-        <button className={prefs.layout === 'split' ? 'on' : ''} aria-pressed={prefs.layout === 'split'} onClick={() => updatePrefs({ layout: 'split' })}>Yan yana</button>
+        <button className={`icon-tab${prefs.layout === 'unified' ? ' on' : ''}`} aria-pressed={prefs.layout === 'unified'} onClick={() => updatePrefs({ layout: 'unified' })} title="Birleşik fark" aria-label="Birleşik"><Icon name="rows" size={14} /></button>
+        <button className={`icon-tab${prefs.layout === 'split' ? ' on' : ''}`} aria-pressed={prefs.layout === 'split'} onClick={() => updatePrefs({ layout: 'split' })} title="Yan yana fark" aria-label="Yan yana"><Icon name="columns" size={14} /></button>
       </div>
       <button className="icon-button ghost" aria-pressed={prefs.wrap} title="Uzun satırları sar" aria-label="Satırları sar" onClick={() => updatePrefs({ wrap: !prefs.wrap })} disabled={prefs.layout === 'split'}><Icon name="wrap" size={14} /></button>
       <button className="icon-button ghost" aria-pressed={prefs.tree} title="Dosya ağacı" aria-label="Dosya ağacını göster" onClick={() => updatePrefs({ tree: !prefs.tree })}><Icon name="sidebar" size={14} /></button>
       <button className="icon-button ghost" title="Yenile" aria-label="Değişiklikleri yenile" onClick={() => { setReload(n => n + 1); setGithubReload(n => n + 1) }} disabled={loading}><Icon name="refresh" size={14} /></button>
+      <button className="icon-button ghost" title="Klavye kısayolları · ?" aria-label="Klavye kısayolları" onClick={() => setHelp(true)}><Icon name="command" size={14} /></button>
+      <button className={`icon-button ghost focus-toggle${focus ? ' on' : ''}`} aria-pressed={focus} title={focus ? 'Odaktan çık · Esc' : 'Odak modu: tam ekran inceleme · F'} aria-label={focus ? 'Odaktan çık' : 'Odak modu'} onClick={() => setFocus(!focus)}>
+        <Icon name={focus ? 'minimize' : 'maximize'} size={14} />
+      </button>
       <button className={`review-toggle${prefs.panel ? ' on' : ''}`} aria-pressed={prefs.panel} onClick={() => updatePrefs({ panel: !prefs.panel })} title="İnceleme notları">
         <Icon name="chat" size={14} />Notlar{pending.length > 0 && <span className="count">{pending.length}</span>}
       </button>
@@ -476,7 +570,16 @@ export function DiffView({ target }: { target: ReviewTarget }) {
     <div className="review-body">
       {prefs.tree && <div className="review-tree">
         <div className="review-tree-search"><Icon name="search" size={13} /><input aria-label="Değişen dosya ara" placeholder="Dosya filtrele…" value={query} onChange={e => setQuery(e.target.value)} /></div>
-        <DiffFileTree repos={treeRepos} current={current} viewed={viewed} notes={noteCounts} onOpen={openFile} />
+        <div className="review-tree-actions">
+          <span className="muted">{viewed.size}/{allFiles.length} görüldü</span>
+          <button className="icon-button ghost" aria-pressed={prefs.hideViewed} onClick={() => updatePrefs({ hideViewed: !prefs.hideViewed })}
+            title={prefs.hideViewed ? 'Görülenleri göster · H' : 'Görülenleri gizle · H'} aria-label="Görülen dosyaları gizle"><Icon name="check" size={13} /></button>
+          {!single && <>
+            <button className="icon-button ghost" onClick={() => setCollapsed(new Set(allFiles.map(f => f.id)))} title="Bütün dosyaları kapat" aria-label="Bütün dosyaları kapat"><Icon name="minimize" size={13} /></button>
+            <button className="icon-button ghost" onClick={() => setCollapsed(new Set())} title="Bütün dosyaları aç" aria-label="Bütün dosyaları aç"><Icon name="maximize" size={13} /></button>
+          </>}
+        </div>
+        <DiffFileTree repos={treeRepos} current={focused} viewed={viewed} notes={noteCounts} onOpen={openFile} />
       </div>}
 
       <div className="review-scroll" ref={scroller}>
@@ -486,7 +589,16 @@ export function DiffView({ target }: { target: ReviewTarget }) {
         {loading && !loaded && <div className="diff-skeleton" role="status" aria-label="Değişiklikler okunuyor">{[0, 1, 2].map(i => <span key={i} />)}</div>}
         {error && <p className="error" role="alert">{error}</p>}
         {loaded?.kind === 'local' && loaded.result.truncated && <p className="error">Depo taraması eksik; tüm depolar gösterilemiyor.</p>}
-        {repos.map(repo => <section key={repo.path} className="diff-repo">
+        {allViewed && <div className="review-done" role="status">
+          <span className="review-done-icon" aria-hidden="true"><Icon name="check" size={18} /></span>
+          <span className="review-done-text">
+            <strong>Bütün dosyalar görüldü</strong>
+            <small>{pending.length > 0 ? `${pending.length} not ajana gönderilmeyi bekliyor.` : 'Gönderilmeyi bekleyen not yok.'}</small>
+          </span>
+          {pending.length > 0 && <button className="primary" disabled={!delivery.ok} title={delivery.reason ?? undefined} onClick={openSend}><Icon name="terminal" size={13} />Notları ajana gönder</button>}
+          <button className="ghost-button" onClick={resetViewed}>Görüldü işaretlerini sıfırla</button>
+        </div>}
+        {repos.map(repo => <section key={repo.path} className="diff-repo" hidden={single && !repo.ids.includes(singleId ?? '')}>
           {(repos.length > 1 || repo.baseCommit || loaded?.kind === 'local') && <header className="diff-repo-head">
             <Icon name="branch" size={13} /><strong>{repo.branch}</strong>{repo.path !== '.' && <span>{repo.path}</span>}
             {repo.baseCommit && source === 'work' && <code title="Başlangıç commit'i">{repo.baseCommit.slice(0, 8)}</code>}
@@ -496,17 +608,31 @@ export function DiffView({ target }: { target: ReviewTarget }) {
           {repo.status && <details className="git-status-details"><summary>Git durumu (git status)</summary><pre>{repo.status}</pre></details>}
           {repo.files.map((file, i) => {
             const id = repo.ids[i]
-            if (!matches(file)) return null
-            return <DiffFileView key={id} file={file} fileId={id} layout={prefs.layout} wrap={prefs.wrap}
-              collapsed={collapsed.has(id)} viewed={viewed.has(id)} comments={placed.get(id) ?? EMPTY_PLACED} threads={threads.get(id) ?? EMPTY_THREADS}
+            if (!visibleIds.has(id) || (single && id !== singleId)) return null
+            return <DiffFileView key={id} file={file} fileId={id} layout={prefs.layout} wrap={prefs.wrap} pinned={single}
+              collapsed={!single && collapsed.has(id)} viewed={viewed.has(id)} comments={placed.get(id) ?? EMPTY_PLACED} threads={threads.get(id) ?? EMPTY_THREADS}
               canComment instant={prefs.instant} onToggleCollapsed={toggleCollapsed} onToggleViewed={toggleViewed}
               onAdd={addComment} onEdit={editComment} onDelete={deleteComment} onForward={forwardThread} forwarded={forwarded} />
           })}
           {repo.empty && <div className="diff-clean"><Icon name="check" size={16} /><span>{repo.status ? 'Net fark boş. Ayrıntı için yukarıdaki Git durumuna bakın.' : 'Değişiklik yok.'}</span></div>}
           {repo.truncated && <p className="error">Sonuç boyut sınırında kesildi; tüm değişiklikler gösterilemiyor. Tamamını yerel Git ile inceleyin.</p>}
         </section>)}
-        {allFiles.length > 0 && visible.length === 0 && <p className="pad muted">Bu filtreyle eşleşen dosya yok.</p>}
-        {allFiles.length > 0 && <p className="review-keys muted"><kbd>j</kbd>/<kbd>k</kbd> dosyalar arasında gez · <kbd>v</kbd> görüldü · satır numarasındaki <span className="kbd-plus">+</span> not ekler</p>}
+        {single && singleId && <nav className="single-nav" aria-label="Dosyalar arasında geç">
+          <button className="ghost-button" disabled={!prevFile} onClick={() => prevFile && openFile(prevFile.id)} title="Önceki dosya · K">
+            <Icon name="back" size={13} /><span>{prevFile ? baseName(prevFile.file.path) : 'Önceki'}</span>
+          </button>
+          <span className="single-count">{singleIndex + 1} / {visible.length}</span>
+          <button className={viewed.has(singleId) ? 'ghost-button' : 'primary'} onClick={() => toggleViewed(singleId)}>
+            <Icon name="check" size={13} />{viewed.has(singleId) ? 'Görülmedi yap' : 'Görüldü, sıradaki'}<kbd>V</kbd>
+          </button>
+          <button className="ghost-button" disabled={!nextFile} onClick={() => nextFile && openFile(nextFile.id)} title="Sonraki dosya · J">
+            <span>{nextFile ? baseName(nextFile.file.path) : 'Sonraki'}</span><Icon name="chevron" size={13} />
+          </button>
+        </nav>}
+        {allFiles.length > 0 && visible.length === 0 && !allViewed && <p className="pad muted">Bu filtreyle eşleşen dosya yok.</p>}
+        {allFiles.length > 0 && <p className="review-keys muted">
+          <kbd>J</kbd>/<kbd>K</kbd> dosyalar · <kbd>V</kbd> görüldü ve sıradaki · <kbd>S</kbd> tek dosya · <kbd>F</kbd> odak · <kbd>?</kbd> bütün kısayollar · satır numarasındaki <span className="kbd-plus">+</span> not ekler
+        </p>}
       </div>
 
       {prefs.panel && <ReviewPanel comments={scoped} current={source} summary={draft.summary}
@@ -518,6 +644,7 @@ export function DiffView({ target }: { target: ReviewTarget }) {
         picker={target.kind === 'project' ? { sessions: candidates, selected: receiver?.id ?? null, onSelect: setTargetId, onStartAgent: target.onStartAgent } : null} />}
     </div>
 
+    {help && <ShortcutHelp project={Boolean(onStep)} onClose={() => setHelp(false)} />}
     {prMenu && <ActionMenu position={prMenu.position} actions={prActions} label="Pull request'ler" onClose={() => setPrMenu(null)} />}
     {sending && <SendDialog initial={sending.text} target={delivery.target} submit={prefs.submit} busy={sending.busy} error={sending.error}
       publishable={prNumber !== null ? { count: publishable.length, pr: prNumber } : null}
@@ -530,6 +657,40 @@ export function DiffView({ target }: { target: ReviewTarget }) {
 /** Dosyalar ağaçtaki sırayla listelenir: klasörler önce, sonra ada göre. */
 function ordered(files: DiffFile[]): DiffFile[] {
   return treeOrder(fileTree(files.map(f => f.path))).map(i => files[i])
+}
+
+/** İnceleme kısayolları; yazı alanında ve açık pencerede çalışmazlar. */
+/** combo: tuşlar birlikte basılır (+); yoksa seçeneklerdir (/). */
+const KEYS: { keys: string[]; label: string; project?: true; combo?: true }[] = [
+  { keys: ['J', 'K'], label: 'Sonraki / önceki dosya' },
+  { keys: ['N'], label: 'Sıradaki görülmemiş dosya' },
+  { keys: ['V'], label: 'Görüldü işaretle ve sıradakine geç' },
+  { keys: ['X'], label: 'Dosyayı kapat / aç (tüm dosyalar)' },
+  { keys: ['S'], label: 'Tek dosya / tüm dosyalar' },
+  { keys: ['H'], label: 'Görülenleri gizle / göster' },
+  { keys: ['F'], label: 'Odak modu (tam ekran)' },
+  { keys: ['[', ']'], label: 'Önceki / sonraki PR', project: true },
+  { keys: ['Shift', 'tık'], label: 'Satır aralığı seçerek not', combo: true },
+  { keys: ['Ctrl', 'Enter'], label: 'Notu kaydet', combo: true },
+  { keys: ['Esc'], label: 'Notu bırak · odaktan çık · geri dön' },
+]
+
+function ShortcutHelp({ project, onClose }: { project: boolean; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  useEffect(() => { dialog.current?.showModal() }, [])
+  return <dialog ref={dialog} className="session-modal" aria-labelledby="keys-title" onCancel={e => { e.preventDefault(); onClose() }}
+    onClick={e => { if (e.target === dialog.current) onClose() }}>
+    <div className="dialog keys-dialog">
+      <header className="dialog-head"><h2 id="keys-title">İnceleme kısayolları</h2></header>
+      <dl className="keys-list">
+        {KEYS.filter(k => project || !k.project).map(k => <div key={k.label}>
+          <dt>{k.keys.map((key, i) => <span key={key}>{i > 0 && (k.combo ? '+' : ' / ')}<kbd>{key}</kbd></span>)}</dt>
+          <dd>{k.label}</dd>
+        </div>)}
+      </dl>
+      <div className="dialog-actions"><button type="button" autoFocus onClick={onClose}>Kapat</button></div>
+    </div>
+  </dialog>
 }
 
 const EMPTY_PLACED: PlacedComment[] = []

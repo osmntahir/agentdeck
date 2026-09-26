@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { diffFiles } from '../src/shared/diffFiles'
 import { fileTree, hunkContext, intralineSpans, pairChanges, splitRows, treeOrder } from '../src/shared/diffLayout'
-import { composeReviewMessage, locateComment, type ReviewComment } from '../src/shared/review'
+import { composeReviewMessage, locateComment, nextUnviewed, type ReviewComment } from '../src/shared/review'
 
 const PATCH = [
   'diff --git a/src/a.ts b/src/a.ts',
@@ -108,4 +108,13 @@ test('ajan mesajı notları konum, kod ve metinle numaralar; genel not ve talima
 test('alt depodaki silinen satır notu depo yolunu ve tarafı yazar', () => {
   const message = composeReviewMessage([comment({ repo: 'web', side: 'old', snippet: [] })])
   assert.match(message, /^Kod incelemesinden bir not:\n\n1\. web\/src\/a\.ts:2 \(silinen satır\)\n   Adı sabite taşı/)
+})
+
+test('sıradaki görülmemiş dosya bulunulan dosyadan sonra aranır, sonda başa döner, hepsi görüldüyse yoktur', () => {
+  const ids = ['a', 'b', 'c', 'd']
+  assert.equal(nextUnviewed(ids, new Set(['b']), 'a'), 'c')
+  assert.equal(nextUnviewed(ids, new Set(['d']), 'c'), 'a')
+  assert.equal(nextUnviewed(ids, new Set(), null), 'a')
+  assert.equal(nextUnviewed(ids, new Set(['a', 'b', 'c', 'd']), 'b'), null)
+  assert.equal(nextUnviewed(ids, new Set(['a', 'c', 'd']), 'b'), 'b', 'tek kalan kendisi olabilir')
 })

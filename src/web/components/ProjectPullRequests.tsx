@@ -120,6 +120,7 @@ export function ProjectPullRequests({ project, sessions, selected, onSelect, onB
           kind: 'project', projectId: project.id, pr: selected,
           sessions,
           onChanged: () => load(true),
+          onStep: delta => step(delta),
           onStartAgent: () => onStartAgent(current ?? { number: selected, title: `PR #${selected}`, headRefName: '' }),
         }} />
       </div>

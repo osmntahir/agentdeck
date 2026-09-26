@@ -193,6 +193,77 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Bu çalışma' }).getAttribute('aria-pressed'), 'true')
   assert.equal(await page.locator('.pr-header').count(), 0)
 
+  // Tek dosya modu: yalnız bir dosya, j/k ile gezinme, v ile sıradaki görülmemişe geçme.
+  const shown = () => page.locator('.diff-file').first().getAttribute('aria-label')
+  const key = async (k) => { await page.locator('.diff-summary').click(); await page.keyboard.press(k) }
+  // Başlangıç belirli olsun: önceki adımlardan kalan görüldü işaretleri kaldırılır.
+  for (const box of await page.locator('.viewed-toggle input:checked').all()) await box.uncheck()
+  await page.waitForFunction(() => /0\/3/.test(document.querySelector('.viewed-progress')?.textContent ?? ''))
+  await page.getByRole('button', { name: 'Tek dosya', exact: true }).click()
+  await page.waitForSelector('.single-nav')
+  assert.equal(await page.locator('.diff-file').count(), 1)
+  assert.match(await page.locator('.single-count').textContent(), /\/ 3$/)
+  const firstShown = await shown()
+  await key('j')
+  assert.notEqual(await shown(), firstShown)
+  await key('k')
+  assert.equal(await shown(), firstShown)
+  const order = []
+  for (let i = 0; i < 3; i++) {
+    const before = await shown()
+    order.push(before)
+    await key('v')
+    if (i < 2) await page.waitForFunction(prev => document.querySelector('.diff-file')?.getAttribute('aria-label') !== prev, before)
+  }
+  assert.equal(new Set(order).size, 3, 'v her seferinde görülmemiş başka bir dosyaya geçti')
+  await page.waitForSelector('.review-done')
+  assert.match(await page.locator('.viewed-progress').textContent(), /3\/3/)
+  assert.equal(await page.locator('.tree-dir.done').count(), 1, 'bütün dosyaları görülen klasör tamamlandı')
+  if (shots) await page.screenshot({ path: path.join(shots, '6-single-done.png') })
+  await page.getByRole('button', { name: 'Görüldü işaretlerini sıfırla' }).click()
+  await page.waitForSelector('.review-done', { state: 'detached' })
+  assert.match(await page.locator('.viewed-progress').textContent(), /0\/3/)
+
+  // Görülenleri gizle: tüm dosyalar modunda görülen dosya listeden ve ağaçtan çıkar.
+  await key('s')
+  await page.waitForSelector('.single-nav', { state: 'detached' })
+  await key('h')
+  await page.locator('.diff-file').first().locator('.viewed-toggle input').click()
+  await page.waitForFunction(() => document.querySelectorAll('.diff-file').length === 2)
+  assert.equal(await page.locator('.tree-file').count(), 2)
+  await key('h')
+  await page.waitForFunction(() => document.querySelectorAll('.diff-file').length === 3)
+
+  // Odak modu: kabuk gizlenir, Esc yalnız odaktan çıkarır, sayfadan çıkmaz.
+  await key('f')
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-review-focus'))
+  assert.equal(await page.locator('.app > .sidebar').isVisible(), false)
+  assert.equal(await page.locator('.main > .topbar').isVisible(), false)
+  if (shots) { await page.waitForTimeout(300); await page.screenshot({ path: path.join(shots, '7-focus.png') }) }
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => !document.documentElement.hasAttribute('data-review-focus'))
+  assert.equal(await page.locator('.main > .topbar').isVisible(), true, 'Esc inceleme sayfasından çıkarmadı')
+  await page.waitForSelector('.review-view')
+
+  // Kısayol yardımı.
+  await key('?')
+  await page.waitForSelector('.keys-dialog')
+  if (shots) await page.screenshot({ path: path.join(shots, '8-keys.png') })
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('.keys-dialog', { state: 'detached' })
+
+  // Kaldığın yerden devam: tek dosya modunda açılan dosya yenilemeden sonra yine açılır.
+  await key('s')
+  await page.waitForSelector('.single-nav')
+  await key('j')
+  const resumeAt = await shown()
+  await page.reload()
+  await page.locator(`#session-row-${session.id}`).click()
+  await page.getByRole('button', { name: 'Selamlama değişiklikleri' }).click()
+  await page.waitForSelector('.single-nav')
+  await page.waitForFunction(label => document.querySelector('.diff-file')?.getAttribute('aria-label') === label, resumeAt)
+  await key('s')
+
   assert.deepEqual(errors, [])
   console.log('inceleme duman testi geçti')
 } finally {

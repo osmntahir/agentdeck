@@ -2,7 +2,7 @@ export type IconName =
   | 'settings' | 'more' | 'play' | 'stop' | 'branch' | 'copy' | 'archive' | 'trash' | 'grid' | 'terminal'
   | 'diff' | 'refresh' | 'plus' | 'back' | 'list' | 'search' | 'bell' | 'close' | 'maximize' | 'minimize'
   | 'chevron' | 'folder' | 'external' | 'palette' | 'command' | 'edit' | 'check' | 'alert' | 'layout' | 'sidebar'
-  | 'chat' | 'work' | 'wrap'
+  | 'chat' | 'work' | 'wrap' | 'rows' | 'columns'
 /** 24px ızgarada çizilmiş, tek renkli ve ince çizgili simgeler. */
 const paths: Record<IconName, string[]> = {
   settings: ['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z', 'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z'],
@@ -38,6 +38,8 @@ const paths: Record<IconName, string[]> = {
   chat: ['M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z'],
   work: ['M3 8h18v12H3Z', 'M9 8V5h6v3', 'M3 13h18'],
   wrap: ['M3 6h18', 'M3 12h15a3 3 0 0 1 0 6h-4', 'm16 16-2 2 2 2', 'M3 18h6'],
+  rows: ['M4 5h16', 'M4 10h16', 'M4 15h16', 'M4 20h10'],
+  columns: ['M3 4h18v16H3Z', 'M12 4v16'],
 }
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   return (

@@ -11,9 +11,11 @@ export interface ReviewDraft {
   /** `kaynak|depo|yol` → dosya farkının özeti; fark değişince işaret düşer. */
   viewed: Record<string, string>
   summary: string
+  /** Kaynak başına en son açılan dosya; incelemeye dönünce oradan devam edilir. */
+  positions: Record<string, string>
 }
 
-const EMPTY: ReviewDraft = { comments: [], viewed: {}, summary: '' }
+const EMPTY: ReviewDraft = { comments: [], viewed: {}, summary: '', positions: {} }
 const key = (sessionId: string) => `agentdeck.review.v1.${sessionId}`
 const MAX_COMMENTS = 500
 
@@ -32,7 +34,10 @@ function load(sessionId: string): ReviewDraft {
     if (!raw || typeof raw !== 'object') return EMPTY
     const viewed: Record<string, string> = {}
     for (const [k, v] of Object.entries(raw.viewed ?? {})) if (typeof v === 'string') viewed[k] = v
+    const positions: Record<string, string> = {}
+    for (const [k, v] of Object.entries(raw.positions ?? {})) if (typeof v === 'string') positions[k] = v
     return {
+      positions,
       comments: Array.isArray(raw.comments) ? raw.comments.filter(isComment).slice(-MAX_COMMENTS) : [],
       viewed,
       summary: typeof raw.summary === 'string' ? raw.summary : '',
@@ -48,7 +53,7 @@ export function useReviewDraft(sessionId: string): [ReviewDraft, (change: (draft
     setDraft(previous => {
       const next = change(previous)
       try {
-        if (next.comments.length === 0 && next.summary === '' && Object.keys(next.viewed).length === 0) localStorage.removeItem(key(sessionId))
+        if (next.comments.length === 0 && next.summary === '' && Object.keys(next.viewed).length === 0 && Object.keys(next.positions).length === 0) localStorage.removeItem(key(sessionId))
         else localStorage.setItem(key(sessionId), JSON.stringify(next))
       } catch { /* taslak bu açılışla sınırlı kalır */ }
       return next
@@ -67,17 +72,22 @@ export interface ReviewPrefs {
   instant: boolean
   /** Gönderimde Enter'a da basılır; kapalıysa metin istemde bekler. */
   submit: boolean
+  /** Tek dosya: yalnız seçili dosya gösterilir, j/k dosya değiştirir. */
+  fileMode: 'all' | 'single'
+  /** Görülen dosyalar listeden ve ağaçtan çıkar. */
+  hideViewed: boolean
 }
 
 const PREFS_KEY = 'agentdeck.review.prefs.v1'
-const PREFS_DEFAULT: ReviewPrefs = { layout: 'unified', wrap: false, tree: true, panel: true, instant: false, submit: true }
+const PREFS_DEFAULT: ReviewPrefs = { layout: 'unified', wrap: false, tree: true, panel: true, instant: false, submit: true, fileMode: 'all', hideViewed: false }
 
 function loadPrefs(): ReviewPrefs {
   try {
     const raw = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}')
     const prefs = { ...PREFS_DEFAULT }
     if (raw.layout === 'split' || raw.layout === 'unified') prefs.layout = raw.layout
-    for (const k of ['wrap', 'tree', 'panel', 'instant', 'submit'] as const) if (typeof raw[k] === 'boolean') prefs[k] = raw[k]
+    if (raw.fileMode === 'all' || raw.fileMode === 'single') prefs.fileMode = raw.fileMode
+    for (const k of ['wrap', 'tree', 'panel', 'instant', 'submit', 'hideViewed'] as const) if (typeof raw[k] === 'boolean') prefs[k] = raw[k]
     return prefs
   } catch {
     return PREFS_DEFAULT

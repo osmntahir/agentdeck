@@ -114,3 +114,16 @@ export function sourceLabel(source: string): string {
   if (source.startsWith('pr:')) return `PR #${source.slice(3)}`
   return source
 }
+
+/**
+ * Sıradaki görülmemiş dosya: bulunulan dosyadan sonra gelen ilk görülmemiş,
+ * yoksa baştan aranır. Hepsi görüldüyse null.
+ */
+export function nextUnviewed(ids: string[], viewed: Set<string>, current: string | null): string | null {
+  const start = current === null ? -1 : ids.indexOf(current)
+  for (let step = 1; step <= ids.length; step++) {
+    const id = ids[(start + step + ids.length) % ids.length]
+    if (!viewed.has(id)) return id
+  }
+  return null
+}

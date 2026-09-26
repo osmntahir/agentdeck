@@ -25,6 +25,9 @@ export function DiffFileTree({ repos, current, viewed, notes, onOpen }: {
     if (next.has(key)) next.delete(key); else next.add(key)
     return next
   })
+  /** Klasörün bütün dosyaları görüldüyse klasör de tamamlanmış sayılır. */
+  const done = (repo: TreeRepo, node: TreeNode): boolean =>
+    node.file !== undefined ? viewed.has(repo.files[node.file].id) : node.children.every(child => done(repo, child))
   const render = (repo: TreeRepo, nodes: TreeNode[], depth: number) => nodes.map(node => {
     if (node.file !== undefined) {
       const { file, id } = repo.files[node.file]
@@ -38,9 +41,11 @@ export function DiffFileTree({ repos, current, viewed, notes, onOpen }: {
     }
     const key = `${repo.path}\u0000${node.path}`
     const open = !closed.has(key)
+    const complete = done(repo, node)
     return <div key={key} role="group">
-      <button className="tree-dir" style={{ paddingLeft: 10 + depth * 14 }} aria-expanded={open} onClick={() => toggle(key)} title={node.path}>
+      <button className={`tree-dir${complete ? ' done' : ''}`} style={{ paddingLeft: 10 + depth * 14 }} aria-expanded={open} onClick={() => toggle(key)} title={node.path}>
         <Icon name="chevron" size={11} /><Icon name="folder" size={12} /><span className="tree-name">{node.name}</span>
+        {complete && <Icon name="check" size={11} />}
       </button>
       {open && render(repo, node.children, depth + 1)}
     </div>

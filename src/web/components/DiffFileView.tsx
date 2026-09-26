@@ -30,6 +30,8 @@ interface Props {
   fileId: string
   layout: 'unified' | 'split'
   wrap: boolean
+  /** Tek dosya modunda dosya kapatılamaz; başlıktaki kapatma düğmesi gizlenir. */
+  pinned?: boolean
   collapsed: boolean
   viewed: boolean
   comments: PlacedComment[]
@@ -265,11 +267,11 @@ export const DiffFileView = memo(function DiffFileView(props: Props) {
 
   return <section className={`diff-file${viewed ? ' viewed' : ''}`} data-file-id={fileId} aria-label={file.path}>
     <header className="diff-file-heading">
-      <button className="diff-file-toggle" aria-expanded={!collapsed} onClick={() => props.onToggleCollapsed(fileId)} title={collapsed ? 'Aç' : 'Kapat'}>
+      {!props.pinned && <button className="diff-file-toggle" aria-expanded={!collapsed} onClick={() => props.onToggleCollapsed(fileId)} title={collapsed ? 'Aç · X' : 'Kapat · X'}>
         <Icon name="chevron" size={13} />
-      </button>
+      </button>}
       <span className={`change-letter ${file.change}`} title={CHANGE_TITLE[file.change]}>{CHANGE_LETTER[file.change]}</span>
-      <button className="diff-file-path" onClick={() => props.onToggleCollapsed(fileId)} title={file.path}>
+      <button className="diff-file-path" onClick={() => { if (!props.pinned) props.onToggleCollapsed(fileId) }} title={file.path}>
         <span className="dir">{dir}</span><span className="name">{name}</span>
       </button>
       {noteCount > 0 && <span className="chip note-chip" title={`${noteCount} not`}><Icon name="chat" size={11} />{noteCount}</span>}
