@@ -157,3 +157,16 @@ export function inputChunks(text: string, limit = 64 * 1024): string[] {
   if (part) result.push(part)
   return result
 }
+
+/**
+ * Uygulamanın ürettiği metni terminale kullanıcı yapıştırması gibi verir.
+ * xterm.js'in paste davranışıyla aynı: satır sonları CR olur ve metin
+ * bracketed paste işaretleri arasına alınır; böylece çok satırlı metin ajan
+ * CLI'ında satır satır gönderilmez. Metindeki kontrol karakterleri (sekme ve
+ * satır sonu dışında) atılır: yapıştırma işaretini erken kapatamaz, terminale
+ * komut dizisi sokamaz.
+ */
+export function bracketedPaste(text: string): string {
+  const clean = text.replace(/\r?\n/g, '\r').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, '')
+  return `\x1b[200~${clean}\x1b[201~`
+}

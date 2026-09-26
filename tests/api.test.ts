@@ -2576,3 +2576,36 @@ test('branch API ortak klasörü kullanır; yol kaçışı ve eski Run reddedili
     assert.equal(current.body.repos[0].branch, 'feature/api')
   })
 })
+
+test('ajana metin gönderme canlı Run a yapıştırır ve Enter basar; eski Run ve boş metin reddedilir', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const outDir = tempDir()
+    try {
+      const out = path.join(outDir, 'girdi.txt')
+      const created = await api.post<SessionView>('/api/sessions', createBody(projectId, { command: `sh -c 'stty -echo; head -n 2 > ${out}'`, isolation: 'shared' }))
+      assert.equal(created.status, 200, JSON.stringify(created.body))
+      const session = created.body
+      const route = `/api/sessions/${session.id}/input`
+      assert.equal((await api.post<{ code: string }>(route, { expectedRunId: session.runId, text: '  ' })).body.code, 'validation')
+      assert.equal((await api.post<{ code: string }>(route, { expectedRunId: 'eski', text: 'x' })).body.code, 'run_changed')
+      const sent = await api.post(route, { expectedRunId: session.runId, text: 'not 1\nnot 2', submit: true })
+      assert.equal(sent.status, 200, JSON.stringify(sent.body))
+      await waitFor(async () => fs.existsSync(out) && fs.readFileSync(out, 'utf8').split('\n').length >= 3)
+      // Kanonik tty CR'yi satır sonuna çevirir; yapıştırma işaretleri metni sarar.
+      assert.equal(fs.readFileSync(out, 'utf8'), '\x1b[200~not 1\nnot 2\x1b[201~\n')
+    } finally {
+      removeDir(outDir)
+    }
+  })
+})
+
+test('GitHub uçları çalışma alanı dışındaki depoyu ve geçersiz PR numarasını reddeder', { timeout: 30000 }, async () => {
+  await withDaemon(async ({ api, projectId }) => {
+    const created = await api.post<SessionView>('/api/sessions', createBody(projectId, { isolation: 'shared' }))
+    const base = `/api/sessions/${created.body.id}/github`
+    assert.equal((await api.get<{ code: string }>(`${base}?repo=../baska`)).body.code, 'repo_not_found')
+    assert.equal((await api.get<{ code: string }>(`${base}/pulls/abc`)).body.code, 'validation')
+    const review = await api.post<{ code: string }>(`${base}/pulls/3/review`, { commitId: 'x', comments: [] })
+    assert.equal(review.body.code, 'validation')
+  })
+})

@@ -13,6 +13,8 @@ import { createExclusiveLocks, createLimiter, createSerialQueues, type HeldLock 
 import { createRequestLedger, DedupConflictError } from './dedup'
 import { scanOrphanWorktrees } from './orphans'
 import { findSubRepos } from './repos'
+import * as github from './github'
+import { GithubError } from './github'
 import { contentFingerprint, createBudget, type Budget, type ContentFingerprint } from './fingerprint'
 import * as sessions from './sessions'
 import * as git from './git'
@@ -30,6 +32,7 @@ import { lastLaunchFor, repeatLaunchCommand } from '../shared/launchPolicy'
 import { resumeTargetFromTerminalText } from '../shared/resumeDetection'
 import { terminalAttentionFromText } from '../shared/terminalAttention'
 import { recoveryLaunch } from '../shared/workspacePolicy'
+import { bracketedPaste } from '../shared/terminalStream'
 import {
   commandLabel,
   type DiffScope,
@@ -78,6 +81,9 @@ const WS_CHUNK_TEXT_BYTES = 32 * 1024
 const WS_ENVELOPE_BYTES = 256 * 1024
 const WS_REPLAY_MAX_BYTES = 8 * 1024 * 1024
 const WS_INPUT_TEXT_BYTES = 64 * 1024
+/** Uygulamanın ajana yapıştırdığı tek metnin tavanı (inceleme notları). */
+const AGENT_INPUT_BYTES = 128 * 1024
+const AGENT_SUBMIT_DELAY_MS = 150
 const WS_INPUT_WIRE_BYTES = 512 * 1024
 /** Yavaş izleyici üreticiyi bekletmez; kuyruğu şişen izleyici ayrılır. */
 const WS_VIEWER_QUEUE_BYTES = 1024 * 1024
@@ -2301,6 +2307,95 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
     res.json({ scope, capturedAt, repos, truncated: scan.truncated })
   })
+
+  /**
+   * Uygulamanın hazırladığı metni (ör. inceleme notları) canlı Run'a yapıştırır.
+   * Onay bekleyen terminale yazılmaz: yapıştırılan metin onay seçimini
+   * değiştirebilir. submit, yapıştırma işlendikten sonra Enter gönderir.
+   */
+  app.post('/api/sessions/:id/input', (req, res) => {
+    const session = findSession(req.params.id)
+    if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
+    const body = (req.body ?? {}) as { expectedRunId?: unknown; text?: unknown; submit?: unknown }
+    if (typeof body.text !== 'string' || body.text.trim() === '') return jsonError(res, 400, 'validation', 'Gönderilecek metin boş')
+    if (Buffer.byteLength(body.text) > AGENT_INPUT_BYTES) return jsonError(res, 400, 'input_too_large', 'Metin 128 KiB sınırını aşıyor')
+    const runId = session.runId
+    if (session.lifecycle !== 'live' || !runId || !sessions.isLive(session.id, runId)) {
+      return jsonError(res, 409, 'not_live', 'Terminal çalışmıyor; önce oturumu devam ettirin')
+    }
+    if (body.expectedRunId !== runId) return jsonError(res, 409, 'run_changed', 'Oturum yeniden başladı; görünümü yenileyin')
+    if (terminalAttention(session.id, runId)?.kind === 'approval') {
+      return jsonError(res, 409, 'awaiting_approval', 'Terminal bir onay bekliyor; önce onu yanıtlayın')
+    }
+    clearTerminalAttention(session.id, runId)
+    sessions.write(session.id, bracketedPaste(body.text))
+    // TUI yapıştırmayı bitirmeden gelen Enter bazı CLI'larda metnin parçası sayılır.
+    if (body.submit === true) setTimeout(() => { if (sessions.isLive(session.id, runId)) sessions.write(session.id, '\r') }, AGENT_SUBMIT_DELAY_MS)
+    res.json({ ok: true })
+  })
+
+  /** GitHub işlemleri çalışma alanındaki bir depoda yapılır; repo taramada yoksa reddedilir. */
+  async function githubRepoDir(session: Session, rawRepo: unknown): Promise<string> {
+    const repo = typeof rawRepo === 'string' && rawRepo !== '' ? rawRepo : '.'
+    const scan = await workspaceRepos(session)
+    if (!scan.repos.includes(repo)) throw new HttpError(404, 'repo_not_found', 'Depo bu çalışma alanına ait değil')
+    return path.join(session.cwd, repo)
+  }
+
+  function githubRoute(handler: (session: Session, req: express.Request) => Promise<unknown>): express.RequestHandler {
+    return async (req, res) => {
+      const session = findSession(String(req.params.id))
+      if (!session) return jsonError(res, 404, 'not_found', 'Oturum yok')
+      try {
+        res.json(await handler(session, req))
+      } catch (err) {
+        if (err instanceof GithubError) return jsonError(res, 409, err.state, err.message)
+        sendError(res, err)
+      }
+    }
+  }
+
+  const prNumber = (raw: unknown): number => {
+    const number = Number(raw)
+    if (!Number.isSafeInteger(number) || number <= 0) throw new HttpError(400, 'validation', 'Geçersiz PR numarası')
+    return number
+  }
+
+  app.get('/api/sessions/:id/github', githubRoute(async (session, req) =>
+    github.githubStatus(await githubRepoDir(session, req.query.repo))))
+
+  app.get('/api/sessions/:id/github/pulls', githubRoute(async (session, req) =>
+    ({ pullRequests: await github.listPullRequests(await githubRepoDir(session, req.query.repo)) })))
+
+  app.get('/api/sessions/:id/github/pulls/:number', githubRoute(async (session, req) =>
+    github.pullRequestDetail(await githubRepoDir(session, req.query.repo), prNumber(req.params.number))))
+
+  app.post('/api/sessions/:id/github/pulls', githubRoute(async (session, req) => {
+    const body = (req.body ?? {}) as { repo?: unknown; base?: unknown; title?: unknown; body?: unknown; draft?: unknown }
+    if (typeof body.title !== 'string' || body.title.trim() === '') throw new HttpError(400, 'validation', 'PR başlığı boş olamaz')
+    if (typeof body.base !== 'string' || body.base.trim() === '') throw new HttpError(400, 'validation', 'Hedef branch seçilmeli')
+    const cwd = await githubRepoDir(session, body.repo)
+    const branch = await git.currentBranch(cwd)
+    if (branch === 'HEAD' || branch === '(bilinmiyor)') throw new HttpError(409, 'detached_head', 'Çalışma kopyası bir branch üzerinde değil')
+    if (branch === body.base) throw new HttpError(409, 'same_branch', 'PR için çalışma branch\'i hedef branch\'ten farklı olmalı')
+    return { pullRequest: await github.createPullRequest(cwd, {
+      branch, base: body.base.trim(), title: body.title.trim(), body: typeof body.body === 'string' ? body.body : '', draft: body.draft === true,
+    }) }
+  }))
+
+  app.post('/api/sessions/:id/github/pulls/:number/review', githubRoute(async (session, req) => {
+    const body = (req.body ?? {}) as { repo?: unknown; commitId?: unknown; body?: unknown; comments?: unknown }
+    if (typeof body.commitId !== 'string' || !/^[0-9a-f]{40,64}$/.test(body.commitId)) throw new HttpError(400, 'validation', 'PR commit\'i eksik')
+    const comments = Array.isArray(body.comments) ? body.comments : []
+    const valid = comments.every((c: Partial<github.ReviewDraftComment>) =>
+      typeof c.path === 'string' && typeof c.body === 'string' && c.body.trim() !== '' && (c.side === 'new' || c.side === 'old') &&
+      Number.isSafeInteger(c.line) && (c.startLine === null || Number.isSafeInteger(c.startLine)))
+    if (!valid) throw new HttpError(400, 'validation', 'Yorumlardan biri eksik veya geçersiz')
+    const summary = typeof body.body === 'string' ? body.body : ''
+    if (comments.length === 0 && summary.trim() === '') throw new HttpError(400, 'validation', 'Yayımlanacak yorum yok')
+    const cwd = await githubRepoDir(session, body.repo)
+    return github.publishReview(cwd, prNumber(req.params.number), body.commitId, summary, comments as github.ReviewDraftComment[])
+  }))
 
   if (options.serveWeb) {
     // Yalnızca derlenmiş çıktıyı servis et; ham kaynağı servis etmemeliyiz.

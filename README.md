@@ -20,13 +20,14 @@ flowchart LR
 - **Sessions outlive the window** – agents run in a background daemon; close the app and they keep working.
 - **Terminal grid** – watch and drive several agents at once; split, resize and maximize panels.
 - **Know when an agent needs you** – sessions waiting for approval or input are flagged, with desktop notifications.
-- **Review the work** – per-file diff of everything a session changed since it started.
+- **Review the work, send fixes back** – a file tree, sticky file headers, unified or side-by-side diff with word-level highlights. Comment on a line or a range; the notes go to that session's agent as one numbered message, or one by one as you write them.
+- **Pull requests** – open a PR from a session's branch, review any open PR, and forward reviewers' comments to the agent. Uses your GitHub CLI login (`gh auth login`); agentdeck stores no token.
 - **Claude account switching** – sign in to several Claude accounts once, switch with one click from the sidebar.
 - **Keyboard first** – command palette (`Ctrl+K`), `Alt+1…9` to jump between sessions, themes in settings.
 
 ## Install
 
-Requirements: Linux, Node 22+, Git, and the agent CLIs you want to use on your `PATH`.
+Requirements: Linux, Node 22+, Git, and the agent CLIs you want to use on your `PATH`. For pull requests, the [GitHub CLI](https://cli.github.com) signed in with `gh auth login`.
 
 **One command:**
 

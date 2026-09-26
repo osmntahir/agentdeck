@@ -261,6 +261,76 @@ export interface DiffResult {
   truncated: boolean
 }
 
+/** GitHub'daki bir pull request'in özeti (`gh pr list/view --json`). */
+export interface PullRequestSummary {
+  number: number
+  title: string
+  url: string
+  state: 'OPEN' | 'CLOSED' | 'MERGED'
+  isDraft: boolean
+  baseRefName: string
+  headRefName: string
+  author: string | null
+  additions: number
+  deletions: number
+  changedFiles: number
+  /** APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED; inceleme kuralı yoksa null. */
+  reviewDecision: string | null
+  updatedAt: string
+}
+
+/**
+ * GitHub bağlantısının durumu. Bağlantı kullanıcının `gh` oturumudur;
+ * AgentDeck token saklamaz ve okumaz.
+ */
+export type GithubState = 'ready' | 'gh_missing' | 'unauthenticated' | 'not_github' | 'error'
+
+export interface GithubStatus {
+  state: GithubState
+  message: string | null
+  /** owner/name */
+  repo: string | null
+  defaultBranch: string | null
+  /** Çalışma kopyasının güncel branch'i; ayrık HEAD'de null. */
+  branch: string | null
+  /** Bu branch'ten açılmış PR; açık olan önceliklidir. */
+  pullRequest: PullRequestSummary | null
+}
+
+/** PR'daki satır yorumu. line null ise yorumun satırı güncel farkta yoktur (outdated). */
+export interface PullRequestComment {
+  id: number
+  path: string
+  line: number | null
+  startLine: number | null
+  side: 'new' | 'old'
+  body: string
+  author: string
+  createdAt: string
+  url: string
+  inReplyTo: number | null
+}
+
+/** PR'ın satıra bağlı olmayan konuşması: genel yorumlar ve inceleme özetleri. */
+export interface PullRequestNote {
+  kind: 'comment' | 'review'
+  author: string
+  body: string
+  createdAt: string
+  url: string
+  /** İnceleme sonucu: APPROVED, CHANGES_REQUESTED, COMMENTED. */
+  state: string | null
+}
+
+export interface PullRequestDetail {
+  pullRequest: PullRequestSummary & { body: string; headRefOid: string }
+  /** PR'ın GitHub'daki birleşik farkı; 1 MiB sınırında kesilir. */
+  diff: string
+  truncated: boolean
+  comments: PullRequestComment[]
+  notes: PullRequestNote[]
+}
+
 export interface ApiError {
   code: string
   message: string

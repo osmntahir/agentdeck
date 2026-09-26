@@ -5,8 +5,11 @@ import type {
   ConversationView,
   DiffResult,
   DiffScope,
+  GithubStatus,
   Isolation,
   Project,
+  PullRequestDetail,
+  PullRequestSummary,
   SessionView,
   StateResponse,
   StoredRun,
@@ -198,6 +201,26 @@ export const deleteSession = (id: string, confirmationToken: string) =>
 
 export const getDiff = (id: string, scope: DiffScope) =>
   call<DiffResult>(`/api/sessions/${id}/diff?scope=${scope}`)
+
+/** Uygulamanın hazırladığı metni canlı terminale yapıştırır; submit Enter'a da basar. */
+export const sendToAgent = (id: string, input: { expectedRunId: string | null; text: string; submit: boolean }) =>
+  call<{ ok: true }>(`/api/sessions/${id}/input`, { method: 'POST', body: JSON.stringify(input) })
+
+/** GitHub erişimi kullanıcının `gh` oturumuyla yapılır (ADR 0020). */
+const repoQuery = (repo: string) => `repo=${encodeURIComponent(repo)}`
+export const getGithub = (id: string, repo = '.') => call<GithubStatus>(`/api/sessions/${id}/github?${repoQuery(repo)}`)
+export const listPullRequests = (id: string, repo = '.') =>
+  call<{ pullRequests: PullRequestSummary[] }>(`/api/sessions/${id}/github/pulls?${repoQuery(repo)}`)
+export const getPullRequest = (id: string, number: number, repo = '.') =>
+  call<PullRequestDetail>(`/api/sessions/${id}/github/pulls/${number}?${repoQuery(repo)}`)
+export const createPullRequest = (id: string, input: { repo: string; base: string; title: string; body: string; draft: boolean }) =>
+  call<{ pullRequest: PullRequestSummary }>(`/api/sessions/${id}/github/pulls`, { method: 'POST', body: JSON.stringify(input) })
+export const publishReview = (id: string, number: number, input: {
+  repo: string
+  commitId: string
+  body: string
+  comments: { path: string; side: 'new' | 'old'; line: number; startLine: number | null; body: string }[]
+}) => call<{ url: string }>(`/api/sessions/${id}/github/pulls/${number}/review`, { method: 'POST', body: JSON.stringify(input) })
 
 export interface BranchesResult {
   repos: {

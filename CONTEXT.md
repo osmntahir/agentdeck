@@ -142,3 +142,11 @@ Canonical veri dizinine bağlı, daemon'ın state'e dokunmadan önce aldığı k
 **Silme onayı**:
 Kullanıcının ne silineceğini gördükten sonra üretilen, süreli ve daemon ömrüne bağlı onay. Session ve Run kimliği, çalışma dizininin kimliği ve içerik durumuna bağlanır; bunlardan biri değişmişse onay eskimiştir ve silme yapılmaz.
 _Avoid_: force delete, onay bayrağı
+
+**İnceleme notu**:
+Kullanıcının bir farkın satırına, satır aralığına veya dosyasına yazdığı, ajana iletilmek üzere biriktirilen not. Yazıldığı farka (bu çalışma, commit edilmemiş, PR) ve yorumlanan koda bağlıdır; fark değişip kod bulunamazsa eskimiş sayılır ama silinmez. Ajana gönderilmesi canlı Run'a düz metin yapıştırmaktır; GitHub'da yayımlanması ayrı ve isteğe bağlıdır.
+_Avoid_: yorum (GitHub yorumuyla karışır), review comment
+
+**GitHub bağlantısı**:
+Kullanıcının makinesindeki `gh` CLI oturumu. AgentDeck token saklamaz; yetki, hesap ve erişim `gh auth` kararıdır. Bağlantı yoksa PR özellikleri kapalıdır, yerel fark incelemesi etkilenmez.
+_Avoid_: GitHub entegrasyonu hesabı, token
