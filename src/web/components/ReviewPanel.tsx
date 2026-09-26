@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { sourceLabel, type ReviewComment } from '../../shared/review'
-import type { GithubStatus, PullRequestNote } from '../../shared/types'
+import type { GithubStatus, PullRequestNote, SessionView } from '../../shared/types'
 import { Icon } from './Icon'
 
 /** Ajana gönderilebilirlik; neden kullanıcıya olduğu gibi gösterilir. */
@@ -27,7 +27,15 @@ function Item({ comment, current, onJump, onDelete }: { comment: ReviewComment; 
   </li>
 }
 
-export function ReviewPanel({ comments, current, summary, onSummary, delivery, instant, submit, onPrefs, onJump, onDelete, onClearSent, onSend, github, notes, forwardedNotes, onForwardNote, onClose, status }: {
+/** Proje PR incelemesinde notların gideceği terminalin seçimi. */
+export interface TargetPicker {
+  sessions: SessionView[]
+  selected: string | null
+  onSelect: (id: string) => void
+  onStartAgent: () => void
+}
+
+export function ReviewPanel({ comments, current, summary, onSummary, delivery, instant, submit, onPrefs, onJump, onDelete, onClearSent, onSend, github, notes, forwardedNotes, onForwardNote, onClose, status, picker }: {
   comments: ReviewComment[]
   current: string
   summary: string
@@ -46,6 +54,7 @@ export function ReviewPanel({ comments, current, summary, onSummary, delivery, i
   onForwardNote: (note: PullRequestNote) => void
   onClose: () => void
   status: { tone: 'ok' | 'error'; text: string } | null
+  picker: TargetPicker | null
 }) {
   const pending = comments.filter(c => c.sentAt === null)
   const sent = comments.filter(c => c.sentAt !== null)
@@ -63,6 +72,18 @@ export function ReviewPanel({ comments, current, summary, onSummary, delivery, i
         <Icon name="terminal" size={14} />
         <span><strong>{delivery.target}</strong><small>{delivery.ok ? 'Notlar bu terminale yapıştırılır' : delivery.reason}</small></span>
       </div>
+      {picker && <div className="review-picker">
+        <label>
+          <span>Notların gideceği terminal</span>
+          <select value={picker.selected ?? ''} onChange={e => picker.onSelect(e.target.value)}>
+            <option value="" disabled>Terminal seç…</option>
+            {picker.sessions.map(s => <option key={s.id} value={s.id}>
+              {s.name}{s.pullRequest && !s.name.includes(`#${s.pullRequest.number}`) ? ` · PR #${s.pullRequest.number}` : ''}{s.lifecycle === 'live' ? '' : ' (çalışmıyor)'}
+            </option>)}
+          </select>
+        </label>
+        <button className="ghost-button" onClick={picker.onStartAgent}><Icon name="play" size={12} />Bu PR üzerinde ajan başlat</button>
+      </div>}
 
       {pending.length === 0 && sent.length === 0 && <div className="review-empty">
         <p><strong>Henüz not yok.</strong></p>

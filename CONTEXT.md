@@ -150,3 +150,7 @@ _Avoid_: yorum (GitHub yorumuyla karışır), review comment
 **GitHub bağlantısı**:
 Kullanıcının makinesindeki `gh` CLI oturumu. AgentDeck token saklamaz; yetki, hesap ve erişim `gh auth` kararıdır. Bağlantı yoksa PR özellikleri kapalıdır, yerel fark incelemesi etkilenmez.
 _Avoid_: GitHub entegrasyonu hesabı, token
+
+**PR oturumu**:
+Bir pull request'in head commit'inden açılmış izole Session. Aynı depodaki PR'da branch'i PR branch'inin adını taşır ve uzak branch'i izler; ajanın push'u PR'a gider. Fork PR'ında veya ad yerelde doluysa ayrı bir agentdeck/ branch'i açılır ve push PR'a gitmez. Başlangıç commit'i PR head'idir; "Bu çalışma" PR'ın kendisini değil, üzerine yapılanı gösterir.
+_Avoid_: PR checkout, review oturumu

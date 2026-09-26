@@ -23,6 +23,7 @@ import { Sidebar, navigationIds } from './components/Sidebar'
 import { SidebarShell } from './components/SidebarShell'
 import { TerminalPane } from './components/TerminalPane'
 import { DiffView } from './components/DiffView'
+import { ProjectPullRequests } from './components/ProjectPullRequests'
 import { NewSessionDialog } from './components/NewSessionDialog'
 import { AssignWorkDialog, WorkNameDialog, type WorkChoice } from './components/WorkDialogs'
 import { ClaudeSessionPicker } from './components/ClaudeSessions'
@@ -111,6 +112,11 @@ export function App() {
   const closeMenu = useCallback(() => setMenu(null), [])
   const [state, setState] = useState<StateResponse>(EMPTY)
   const [activeId, setActiveId] = useState<string | null>(null)
+  /** Proje PR sayfası; pr null ise liste açıktır. */
+  const [prView, setPrView] = useState<{ projectId: string; pr: number | null } | null>(null)
+  /** "Bu PR üzerinde ajan başlat": yeni oturum penceresi PR'ın branch'inde izole açılır. */
+  const [dialogPr, setDialogPr] = useState<{ number: number; title: string; headRefName: string } | null>(null)
+  const [pullCounts, setPullCounts] = useState<Record<string, number>>({})
   const [tab, setTab] = useState<'terminal' | 'diff'>('terminal')
   // Oturum seçili değilken ana alanın gösterdiği görünüm.
   const [view, setView] = useState<'sessions' | 'grid'>('sessions')
@@ -262,6 +268,7 @@ export function App() {
 
   const leaveToScan = () => {
     setActiveId(null)
+    setPrView(null)
     setPendingDelete(null)
     setLaunchOpen(false)
   }
@@ -307,6 +314,11 @@ export function App() {
         event.preventDefault()
         return
       }
+      if (prView) {
+        setPrView(prView.pr !== null ? { ...prView, pr: null } : null)
+        event.preventDefault()
+        return
+      }
       if (activeId) {
         leaveToScan()
         event.preventDefault()
@@ -332,7 +344,7 @@ export function App() {
       window.removeEventListener('keydown', onF6, true)
       window.removeEventListener('keydown', onKey)
     }
-  }, [activeId, addingProject, launchOpen, launching])
+  }, [activeId, addingProject, launchOpen, launching, prView])
 
   useEffect(() => {
     const pending = lifecycle.notices.filter((notice) => notice.toast && !toastsHidden.has(notice.id))
@@ -356,8 +368,42 @@ export function App() {
   const openNewSession = (project: Project, work?: string) => {
     const context = active ?? gridFocusSession()
     setDialogWork(work ?? (context?.projectId === project.id ? (context.workId ?? '') : ''))
+    setDialogPr(null)
     setDialogProject(project)
   }
+
+  const openPulls = (projectId: string, pr: number | null = null) => {
+    setActiveId(null)
+    setPendingDelete(null)
+    setPrView({ projectId, pr })
+  }
+
+  const startAgentOnPr = (projectId: string, pr: { number: number; title: string; headRefName: string }) => {
+    const project = state.projects.find(p => p.id === projectId)
+    if (!project) return
+    setDialogWork('')
+    setDialogPr(pr)
+    setDialogProject(project)
+  }
+
+  // Kenar çubuğundaki açık PR sayısı: git projeleri birkaç dakikada bir sorulur.
+  // gh yoksa veya depo GitHub değilse sayı gösterilmez; hata kullanıcıya taşınmaz.
+  const gitProjectIds = state.projects.filter(p => p.kind === 'git' && !p.general).map(p => p.id).join(',')
+  useEffect(() => {
+    if (!gitProjectIds) return
+    let cancelled = false
+    const poll = () => {
+      if (document.hidden) return
+      for (const id of gitProjectIds.split(',')) {
+        api.listProjectPullRequests(id)
+          .then(({ pullRequests }) => { if (!cancelled) setPullCounts(c => c[id] === pullRequests.length ? c : { ...c, [id]: pullRequests.length }) })
+          .catch(() => { if (!cancelled) setPullCounts(c => { if (!(id in c)) return c; const next = { ...c }; delete next[id]; return next }) })
+      }
+    }
+    poll()
+    const timer = window.setInterval(poll, 180_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [gitProjectIds])
 
   /** Projesiz oturum: ev klasöründeki "Genel" kayıt ilk seferde oluşturulur. */
   const openGeneralSession = () => {
@@ -384,9 +430,13 @@ export function App() {
     setError(null)
     const projectId = dialogProject.id
     resolveWork(input.work, projectId)
-      .then((workId) => api.createSession({ name: input.name, command: input.command, isolation: input.isolation, workId, projectId }))
+      .then((workId) => api.createSession({
+        name: input.name || (dialogPr ? `PR #${dialogPr.number}` : ''), command: input.command, isolation: input.isolation, workId, projectId,
+        ...(dialogPr ? { pullRequest: dialogPr.number } : {}),
+      }))
       .then(async (session) => {
         setDialogProject(null)
+        setDialogPr(null)
         await refresh()
         openInWorkspace(session.id, 'tab', true)
       })
@@ -397,6 +447,7 @@ export function App() {
   /** Ayrıntı görünümü: diff, önceki Run'lar ve tam başlık. Esc geldiğin yere döner. */
   const openDetail = (id: string, detailTab: 'terminal' | 'diff' = 'terminal') => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    setPrView(null)
     setActiveId(id)
     setTab(detailTab)
   }
@@ -413,6 +464,7 @@ export function App() {
     if (owner && owner.id !== gridId) { setGridIds(savedGridSessionIds(owner.id)); setGridId(owner.id) }
     setPendingGridAdd({ items, focus })
     setActiveId(null)
+    setPrView(null)
     setPendingDelete(null)
     setView('grid')
   }
@@ -847,6 +899,7 @@ export function App() {
     { id: 'grid-live', label: 'Çalışan oturumları yan yana aç', icon: 'layout', keywords: 'hepsi tümü canlı grid', run: addLiveToGrid },
     { id: 'sidebar', label: preferences.sidebarCollapsed ? 'Kenar çubuğunu genişlet' : 'Kenar çubuğunu daralt', icon: 'sidebar', hint: SHORTCUT_LABELS.sidebar, keywords: 'panel gizle', run: toggleSidebar },
     { id: 'new-session', label: 'Yeni oturum…', icon: 'plus', hint: SHORTCUT_LABELS.newSession, keywords: 'ajan terminal başlat', run: () => shortcutRef.current({ kind: 'new-session' }) },
+    ...state.projects.filter(p => p.kind === 'git' && !p.general).map(p => ({ id: `prs:${p.id}`, label: `Pull request'ler · ${p.name}`, icon: 'branch' as const, keywords: 'pr github inceleme review', run: () => openPulls(p.id) })),
     { id: 'add-project', label: 'Proje ekle…', icon: 'folder', keywords: 'klasör depo', run: () => setAddingProject(true) },
     { id: 'settings', label: 'Ayarlar', icon: 'settings', keywords: 'tercih', run: () => setSettingsOpen(true) },
     ...Object.entries(THEMES).filter(([id]) => id !== preferences.theme).map(([id, theme]) => ({ id: `theme:${id}`, label: `Tema: ${theme.label}`, icon: 'palette' as const, keywords: 'renk görünüm', run: () => { try { updatePreferences({ theme: id as ThemeName }) } catch { setError('Tema kaydedilemedi.') } } })),
@@ -928,6 +981,8 @@ export function App() {
         onMoveToWork={(item, workId) => run(item.kind === 'session'
           ? api.assignWork(item.id, workId)
           : workId ? api.linkClaudeSessions(workId, [item.id]) : api.unlinkClaudeSession(item.workId, item.id))}
+        pullCounts={pullCounts}
+        onPulls={(id) => navigate(() => openPulls(id))}
         onRemoveProject={(project) => {
           // Oturumu olan projede önce neyin silineceği gösterilir; olmayanda yalnız kayıt kalkar.
           if (state.sessions.some((s) => s.projectId === project.id)) askProjectDelete(project.id)
@@ -954,7 +1009,7 @@ export function App() {
             {state.serviceError}
           </div>
         )}
-        <div className="scan" hidden={Boolean(active) || view !== 'sessions'} inert={Boolean(active) || view !== 'sessions'}>
+        <div className="scan" hidden={Boolean(active) || Boolean(prView) || view !== 'sessions'} inert={Boolean(active) || Boolean(prView) || view !== 'sessions'}>
           <Workspace
             onPreviewIds={setPreviewIds}
             state={state}
@@ -978,7 +1033,15 @@ export function App() {
             onAddToGrid={addToGrid}
           />
         </div>
-        {view === 'grid' && !active && (
+        {prView && !active && (() => {
+          const project = state.projects.find(p => p.id === prView.projectId)
+          if (!project) return null
+          return <ProjectPullRequests key={project.id} project={project}
+            sessions={state.sessions.filter(s => s.projectId === project.id)}
+            selected={prView.pr} onSelect={pr => setPrView({ projectId: project.id, pr })} onBack={leaveToScan}
+            onStartAgent={pr => startAgentOnPr(project.id, pr)} onOpenSession={openSession} />
+        })()}
+        {view === 'grid' && !active && !prView && (
           <div className="grid-workspace">
           <TerminalGrid key={gridId} gridId={gridId} onRefresh={refresh}
             state={state}
@@ -1129,7 +1192,7 @@ export function App() {
                   />
                 </div>
               )}
-              {tab === 'diff' && <DiffView key={active.id} session={active} projectKind={activeProject?.kind} />}
+              {tab === 'diff' && <DiffView key={active.id} target={{ kind: 'session', session: active, projectKind: activeProject?.kind }} />}
             </div>
           </>
         )}
@@ -1299,8 +1362,9 @@ export function App() {
           initialWork={dialogWork}
           busy={creating}
           error={error}
+          pullRequest={dialogPr}
           onCancel={() => {
-            if (!creating) setDialogProject(null)
+            if (!creating) { setDialogProject(null); setDialogPr(null) }
           }}
           onCreate={createSession}
         />

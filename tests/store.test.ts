@@ -348,3 +348,16 @@ test('bilinmeyen proje türü bozuk kayıt olarak reddedilir', () => {
     assert.throws(() => openStore(dir), StateError)
   } finally { removeDir(dir) }
 })
+
+test('PR oturumunun PR bağlantısı okunur; bozuk bağlantı durur', () => {
+  const dir = tempDir()
+  try {
+    const pullRequest = { number: 5, headRefName: 'feat/x', tracking: true }
+    writeState(dir, { schemaVersion: 2, projects: [], sessions: [session({ lifecycle: 'exited', pullRequest })] })
+    assert.deepEqual(openStore(dir).get().sessions[0].pullRequest, pullRequest)
+    writeState(dir, { schemaVersion: 2, projects: [], sessions: [session({ lifecycle: 'exited', pullRequest: { number: 5, headRefName: 'feat/x' } as never })] })
+    assert.throws(() => openStore(dir), StateError)
+  } finally {
+    removeDir(dir)
+  }
+})

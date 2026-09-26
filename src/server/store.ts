@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import type { ConversationRecord, ConversationSource, Isolation, LastLaunch, Lifecycle, PersistedState, Project, Session, SessionWorktree, Work } from '../shared/types'
+import type { ConversationRecord, ConversationSource, Isolation, LastLaunch, Lifecycle, PersistedState, Project, Session, SessionPullRequest, SessionWorktree, Work } from '../shared/types'
 
 export const SCHEMA_VERSION = 2
 
@@ -193,7 +193,17 @@ function session(raw: unknown): Session {
     // Alanlar eklenmeden önceki kayıtlarda yoktur; yoksa anahtar da yazılmaz.
     ...(raw.workId !== undefined ? { workId: str(raw.workId, 'session.workId') } : {}),
     ...(raw.conversations !== undefined ? { conversations: conversations(raw.conversations) } : {}),
+    ...(raw.pullRequest !== undefined ? { pullRequest: pullRequestRef(raw.pullRequest) } : {}),
   }
+}
+
+function pullRequestRef(raw: unknown): SessionPullRequest {
+  if (!isObject(raw)) corrupt('session.pullRequest')
+  const number = num(raw.number, 'session.pullRequest.number')
+  if (!Number.isSafeInteger(number) || number <= 0) corrupt('session.pullRequest.number')
+  const tracking = optionalBool(raw.tracking, 'session.pullRequest.tracking')
+  if (tracking === undefined) corrupt('session.pullRequest.tracking')
+  return { number, headRefName: str(raw.headRefName, 'session.pullRequest.headRefName'), tracking }
 }
 
 /**

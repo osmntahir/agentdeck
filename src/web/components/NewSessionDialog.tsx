@@ -14,11 +14,13 @@ interface Props {
   works: Work[]
   /** Önceden seçili iş: kimlik, 'new' (yeni iş) veya '' (işsiz). */
   initialWork: string
+  /** Verilirse oturum bu PR'ın branch'inde izole açılır; çalışma yeri seçilmez. */
+  pullRequest?: { number: number; title: string; headRefName: string } | null
   onCancel: () => void
   onCreate: (input: { name: string; command: string | null; isolation: Isolation; work: WorkChoice }) => void
 }
 
-export function NewSessionDialog({ project, works, initialWork, busy, error, onCancel, onCreate }: Props) {
+export function NewSessionDialog({ project, works, initialWork, pullRequest, busy, error, onCancel, onCreate }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     dialog.current?.showModal()
@@ -28,7 +30,7 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
   // Preset yalnız başlangıç Command'ını doldurur; kalıcı ajan kimliği değildir.
   // Projede son kullanılan program önceden seçilir.
   const [presetIndex, setPresetIndex] = useState(() => Math.max(0, PRESETS.findIndex((p) => p.label === preferences.lastProgram[project.id])))
-  const [isolation, setIsolation] = useState<Isolation | null>('shared')
+  const [isolation, setIsolation] = useState<Isolation | null>(pullRequest ? 'worktree' : 'shared')
   const [workValue, setWorkValue] = useState(initialWork)
   const [newWorkName, setNewWorkName] = useState('')
   const work = workChoice(workValue, newWorkName)
@@ -76,8 +78,8 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
     >
       <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <header className="dialog-head">
-          <h2 id="new-session-title">Yeni oturum</h2>
-          <div className="dialog-sub">{project.general ? `Projesiz · ${project.path}` : project.name}</div>
+          <h2 id="new-session-title">{pullRequest ? 'PR üzerinde ajan başlat' : 'Yeni oturum'}</h2>
+          <div className="dialog-sub">{pullRequest ? `${project.name} · #${pullRequest.number} ${pullRequest.title}` : project.general ? `Projesiz · ${project.path}` : project.name}</div>
         </header>
 
         <fieldset className="program-picker">
@@ -101,12 +103,15 @@ export function NewSessionDialog({ project, works, initialWork, busy, error, onC
             autoFocus={workValue !== 'new'}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={workName ? `İsteğe bağlı · boş kalırsa “${workName}”` : 'İsteğe bağlı · boş kalırsa programdan adlandırılır'}
+            placeholder={workName ? `İsteğe bağlı · boş kalırsa “${workName}”` : pullRequest ? `İsteğe bağlı · boş kalırsa “PR #${pullRequest.number}”` : 'İsteğe bağlı · boş kalırsa programdan adlandırılır'}
             maxLength={80}
           />
         </label>
 
-        {!project.general && <fieldset className="isolation-picker">
+        {pullRequest && <p className="dialog-note pr-note">
+          PR'ın branch'i (<code>{pullRequest.headRefName}</code>) izole bir kopyada açılır. Aynı depodaki PR'da ajanın <code>git push</code>'u doğrudan PR'a gider; fork PR'ında ayrı bir branch açılır.
+        </p>}
+        {!project.general && !pullRequest && <fieldset className="isolation-picker">
           <legend>Çalışma yeri</legend>
           <div className="radio-group">
             <label className="radio">

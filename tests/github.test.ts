@@ -11,6 +11,7 @@ import {
   publishReview,
   pullRequestDetail,
   reviewPayload,
+  summarizeChecks,
   toNotes,
   toSummary,
 } from '../src/server/github'
@@ -165,4 +166,14 @@ esac`, async ({ repo, log }) => {
 test('yapıştırma metni satır sonlarını CR yapar ve kontrol karakterlerini atar', () => {
   assert.equal(bracketedPaste('a\nb\r\nc\td'), '\x1b[200~a\rb\rc\td\x1b[201~')
   assert.equal(bracketedPaste('x\x1b[201~\x07y'), '\x1b[200~x[201~y\x1b[201~', 'yapıştırma erken kapatılamaz')
+})
+
+test('CI özeti: biri başarısızsa failure, biri sürüyorsa pending, kontrol yoksa null', () => {
+  assert.equal(summarizeChecks(null), null)
+  assert.equal(summarizeChecks([]), null)
+  assert.equal(summarizeChecks([{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }, { status: 'COMPLETED', conclusion: 'SKIPPED' }]), 'success')
+  assert.equal(summarizeChecks([{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { status: 'IN_PROGRESS', conclusion: '' }]), 'pending')
+  assert.equal(summarizeChecks([{ state: 'PENDING' }]), 'pending')
+  assert.equal(summarizeChecks([{ status: 'IN_PROGRESS' }, { status: 'COMPLETED', conclusion: 'FAILURE' }]), 'failure')
+  assert.equal(toSummary(summary({ statusCheckRollup: [{ state: 'ERROR' }] })).checks, 'failure')
 })

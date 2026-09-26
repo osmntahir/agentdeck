@@ -128,6 +128,8 @@ export const createSession = (input: {
   isolation: Isolation
   /** Oturumun bağlanacağı iş; null işsiz demektir. */
   workId?: string | null
+  /** PR üzerinde başlatılan oturum: worktree PR'ın head commit'inden açılır. */
+  pullRequest?: number
 }) => mutatingCall<SessionView>(`create:${input.projectId}`, '/api/sessions', input, input)
 
 export const stopSession = (id: string, expectedRunId: string | null) =>
@@ -215,6 +217,14 @@ export const getPullRequest = (id: string, number: number, repo = '.') =>
   call<PullRequestDetail>(`/api/sessions/${id}/github/pulls/${number}?${repoQuery(repo)}`)
 export const createPullRequest = (id: string, input: { repo: string; base: string; title: string; body: string; draft: boolean }) =>
   call<{ pullRequest: PullRequestSummary }>(`/api/sessions/${id}/github/pulls`, { method: 'POST', body: JSON.stringify(input) })
+/** Proje düzeyinde PR'lar; liste daemon'da bir dakika önbelleklenir. */
+export const listProjectPullRequests = (projectId: string, fresh = false) =>
+  call<{ pullRequests: PullRequestSummary[] }>(`/api/projects/${projectId}/github/pulls${fresh ? '?fresh=1' : ''}`)
+export const getProjectPullRequest = (projectId: string, number: number) =>
+  call<PullRequestDetail>(`/api/projects/${projectId}/github/pulls/${number}`)
+export const publishProjectReview = (projectId: string, number: number, input: Parameters<typeof publishReview>[2]) =>
+  call<{ url: string }>(`/api/projects/${projectId}/github/pulls/${number}/review`, { method: 'POST', body: JSON.stringify(input) })
+
 export const publishReview = (id: string, number: number, input: {
   repo: string
   commitId: string

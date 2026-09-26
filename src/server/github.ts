@@ -103,7 +103,7 @@ async function ghJson<T>(cwd: string, args: string[]): Promise<T> {
   }
 }
 
-const SUMMARY_FIELDS = 'number,title,url,state,isDraft,baseRefName,headRefName,author,additions,deletions,changedFiles,reviewDecision,updatedAt'
+const SUMMARY_FIELDS = 'number,title,url,state,isDraft,baseRefName,headRefName,author,additions,deletions,changedFiles,reviewDecision,updatedAt,statusCheckRollup'
 
 interface RawSummary {
   number: number
@@ -119,6 +119,19 @@ interface RawSummary {
   changedFiles?: number
   reviewDecision?: string | null
   updatedAt?: string
+  statusCheckRollup?: RawCheck[] | null
+}
+
+/** CheckRun (status/conclusion) veya eski commit durumu (state). */
+interface RawCheck { status?: string | null; conclusion?: string | null; state?: string | null }
+
+/** Kontrollerden biri başarısızsa failure, biri sürüyorsa pending, hepsi bittiyse success. */
+export function summarizeChecks(checks: RawCheck[] | null | undefined): PullRequestSummary['checks'] {
+  if (!checks || checks.length === 0) return null
+  const outcome = (check: RawCheck) => (check.conclusion || check.state || '').toUpperCase()
+  if (checks.some(check => ['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'].includes(outcome(check)))) return 'failure'
+  if (checks.some(check => (check.status && check.status.toUpperCase() !== 'COMPLETED') || ['PENDING', 'EXPECTED', ''].includes(outcome(check)))) return 'pending'
+  return 'success'
 }
 
 export function toSummary(raw: RawSummary): PullRequestSummary {
@@ -136,6 +149,7 @@ export function toSummary(raw: RawSummary): PullRequestSummary {
     changedFiles: raw.changedFiles ?? 0,
     reviewDecision: raw.reviewDecision || null,
     updatedAt: raw.updatedAt ?? '',
+    checks: summarizeChecks(raw.statusCheckRollup),
   }
 }
 
@@ -295,4 +309,50 @@ export async function publishReview(cwd: string, number: number, commitId: strin
   } catch {
     return { url: '' }
   }
+}
+
+export interface PullRequestHead {
+  headRefName: string
+  headRefOid: string
+  /** Fork'tan açılmış PR; head branch'i bu depoda değildir. */
+  isCrossRepository: boolean
+}
+
+export async function pullRequestHead(cwd: string, number: number): Promise<PullRequestHead> {
+  const raw = await ghJson<PullRequestHead>(cwd, ['pr', 'view', String(number), '--json', 'headRefName,headRefOid,isCrossRepository'])
+  if (!/^[0-9a-f]{40,64}$/.test(raw.headRefOid ?? '')) throw new GithubError('error', 'PR head commit\'i okunamadı')
+  return { headRefName: raw.headRefName, headRefOid: raw.headRefOid, isCrossRepository: Boolean(raw.isCrossRepository) }
+}
+
+const git = (cwd: string, args: string[], timeoutMs = 60_000) => run('git', cwd, args, { timeoutMs })
+
+/**
+ * PR'ın head commit'ini yerel depoya getirir. GitHub her PR için
+ * `refs/pull/<n>/head` yayımlar; fork PR'ı da böyle gelir. Aynı depodaki PR'da
+ * uzak branch ayrıca getirilir ki oturum branch'i onu izleyebilsin.
+ */
+export async function fetchPullRequest(repo: string, number: number, head: PullRequestHead): Promise<void> {
+  await git(repo, ['fetch', '--no-tags', 'origin', `refs/pull/${number}/head`])
+  if (!head.isCrossRepository) {
+    await git(repo, ['fetch', '--no-tags', 'origin', `+refs/heads/${head.headRefName}:refs/remotes/origin/${head.headRefName}`])
+  }
+  await git(repo, ['cat-file', '-e', `${head.headRefOid}^{commit}`], 5000).catch(() => {
+    throw new GithubError('error', 'PR head commit\'i getirilemedi; PR güncellenmiş olabilir, yeniden deneyin')
+  })
+}
+
+/**
+ * Oturum branch'inin adı. Aynı depodaki PR'da yerelde yoksa PR branch'inin
+ * kendi adı kullanılır; böylece ajanın düz `git push`'u PR'a gider. Ad
+ * yerelde varsa veya PR fork'tansa ayrı bir agentdeck/ branch'i açılır.
+ */
+export async function pullRequestBranch(repo: string, number: number, head: PullRequestHead, fallback: string): Promise<{ branch: string; tracking: boolean }> {
+  if (head.isCrossRepository) return { branch: fallback, tracking: false }
+  const exists = await git(repo, ['show-ref', '--verify', '--quiet', `refs/heads/${head.headRefName}`], 5000).then(() => true, () => false)
+  const valid = await git(repo, ['check-ref-format', '--branch', head.headRefName], 5000).then(() => true, () => false)
+  return exists || !valid ? { branch: fallback, tracking: false } : { branch: head.headRefName, tracking: true }
+}
+
+export async function trackPullRequestBranch(worktree: string, branch: string, head: PullRequestHead): Promise<void> {
+  await git(worktree, ['branch', `--set-upstream-to=origin/${head.headRefName}`, branch], 5000)
 }

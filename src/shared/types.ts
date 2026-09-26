@@ -72,6 +72,15 @@ export interface Session {
   workId?: string
   /** Bu oturumun Run'larında gözlenen ajan konuşmaları; eskiden yeniye. */
   conversations?: ConversationRecord[]
+  /** PR üzerinde başlatılan oturumun PR'ı; worktree o PR'ın head commit'inden açılmıştır. */
+  pullRequest?: SessionPullRequest
+}
+
+export interface SessionPullRequest {
+  number: number
+  headRefName: string
+  /** Oturum branch'i PR'ın uzak branch'ini izliyor mu; fork PR'ında false, push PR'a gitmez. */
+  tracking: boolean
 }
 
 /**
@@ -277,6 +286,8 @@ export interface PullRequestSummary {
   /** APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED; inceleme kuralı yoksa null. */
   reviewDecision: string | null
   updatedAt: string
+  /** CI kontrollerinin özeti; kontrol yoksa null. */
+  checks: 'success' | 'failure' | 'pending' | null
 }
 
 /**

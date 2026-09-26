@@ -21,7 +21,7 @@ flowchart LR
 - **Terminal grid** – watch and drive several agents at once; split, resize and maximize panels.
 - **Know when an agent needs you** – sessions waiting for approval or input are flagged, with desktop notifications.
 - **Review the work, send fixes back** – a file tree, sticky file headers, unified or side-by-side diff with word-level highlights. Comment on a line or a range; the notes go to that session's agent as one numbered message, or one by one as you write them.
-- **Pull requests** – open a PR from a session's branch, review any open PR, and forward reviewers' comments to the agent. Uses your GitHub CLI login (`gh auth login`); agentdeck stores no token.
+- **Pull requests** – every Git project has a pull request page (the PR count next to the project in the sidebar, the project menu, or the palette) with CI and review status. Review any PR, forward reviewers' comments to an agent, or start an agent on the PR's branch in an isolated copy: its `git push` goes straight to the PR. You can also open a PR from a session's branch. Uses your GitHub CLI login (`gh auth login`); agentdeck stores no token.
 - **Claude account switching** – sign in to several Claude accounts once, switch with one click from the sidebar.
 - **Keyboard first** – command palette (`Ctrl+K`), `Alt+1…9` to jump between sessions, themes in settings.
 

@@ -2609,3 +2609,49 @@ test('GitHub uçları çalışma alanı dışındaki depoyu ve geçersiz PR numa
     assert.equal(review.body.code, 'validation')
   })
 })
+
+test('PR üzerinde oturum PR head commit inden açılır; aynı depodaki PR branch i izlenir, ad doluysa ayrı branch açılır', { timeout: 40000 }, async () => {
+  const remote = tempDir()
+  const bin = tempDir()
+  const previous = process.env.PATH
+  try {
+    await withDaemon(async ({ api, repo, projectId }) => {
+      const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+      git(remote, 'init', '--bare')
+      git(repo, 'remote', 'add', 'origin', remote)
+      git(repo, 'push', 'origin', 'main')
+      git(repo, 'checkout', '-b', 'feat/x')
+      fs.writeFileSync(path.join(repo, 'pr.txt'), 'PR değişikliği\n')
+      git(repo, 'add', '.')
+      git(repo, 'commit', '-m', 'pr')
+      const oid = git(repo, 'rev-parse', 'HEAD')
+      git(repo, 'push', 'origin', 'feat/x', 'HEAD:refs/pull/5/head')
+      git(repo, 'checkout', 'main')
+      git(repo, 'branch', '-D', 'feat/x')
+      fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/bash\necho '${JSON.stringify({ headRefName: 'feat/x', headRefOid: oid, isCrossRepository: false })}'\n`, { mode: 0o755 })
+      process.env.PATH = `${bin}:${previous}`
+
+      const rejected = await api.post<{ code: string }>('/api/sessions', createBody(projectId, { pullRequest: 5, isolation: 'shared' }))
+      assert.equal(rejected.body.code, 'validation', 'PR oturumu yalnız izole açılır')
+
+      const first = await api.post<SessionView>('/api/sessions', createBody(projectId, { pullRequest: 5 }))
+      assert.equal(first.status, 200, JSON.stringify(first.body))
+      assert.equal(first.body.branch, 'feat/x')
+      assert.equal(first.body.baseCommit, oid)
+      assert.deepEqual(first.body.pullRequest, { number: 5, headRefName: 'feat/x', tracking: true })
+      assert.equal(git(first.body.cwd, 'rev-parse', 'HEAD'), oid)
+      assert.equal(git(first.body.cwd, 'rev-parse', '--abbrev-ref', '@{u}'), 'origin/feat/x', 'düz git push PR a gider')
+      assert.equal(fs.readFileSync(path.join(first.body.cwd, 'pr.txt'), 'utf8'), 'PR değişikliği\n')
+
+      const second = await api.post<SessionView>('/api/sessions', createBody(projectId, { pullRequest: 5 }))
+      assert.equal(second.status, 200, JSON.stringify(second.body))
+      assert.match(second.body.branch ?? '', /^agentdeck\/pr-5-/)
+      assert.equal(second.body.pullRequest?.tracking, false)
+      assert.equal(git(second.body.cwd, 'rev-parse', 'HEAD'), oid)
+    })
+  } finally {
+    process.env.PATH = previous
+    removeDir(remote)
+    removeDir(bin)
+  }
+})

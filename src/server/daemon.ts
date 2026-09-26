@@ -45,6 +45,8 @@ import {
   type SessionView,
   type TerminalAttention,
   type SessionWorktree,
+  type SessionPullRequest,
+  type PullRequestSummary,
   type ConversationRecord,
   type ConversationView,
   type ClaudeAgentView,
@@ -1055,6 +1057,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       command: req.body?.command === undefined ? undefined : req.body.command,
       isolation: req.body?.isolation ?? null,
       workId: req.body?.workId ?? null,
+      pullRequest: req.body?.pullRequest ?? null,
     }
 
     try {
@@ -1079,6 +1082,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         }
         if (project.general && isolation === 'worktree') {
           throw new HttpError(400, 'validation', 'Projesiz oturum yalnız ev klasöründe, ortak çalışır')
+        }
+        const prNumberRaw = payload.pullRequest
+        if (prNumberRaw !== null && (!Number.isSafeInteger(prNumberRaw) || prNumberRaw <= 0)) {
+          throw new HttpError(400, 'validation', 'Geçersiz PR numarası')
+        }
+        if (prNumberRaw !== null && (project.kind !== 'git' || isolation !== 'worktree')) {
+          throw new HttpError(400, 'validation', 'PR üzerinde oturum yalnız git projesinde, izole çalışmayla açılır')
         }
 
         const state = store.get()
@@ -1109,8 +1119,29 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         // Git projesinde kökün kendisi, klasör projesinde her alt depo aynı
         // göreli yolda worktree olur.
         let targets: SessionWorktree[] = []
+        let pullRequest: { ref: SessionPullRequest; head: github.PullRequestHead } | null = null
 
-        if (isolation === 'worktree') {
+        if (isolation === 'worktree' && prNumberRaw !== null) {
+          // PR oturumu PR'ın head commit'inden açılır; "Bu çalışma" ajanın PR üzerine yaptığı değişikliktir.
+          try {
+            const head = await github.pullRequestHead(project.path, prNumberRaw)
+            await inRepoQueue(project.path, () => github.fetchPullRequest(project.path, prNumberRaw, head))
+            const chosen = await github.pullRequestBranch(project.path, prNumberRaw, head, `agentdeck/pr-${prNumberRaw}-${sid}`)
+            baseCommit = head.headRefOid
+            targets = [{ path: '.', baseCommit }]
+            branch = chosen.branch
+            pullRequest = { ref: { number: prNumberRaw, headRefName: head.headRefName, tracking: chosen.tracking }, head }
+          } catch (err) {
+            if (err instanceof GithubError) throw new HttpError(409, err.state, err.message)
+            throw err
+          }
+          cwd = path.join(store.worktreeRoot, project.id, sid)
+          await openWorktrees(project, cwd, branch, targets)
+          if (pullRequest.ref.tracking) {
+            // İzleme kurulamazsa oturum yine açılır; yalnız düz push PR'a gitmez.
+            await github.trackPullRequestBranch(cwd, branch, pullRequest.head).catch(() => { pullRequest!.ref.tracking = false })
+          }
+        } else if (isolation === 'worktree') {
           if (project.kind === 'folder') {
             targets = await folderWorktreeTargets(project)
           } else {
@@ -1173,6 +1204,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           archivedAt: null,
           lastLaunch: { mode: 'command', command: program },
           ...(workId ? { workId } : {}),
+          ...(pullRequest ? { pullRequest: pullRequest.ref } : {}),
         }
 
         try {
@@ -2355,11 +2387,68 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
   }
 
+  /** İnceleme gövdesi doğrulaması; oturum ve proje uçları aynı kuralı kullanır. */
+  function readReview(raw: unknown): [string, string, github.ReviewDraftComment[]] {
+    const body = (raw ?? {}) as { commitId?: unknown; body?: unknown; comments?: unknown }
+    if (typeof body.commitId !== 'string' || !/^[0-9a-f]{40,64}$/.test(body.commitId)) throw new HttpError(400, 'validation', 'PR commit\'i eksik')
+    const comments = Array.isArray(body.comments) ? body.comments : []
+    const valid = comments.every((c: Partial<github.ReviewDraftComment>) =>
+      typeof c.path === 'string' && typeof c.body === 'string' && c.body.trim() !== '' && (c.side === 'new' || c.side === 'old') &&
+      Number.isSafeInteger(c.line) && (c.startLine === null || Number.isSafeInteger(c.startLine)))
+    if (!valid) throw new HttpError(400, 'validation', 'Yorumlardan biri eksik veya geçersiz')
+    const summary = typeof body.body === 'string' ? body.body : ''
+    if (comments.length === 0 && summary.trim() === '') throw new HttpError(400, 'validation', 'Yayımlanacak yorum yok')
+    return [body.commitId, summary, comments as github.ReviewDraftComment[]]
+  }
+
   const prNumber = (raw: unknown): number => {
     const number = Number(raw)
     if (!Number.isSafeInteger(number) || number <= 0) throw new HttpError(400, 'validation', 'Geçersiz PR numarası')
     return number
   }
+
+  /** Proje düzeyinde PR işleri proje kökünde yapılır; yalnız git projesinde vardır. */
+  function githubProject(id: string): string {
+    const project = store.get().projects.find(p => p.id === id)
+    if (!project) throw new HttpError(404, 'not_found', 'Proje yok')
+    if (project.kind !== 'git' || project.general) throw new HttpError(409, 'git_required', 'PR listesi yalnız git projelerinde vardır')
+    return project.path
+  }
+
+  function projectGithubRoute(handler: (dir: string, req: express.Request) => Promise<unknown>): express.RequestHandler {
+    return async (req, res) => {
+      try {
+        res.json(await handler(githubProject(String(req.params.id)), req))
+      } catch (err) {
+        if (err instanceof GithubError) return jsonError(res, 409, err.state, err.message)
+        sendError(res, err)
+      }
+    }
+  }
+
+  /**
+   * Kenar çubuğu açık PR sayısını birkaç dakikada bir sorar; aynı dakikadaki
+   * istekler tek gh çağrısını paylaşır. fresh=1 önbelleği atlar.
+   */
+  const pullListCache = new Map<string, { at: number; read: Promise<PullRequestSummary[]> }>()
+  const PULL_LIST_TTL_MS = 60_000
+  app.get('/api/projects/:id/github/pulls', projectGithubRoute(async (dir, req) => {
+    let cached = pullListCache.get(dir)
+    if (!cached || req.query.fresh === '1' || Date.now() - cached.at >= PULL_LIST_TTL_MS) {
+      const read = github.listPullRequests(dir)
+      cached = { at: Date.now(), read }
+      pullListCache.set(dir, cached)
+      // Hata önbellekte kalmaz; sonraki istek yeniden dener.
+      read.catch(() => { if (pullListCache.get(dir)?.read === read) pullListCache.delete(dir) })
+    }
+    return { pullRequests: await cached.read }
+  }))
+
+  app.get('/api/projects/:id/github/pulls/:number', projectGithubRoute(async (dir, req) =>
+    github.pullRequestDetail(dir, prNumber(req.params.number))))
+
+  app.post('/api/projects/:id/github/pulls/:number/review', projectGithubRoute(async (dir, req) =>
+    github.publishReview(dir, prNumber(req.params.number), ...readReview(req.body))))
 
   app.get('/api/sessions/:id/github', githubRoute(async (session, req) =>
     github.githubStatus(await githubRepoDir(session, req.query.repo))))
@@ -2384,17 +2473,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   }))
 
   app.post('/api/sessions/:id/github/pulls/:number/review', githubRoute(async (session, req) => {
-    const body = (req.body ?? {}) as { repo?: unknown; commitId?: unknown; body?: unknown; comments?: unknown }
-    if (typeof body.commitId !== 'string' || !/^[0-9a-f]{40,64}$/.test(body.commitId)) throw new HttpError(400, 'validation', 'PR commit\'i eksik')
-    const comments = Array.isArray(body.comments) ? body.comments : []
-    const valid = comments.every((c: Partial<github.ReviewDraftComment>) =>
-      typeof c.path === 'string' && typeof c.body === 'string' && c.body.trim() !== '' && (c.side === 'new' || c.side === 'old') &&
-      Number.isSafeInteger(c.line) && (c.startLine === null || Number.isSafeInteger(c.startLine)))
-    if (!valid) throw new HttpError(400, 'validation', 'Yorumlardan biri eksik veya geçersiz')
-    const summary = typeof body.body === 'string' ? body.body : ''
-    if (comments.length === 0 && summary.trim() === '') throw new HttpError(400, 'validation', 'Yayımlanacak yorum yok')
-    const cwd = await githubRepoDir(session, body.repo)
-    return github.publishReview(cwd, prNumber(req.params.number), body.commitId, summary, comments as github.ReviewDraftComment[])
+    const review = readReview(req.body)
+    const cwd = await githubRepoDir(session, (req.body ?? {}).repo)
+    return github.publishReview(cwd, prNumber(req.params.number), ...review)
   }))
 
   if (options.serveWeb) {

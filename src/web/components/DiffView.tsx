@@ -41,8 +41,18 @@ function uid(): string {
 const PR_STATE = { OPEN: 'Açık', CLOSED: 'Kapandı', MERGED: 'Birleşti' } as const
 const DECISION: Record<string, string> = { APPROVED: 'Onaylandı', CHANGES_REQUESTED: 'Değişiklik istendi', REVIEW_REQUIRED: 'İnceleme bekliyor' }
 
-export function DiffView({ session, projectKind }: { session: SessionView; projectKind: 'git' | 'folder' | undefined }) {
-  const [source, setSource] = useState<Source>(session.isolation === 'worktree' ? 'work' : 'uncommitted')
+/**
+ * İncelemenin hedefi: bir oturumun kendi farkı (ve branch'inin PR'ı) ya da
+ * projenin bir PR'ı. Proje PR'ında notlar seçilen terminale gider.
+ */
+export type ReviewTarget =
+  | { kind: 'session'; session: SessionView; projectKind: 'git' | 'folder' | undefined }
+  | { kind: 'project'; projectId: string; pr: number; sessions: SessionView[]; onStartAgent: () => void }
+
+export function DiffView({ target }: { target: ReviewTarget }) {
+  const session = target.kind === 'session' ? target.session : null
+  const projectId = target.kind === 'project' ? target.projectId : null
+  const [source, setSource] = useState<Source>(target.kind === 'project' ? `pr:${target.pr}` : target.session.isolation === 'worktree' ? 'work' : 'uncommitted')
   const [fetched, setFetched] = useState<Loaded | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -50,7 +60,7 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [current, setCurrent] = useState<string | null>(null)
-  const [draft, updateDraft] = useReviewDraft(session.id)
+  const [draft, updateDraft] = useReviewDraft(session ? session.id : `project:${projectId}`)
   const [prefs, updatePrefs] = useReviewPrefs()
   const [github, setGithub] = useState<GithubStatus | null>(null)
   const [githubReload, setGithubReload] = useState(0)
@@ -60,28 +70,31 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
   const [status, setStatus] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const [pendingJump, setPendingJump] = useState<ReviewComment | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
-  const githubCapable = projectKind === 'git'
+  // Oturumun branch durumu ve PR seçici yalnız oturum incelemesinde vardır.
+  const githubCapable = target.kind === 'session' && target.projectKind === 'git'
+  const [targetId, setTargetId] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!githubCapable) return
+    if (!githubCapable || !session) return
     let cancelled = false
     api.getGithub(session.id).then(next => { if (!cancelled) setGithub(next) })
       .catch(e => { if (!cancelled) setGithub({ state: 'error', message: e.message, repo: null, defaultBranch: null, branch: null, pullRequest: null }) })
     return () => { cancelled = true }
-  }, [session.id, githubCapable, githubReload])
+  }, [session, githubCapable, githubReload])
 
   useEffect(() => {
     let cancelled = false
     setLoading(true); setError(null)
     const pr = prNumberOf(source)
     const request: Promise<Loaded> = pr !== null
-      ? api.getPullRequest(session.id, pr).then(detail => ({ kind: 'pr' as const, detail, source }))
-      : api.getDiff(session.id, source as 'work' | 'uncommitted').then(result => ({ kind: 'local' as const, result, source }))
+      ? (session ? api.getPullRequest(session.id, pr) : api.getProjectPullRequest(projectId!, pr)).then(detail => ({ kind: 'pr' as const, detail, source }))
+      : api.getDiff(session!.id, source as 'work' | 'uncommitted').then(result => ({ kind: 'local' as const, result, source }))
     request.then(next => { if (!cancelled) setFetched(next) })
       .catch(e => { if (!cancelled) { setError(e.message); setFetched(null) } })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [session.id, source, reload])
+  // Oturum görünümü her durum okumasında yeni nesnedir; farkı yalnız kimliği değişince yeniden okuruz.
+  }, [session?.id, projectId, source, reload])
 
   // Aynı kaynağın yenilemesinde eski fark ekranda kalır; kaynak değişince iskelet gösterilir.
   const loaded = fetched?.source === source ? fetched : null
@@ -162,13 +175,19 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
     return counts
   }, [allFiles, placed, threads])
 
+  // Proje PR'ında notların gideceği terminal: kullanıcının seçimi, yoksa bu PR üzerinde açılmış oturum.
+  const candidates = useMemo(() => target.kind === 'project' ? target.sessions.filter(s => s.archivedAt === null) : [], [target])
+  const prSession = candidates.find(s => s.pullRequest?.number === prNumberOf(source) && s.lifecycle === 'live')
+    ?? candidates.find(s => s.pullRequest?.number === prNumberOf(source))
+  const receiver = session ?? candidates.find(s => s.id === targetId) ?? prSession ?? null
   const delivery: Delivery = useMemo(() => {
-    const target = session.name
-    if (session.archivedAt !== null) return { ok: false, reason: 'Oturum arşivde; önce arşivden çıkar', target }
-    if (session.lifecycle !== 'live' || !session.runId) return { ok: false, reason: 'Terminal çalışmıyor; önce oturumu devam ettir', target }
-    if (session.attention?.kind === 'approval') return { ok: false, reason: 'Terminal bir onay bekliyor; önce onu yanıtla', target }
+    if (!receiver) return { ok: false, reason: 'Notların gideceği terminali seç veya bu PR üzerinde ajan başlat', target: 'Terminal seçilmedi' }
+    const target = receiver.name
+    if (receiver.archivedAt !== null) return { ok: false, reason: 'Oturum arşivde; önce arşivden çıkar', target }
+    if (receiver.lifecycle !== 'live' || !receiver.runId) return { ok: false, reason: 'Terminal çalışmıyor; önce oturumu devam ettir', target }
+    if (receiver.attention?.kind === 'approval') return { ok: false, reason: 'Terminal bir onay bekliyor; önce onu yanıtla', target }
     return { ok: true, reason: null, target }
-  }, [session.name, session.archivedAt, session.lifecycle, session.runId, session.attention])
+  }, [receiver])
 
   const toggleCollapsed = useCallback((id: string) => setCollapsed(previous => {
     const next = new Set(previous)
@@ -229,8 +248,9 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
   }, [visible])
 
   const send = useCallback(async (text: string, submit: boolean) => {
-    await api.sendToAgent(session.id, { expectedRunId: session.runId, text, submit })
-  }, [session.id, session.runId])
+    if (!receiver) throw new Error('Terminal seçilmedi')
+    await api.sendToAgent(receiver.id, { expectedRunId: receiver.runId, text, submit })
+  }, [receiver])
 
   const addComment = useCallback((id: string, input: NewComment) => {
     const repo = allFiles.find(entry => entry.id === id)?.repo.path ?? '.'
@@ -276,7 +296,9 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
     updateDraft(d => d.comments.some(c => c.id === comment.id) ? d : { ...d, comments: [...d.comments, comment] })
   }, [detail, source, updateDraft])
 
-  const pending = draft.comments.filter(c => c.sentAt === null)
+  // Proje incelemesinde her PR'ın notları ayrıdır; başka PR'ın notu bu terminale gönderilmez.
+  const scoped = useMemo(() => session ? draft.comments : draft.comments.filter(c => c.source === source), [session, draft.comments, source])
+  const pending = scoped.filter(c => c.sentAt === null)
   const openSend = () => {
     const prSources = new Set(pending.map(c => c.source))
     const only = prSources.size === 1 ? [...prSources][0] : null
@@ -301,10 +323,11 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
     let publishError: string | null = null
     if (options.publish && detail && prNumber !== null && publishable.length > 0) {
       try {
-        await api.publishReview(session.id, prNumber, {
+        const review = {
           repo: '.', commitId: detail.pullRequest.headRefOid, body: '',
           comments: publishable.map(c => ({ path: c.path!, side: c.side, line: c.line!, startLine: c.startLine, body: c.body })),
-        })
+        }
+        await (session ? api.publishReview(session.id, prNumber, review) : api.publishProjectReview(projectId!, prNumber, review))
         published = new Set(publishable.map(c => c.id))
       } catch (e) {
         publishError = (e as Error).message
@@ -367,7 +390,7 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
   const showPrMenu = (origin: HTMLElement) => {
     const rect = origin.getBoundingClientRect()
     setPrMenu({ position: { x: rect.left, y: rect.bottom + 4, origin }, list: null, error: null })
-    api.listPullRequests(session.id)
+    api.listPullRequests(session!.id)
       .then(({ pullRequests }) => setPrMenu(menu => menu && { ...menu, list: pullRequests }))
       .catch(e => setPrMenu(menu => menu && { ...menu, error: e.message, list: [] }))
   }
@@ -385,7 +408,7 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
   const createPr = async (input: { title: string; body: string; base: string; draft: boolean }) => {
     setCreating({ busy: true, error: null })
     try {
-      const { pullRequest } = await api.createPullRequest(session.id, { repo: '.', ...input })
+      const { pullRequest } = await api.createPullRequest(session!.id, { repo: '.', ...input })
       setCreating(null)
       setGithub(g => g && { ...g, pullRequest })
       setSource(`pr:${pullRequest.number}`)
@@ -406,7 +429,7 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
 
   return <div className={`diff-view review-view${prefs.tree ? '' : ' no-tree'}${prefs.panel ? '' : ' no-panel'}`}>
     <div className="diff-bar">
-      <div className="tabs" aria-label="İncelenen fark" role="group">
+      {session && <div className="tabs" aria-label="İncelenen fark" role="group">
         {session.isolation === 'worktree' && <button className={source === 'work' ? 'on' : ''} aria-pressed={source === 'work'} onClick={() => setSource('work')} title="Oturum başladığından beri bütün değişiklikler">Bu çalışma</button>}
         <button className={source === 'uncommitted' ? 'on' : ''} aria-pressed={source === 'uncommitted'} onClick={() => setSource('uncommitted')} title="Son commit'ten sonraki değişiklikler">Commit edilmemiş</button>
         {githubCapable && (pr
@@ -414,7 +437,7 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
               <Icon name="branch" size={13} />PR #{pr.number}
             </button>
           : prNumber !== null && <button className="on" aria-pressed="true"><Icon name="branch" size={13} />PR #{prNumber}</button>)}
-      </div>
+      </div>}
       {githubCapable && <>
         {canCreatePr && <button className="ghost-button" onClick={() => setCreating({ busy: false, error: null })} title="Bu branch'ten GitHub'da pull request aç"><Icon name="plus" size={13} />PR aç</button>}
         <button className="icon-button ghost" disabled={github?.state !== 'ready'} title={github?.state === 'ready' ? 'Başka bir PR incele' : github?.message ?? 'GitHub durumu okunuyor…'} aria-label="PR seç" onClick={e => showPrMenu(e.currentTarget)}>
@@ -449,7 +472,7 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
 
       <div className="review-scroll" ref={scroller}>
         {!prefs.tree && <input className="inline-filter" aria-label="Değişen dosya ara" placeholder="Dosya filtrele…" value={query} onChange={e => setQuery(e.target.value)} />}
-        {session.isolation === 'shared' && prNumber === null && <p className="review-note">Proje klasöründeki ortak değişiklikler. Aynı klasördeki diğer terminaller de bu dosyaları kullanır.</p>}
+        {session?.isolation === 'shared' && prNumber === null && <p className="review-note">Proje klasöründeki ortak değişiklikler. Aynı klasördeki diğer terminaller de bu dosyaları kullanır.</p>}
         {detail && <PullRequestHeader detail={detail} />}
         {loading && !loaded && <div className="diff-skeleton" role="status" aria-label="Değişiklikler okunuyor">{[0, 1, 2].map(i => <span key={i} />)}</div>}
         {error && <p className="error" role="alert">{error}</p>}
@@ -477,19 +500,20 @@ export function DiffView({ session, projectKind }: { session: SessionView; proje
         {allFiles.length > 0 && <p className="review-keys muted"><kbd>j</kbd>/<kbd>k</kbd> dosyalar arasında gez · <kbd>v</kbd> görüldü · satır numarasındaki <span className="kbd-plus">+</span> not ekler</p>}
       </div>
 
-      {prefs.panel && <ReviewPanel comments={draft.comments} current={source} summary={draft.summary}
+      {prefs.panel && <ReviewPanel comments={scoped} current={source} summary={draft.summary}
         onSummary={summary => updateDraft(d => ({ ...d, summary }))} delivery={delivery} instant={prefs.instant} submit={prefs.submit}
         onPrefs={updatePrefs} onJump={jump} onDelete={deleteComment}
         onClearSent={() => updateDraft(d => ({ ...d, comments: d.comments.filter(c => c.sentAt === null) }))}
         onSend={openSend} github={githubCapable ? github : null} notes={detail?.notes ?? null} forwardedNotes={forwardedNotes}
-        onForwardNote={forwardNote} onClose={() => updatePrefs({ panel: false })} status={status} />}
+        onForwardNote={forwardNote} onClose={() => updatePrefs({ panel: false })} status={status}
+        picker={target.kind === 'project' ? { sessions: candidates, selected: receiver?.id ?? null, onSelect: setTargetId, onStartAgent: target.onStartAgent } : null} />}
     </div>
 
     {prMenu && <ActionMenu position={prMenu.position} actions={prActions} label="Pull request'ler" onClose={() => setPrMenu(null)} />}
     {sending && <SendDialog initial={sending.text} target={delivery.target} submit={prefs.submit} busy={sending.busy} error={sending.error}
       publishable={prNumber !== null ? { count: publishable.length, pr: prNumber } : null}
       onSend={(text, options) => void confirmSend(text, options)} onCancel={() => setSending(null)} />}
-    {creating && github?.branch && <CreatePullRequestDialog branch={github.branch} defaultBase={github.defaultBranch ?? 'main'} initialTitle={session.name}
+    {creating && github?.branch && <CreatePullRequestDialog branch={github.branch} defaultBase={github.defaultBranch ?? 'main'} initialTitle={session?.name ?? ''}
       uncommitted={uncommitted} busy={creating.busy} error={creating.error} onCreate={input => void createPr(input)} onCancel={() => setCreating(null)} />}
   </div>
 }
