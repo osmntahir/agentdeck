@@ -356,3 +356,8 @@ export async function pullRequestBranch(repo: string, number: number, head: Pull
 export async function trackPullRequestBranch(worktree: string, branch: string, head: PullRequestHead): Promise<void> {
   await git(worktree, ['branch', `--set-upstream-to=origin/${head.headRefName}`, branch], 5000)
 }
+
+/** Taslağı incelemeye hazır işaretler (draft=false) veya hazır PR'ı taslağa çevirir (draft=true). */
+export async function setPullRequestDraft(cwd: string, number: number, draft: boolean): Promise<void> {
+  await gh(cwd, ['pr', 'ready', String(number), ...(draft ? ['--undo'] : [])])
+}

@@ -50,6 +50,13 @@ case "$1 $2" in
   "pr view") cat '${root}/pr.json' ;;
   "pr diff") cat '${root}/diff.txt' ;;
   "api --paginate") ;;
+  "pr ready") node -e '
+    const fs = require("fs"); const [n, undo] = process.argv.slice(1); const draft = undo === "--undo"
+    for (const file of ["list.json", "pr.json"]) {
+      const path = "${root}/" + file; const data = JSON.parse(fs.readFileSync(path, "utf8"))
+      for (const pr of Array.isArray(data) ? data : [data]) if (String(pr.number) === n) pr.isDraft = draft
+      fs.writeFileSync(path, JSON.stringify(data))
+    }' "$3" "$4" ;;
   *) echo "beklenmeyen: $*" >&2; exit 1 ;;
 esac
 `, { mode: 0o755 })
@@ -144,6 +151,31 @@ try {
   await page.keyboard.type("Pull request'ler")
   await page.keyboard.press('Enter')
   await page.waitForSelector('.pr-row')
+
+  // Taslak süzgeci: sayılar, süzme ve boş durum.
+  const filterButton = (label) => page.locator('.prs-filter button', { hasText: label })
+  assert.match(await filterButton('Taslak').textContent(), /1/)
+  await filterButton('Taslak').click()
+  assert.deepEqual(await page.locator('.pr-row-title strong').allTextContents(), ['Taslak: çeviri'])
+  await filterButton('Hazır').click()
+  assert.deepEqual(await page.locator('.pr-row-title strong').allTextContents(), ['Selamlamayı kısalt'])
+
+  // Hazır PR taslağa çevrilir; süzgeç, sayı ve başlık yeni durumu gösterir; sonra geri alınır.
+  await page.locator('.pr-row').first().click()
+  await page.getByRole('button', { name: 'Taslağa çevir' }).click()
+  await page.getByRole('button', { name: 'İncelemeye hazır' }).waitFor()
+  assert.equal(await page.locator('.pr-draft-note').count(), 1)
+  assert.match(await page.locator('.pr-state').textContent(), /Taslak/)
+  if (shots) await page.screenshot({ path: path.join(shots, 'p5-draft.png') })
+  await page.locator('.prs-topbar .crumb', { hasText: "Pull request'ler" }).click()
+  await page.waitForFunction(() => /2/.test([...document.querySelectorAll('.prs-filter button')].find(b => b.textContent.includes('Taslak'))?.textContent ?? ''))
+  await page.getByText('İncelemeye hazır PR yok').waitFor()
+  if (shots) await page.screenshot({ path: path.join(shots, 'p6-empty-filter.png') })
+  await page.getByRole('button', { name: 'Tümünü göster' }).click()
+  await page.locator('.pr-row', { hasText: 'Selamlamayı kısalt' }).click()
+  await page.getByRole('button', { name: 'İncelemeye hazır' }).click()
+  await page.getByRole('button', { name: 'Taslağa çevir' }).waitFor()
+  assert.equal(await page.locator('.pr-draft-note').count(), 0)
 
   assert.deepEqual(errors, [])
   console.log('PR sayfası duman testi geçti')

@@ -47,7 +47,7 @@ const DECISION: Record<string, string> = { APPROVED: 'Onaylandı', CHANGES_REQUE
  */
 export type ReviewTarget =
   | { kind: 'session'; session: SessionView; projectKind: 'git' | 'folder' | undefined }
-  | { kind: 'project'; projectId: string; pr: number; sessions: SessionView[]; onStartAgent: () => void }
+  | { kind: 'project'; projectId: string; pr: number; sessions: SessionView[]; onStartAgent: () => void; onChanged?: () => void }
 
 export function DiffView({ target }: { target: ReviewTarget }) {
   const session = target.kind === 'session' ? target.session : null
@@ -405,6 +405,15 @@ export function DiffView({ target }: { target: ReviewTarget }) {
         ...(github?.pullRequest ? [{ label: 'PR\'ı GitHub\'da aç', icon: 'external' as const, divider: true, run: () => window.open(github.pullRequest!.url, '_blank', 'noreferrer') }] : []),
       ]
 
+  // Taslak/hazır geçişi GitHub'da yapılır; ardından PR, oturumun PR durumu ve proje listesi yenilenir.
+  const setDraft = async (number: number, draft: boolean) => {
+    await (session ? api.setPullRequestDraft(session.id, number, draft) : api.setProjectPullRequestDraft(projectId!, number, draft))
+    setReload(n => n + 1)
+    setGithubReload(n => n + 1)
+    if (target.kind === 'project') target.onChanged?.()
+    setStatus({ tone: 'ok', text: draft ? `PR #${number} taslağa çevrildi.` : `PR #${number} incelemeye hazır işaretlendi.` })
+  }
+
   const createPr = async (input: { title: string; body: string; base: string; draft: boolean }) => {
     setCreating({ busy: true, error: null })
     try {
@@ -473,7 +482,7 @@ export function DiffView({ target }: { target: ReviewTarget }) {
       <div className="review-scroll" ref={scroller}>
         {!prefs.tree && <input className="inline-filter" aria-label="Değişen dosya ara" placeholder="Dosya filtrele…" value={query} onChange={e => setQuery(e.target.value)} />}
         {session?.isolation === 'shared' && prNumber === null && <p className="review-note">Proje klasöründeki ortak değişiklikler. Aynı klasördeki diğer terminaller de bu dosyaları kullanır.</p>}
-        {detail && <PullRequestHeader detail={detail} />}
+        {detail && <PullRequestHeader detail={detail} onDraft={setDraft} />}
         {loading && !loaded && <div className="diff-skeleton" role="status" aria-label="Değişiklikler okunuyor">{[0, 1, 2].map(i => <span key={i} />)}</div>}
         {error && <p className="error" role="alert">{error}</p>}
         {loaded?.kind === 'local' && loaded.result.truncated && <p className="error">Depo taraması eksik; tüm depolar gösterilemiyor.</p>}
@@ -526,15 +535,30 @@ function ordered(files: DiffFile[]): DiffFile[] {
 const EMPTY_PLACED: PlacedComment[] = []
 const EMPTY_THREADS: GithubThread[] = []
 
-function PullRequestHeader({ detail }: { detail: PullRequestDetail }) {
+function PullRequestHeader({ detail, onDraft }: { detail: PullRequestDetail; onDraft: (number: number, draft: boolean) => Promise<void> }) {
   const pr = detail.pullRequest
   const state = pr.isDraft && pr.state === 'OPEN' ? 'draft' : pr.state.toLowerCase()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const toggle = () => {
+    setBusy(true); setError(null)
+    onDraft(pr.number, !pr.isDraft).catch(e => setError((e as Error).message)).finally(() => setBusy(false))
+  }
   return <header className="pr-header">
     <div className="pr-title-row">
       <span className={`pr-state ${state}`}><Icon name="branch" size={12} />{pr.isDraft && pr.state === 'OPEN' ? 'Taslak' : PR_STATE[pr.state]}</span>
       <h2>{pr.title} <span className="muted">#{pr.number}</span></h2>
+      {pr.state === 'OPEN' && (pr.isDraft
+        ? <button className="primary pr-ready" disabled={busy} onClick={toggle} title="Taslağı kaldırır; inceleyicilere bildirim gider">
+            <Icon name={busy ? 'refresh' : 'check'} size={13} />{busy ? 'Güncelleniyor…' : 'İncelemeye hazır'}
+          </button>
+        : <button className="ghost-button pr-to-draft" disabled={busy} onClick={toggle} title="PR'ı taslağa çevirir; birleştirme kapanır">
+            <Icon name={busy ? 'refresh' : 'edit'} size={13} />{busy ? 'Güncelleniyor…' : 'Taslağa çevir'}
+          </button>)}
       <a className="ghost-button pr-link" href={pr.url} target="_blank" rel="noreferrer"><Icon name="external" size={13} />GitHub'da aç</a>
     </div>
+    {pr.isDraft && pr.state === 'OPEN' && <p className="pr-draft-note"><Icon name="edit" size={12} />Bu PR taslak: inceleme istenmez ve birleştirilemez. Hazır olunca işaretle.</p>}
+    {error && <p className="error pr-error" role="alert">{error}</p>}
     <div className="pr-meta">
       <code>{pr.baseRefName}</code><span aria-hidden="true">←</span><code>{pr.headRefName}</code>
       {pr.author && <span>@{pr.author}</span>}

@@ -225,6 +225,12 @@ export const getProjectPullRequest = (projectId: string, number: number) =>
 export const publishProjectReview = (projectId: string, number: number, input: Parameters<typeof publishReview>[2]) =>
   call<{ url: string }>(`/api/projects/${projectId}/github/pulls/${number}/review`, { method: 'POST', body: JSON.stringify(input) })
 
+/** draft=false taslağı incelemeye hazır işaretler, draft=true hazır PR'ı taslağa çevirir. */
+export const setPullRequestDraft = (id: string, number: number, draft: boolean) =>
+  call<{ ok: true; draft: boolean }>(`/api/sessions/${id}/github/pulls/${number}/draft`, { method: 'POST', body: JSON.stringify({ repo: '.', draft }) })
+export const setProjectPullRequestDraft = (projectId: string, number: number, draft: boolean) =>
+  call<{ ok: true; draft: boolean }>(`/api/projects/${projectId}/github/pulls/${number}/draft`, { method: 'POST', body: JSON.stringify({ draft }) })
+
 export const publishReview = (id: string, number: number, input: {
   repo: string
   commitId: string

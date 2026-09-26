@@ -11,6 +11,24 @@ const DECISION: Record<string, { label: string; tone: string }> = {
 }
 const CHECKS = { success: 'Kontroller geçti', failure: 'Kontroller başarısız', pending: 'Kontroller sürüyor' } as const
 
+type DraftFilter = 'all' | 'ready' | 'draft'
+const FILTER_KEY = 'agentdeck.prs.filter.v1'
+const FILTERS: { id: DraftFilter; label: string }[] = [{ id: 'all', label: 'Tümü' }, { id: 'ready', label: 'Hazır' }, { id: 'draft', label: 'Taslak' }]
+const EMPTY_FILTER: Record<DraftFilter, { title: string; text: string }> = {
+  all: { title: 'Açık PR yok', text: 'Bu depoda şu an açık pull request bulunmuyor.' },
+  ready: { title: 'İncelemeye hazır PR yok', text: 'Açık PR\'ların hepsi taslak.' },
+  draft: { title: 'Taslak PR yok', text: 'Açık PR\'ların hepsi incelemeye hazır.' },
+}
+
+function loadFilter(): DraftFilter {
+  try {
+    const value = localStorage.getItem(FILTER_KEY)
+    return value === 'ready' || value === 'draft' ? value : 'all'
+  } catch {
+    return 'all'
+  }
+}
+
 function age(iso: string, now: number): string {
   const time = Date.parse(iso)
   return Number.isNaN(time) ? '' : formatAge(now - time)
@@ -34,6 +52,11 @@ export function ProjectPullRequests({ project, sessions, selected, onSelect, onB
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
+  const [filter, setFilterState] = useState<DraftFilter>(loadFilter)
+  const setFilter = (next: DraftFilter) => {
+    setFilterState(next)
+    try { localStorage.setItem(FILTER_KEY, next) } catch { /* bu açılışla sınırlı */ }
+  }
   const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback((fresh: boolean) => {
@@ -46,13 +69,20 @@ export function ProjectPullRequests({ project, sessions, selected, onSelect, onB
   useEffect(() => { load(false) }, [load])
 
   const agentsFor = useCallback((number: number) => sessions.filter(s => s.archivedAt === null && s.pullRequest?.number === number), [sessions])
+  const counts = useMemo(() => ({
+    all: list?.length ?? 0,
+    ready: list?.filter(pr => !pr.isDraft).length ?? 0,
+    draft: list?.filter(pr => pr.isDraft).length ?? 0,
+  }), [list])
+  const filtered = useMemo(() => (list ?? []).filter(pr => filter === 'all' || (filter === 'draft') === pr.isDraft), [list, filter])
   const shown = useMemo(() => {
     const q = query.trim().toLocaleLowerCase()
-    return (list ?? []).filter(pr => !q || `#${pr.number} ${pr.title} ${pr.headRefName} ${pr.author ?? ''}`.toLocaleLowerCase().includes(q))
-  }, [list, query])
+    return filtered.filter(pr => !q || `#${pr.number} ${pr.title} ${pr.headRefName} ${pr.author ?? ''}`.toLocaleLowerCase().includes(q))
+  }, [filtered, query])
   const current = list?.find(pr => pr.number === selected) ?? null
-  const index = list ? list.findIndex(pr => pr.number === selected) : -1
-  const step = (delta: number) => { if (list && index !== -1) { const next = list[index + delta]; if (next) onSelect(next.number) } }
+  // Üstteki seçici ve oklar listede görünen sırayı izler; süzgeç dışına düşen PR seçici başında kalır.
+  const index = shown.findIndex(pr => pr.number === selected)
+  const step = (delta: number) => { const next = shown[index + delta]; if (index !== -1 && next) onSelect(next.number) }
 
   const header = <header className="topbar clean-topbar prs-topbar">
     <nav className="crumbs" aria-label="Konum">
@@ -72,10 +102,10 @@ export function ProjectPullRequests({ project, sessions, selected, onSelect, onB
     {selected !== null && list && <div className="pr-stepper">
       <button className="icon-button ghost" disabled={index <= 0} onClick={() => step(-1)} title="Önceki PR" aria-label="Önceki PR"><Icon name="back" size={14} /></button>
       <select aria-label="PR seç" value={selected} onChange={e => onSelect(Number(e.target.value))}>
-        {!current && <option value={selected}>#{selected}</option>}
-        {list.map(pr => <option key={pr.number} value={pr.number}>#{pr.number} {pr.title}</option>)}
+        {index === -1 && <option value={selected}>#{selected} {current?.title ?? ''}</option>}
+        {shown.map(pr => <option key={pr.number} value={pr.number}>#{pr.number} {pr.isDraft ? '[taslak] ' : ''}{pr.title}</option>)}
       </select>
-      <button className="icon-button ghost" disabled={index === -1 || index >= list.length - 1} onClick={() => step(1)} title="Sonraki PR" aria-label="Sonraki PR"><Icon name="chevron" size={14} /></button>
+      <button className="icon-button ghost" disabled={index === -1 || index >= shown.length - 1} onClick={() => step(1)} title="Sonraki PR" aria-label="Sonraki PR"><Icon name="chevron" size={14} /></button>
     </div>}
     {selected !== null && current && agentsFor(current.number).map(s =>
       <button key={s.id} className="ghost-button" onClick={() => onOpenSession(s.id)} title="Bu PR üzerindeki ajanı aç"><Icon name="terminal" size={13} />{s.name}</button>)}
@@ -89,6 +119,7 @@ export function ProjectPullRequests({ project, sessions, selected, onSelect, onB
         <DiffView key={`${project.id}:${selected}`} target={{
           kind: 'project', projectId: project.id, pr: selected,
           sessions,
+          onChanged: () => load(true),
           onStartAgent: () => onStartAgent(current ?? { number: selected, title: `PR #${selected}`, headRefName: '' }),
         }} />
       </div>
@@ -102,17 +133,25 @@ export function ProjectPullRequests({ project, sessions, selected, onSelect, onB
         <div className="prs-toolbar">
           <div className="review-tree-search"><Icon name="search" size={13} /><input autoFocus aria-label="PR ara" placeholder="Numara, başlık, branch veya yazar…" value={query} onChange={e => setQuery(e.target.value)}
             onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (query) setQuery(''); else onBack() } }} /></div>
-          {list && <span className="muted">{list.length} açık PR</span>}
+          {list && list.length > 0 && <div className="segmented prs-filter" role="group" aria-label="Taslak süzgeci">
+            {FILTERS.map(f => <button key={f.id} className={filter === f.id ? 'on' : ''} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
+              {f.id === 'draft' && <Icon name="edit" size={11} />}{f.label}<span className="count">{counts[f.id]}</span>
+            </button>)}
+          </div>}
         </div>
         {error && <div className="prs-empty">
           <Icon name="alert" size={18} />
           <strong>{error.code === 'gh_missing' || error.code === 'unauthenticated' ? 'GitHub bağlı değil' : 'PR\'lar okunamadı'}</strong>
           <p>{error.message}</p>
-          {error.code === 'unauthenticated' && <button className="ghost-button" onClick={() => void navigator.clipboard?.writeText('gh auth login')}><Icon name="copy" size={12} />gh auth login</button>}
+          {error.code === 'unauthenticated' && <button className="ghost-button mono" onClick={() => void navigator.clipboard?.writeText('gh auth login')}><Icon name="copy" size={12} />gh auth login</button>}
         </div>}
         {!list && !error && <div className="diff-skeleton" role="status" aria-label="PR'lar okunuyor">{[0, 1, 2, 3].map(i => <span key={i} className="short" />)}</div>}
-        {list && list.length === 0 && <div className="prs-empty"><Icon name="check" size={18} /><strong>Açık PR yok</strong><p>Bu depoda şu an açık pull request bulunmuyor.</p></div>}
-        {list && list.length > 0 && shown.length === 0 && <p className="pad muted">Bu aramayla eşleşen PR yok.</p>}
+        {list && filtered.length === 0 && <div className="prs-empty">
+          <Icon name={list.length === 0 ? 'check' : 'search'} size={18} /><strong>{EMPTY_FILTER[list.length === 0 ? 'all' : filter].title}</strong>
+          <p>{EMPTY_FILTER[list.length === 0 ? 'all' : filter].text}</p>
+          {list.length > 0 && <button className="ghost-button" onClick={() => setFilter('all')}>Tümünü göster</button>}
+        </div>}
+        {filtered.length > 0 && shown.length === 0 && <p className="pad muted">Bu aramayla eşleşen PR yok.</p>}
         <ul className="prs-items">
           {shown.map(pr => {
             const agents = agentsFor(pr.number)

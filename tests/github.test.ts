@@ -11,6 +11,7 @@ import {
   publishReview,
   pullRequestDetail,
   reviewPayload,
+  setPullRequestDraft,
   summarizeChecks,
   toNotes,
   toSummary,
@@ -176,4 +177,12 @@ test('CI özeti: biri başarısızsa failure, biri sürüyorsa pending, kontrol 
   assert.equal(summarizeChecks([{ state: 'PENDING' }]), 'pending')
   assert.equal(summarizeChecks([{ status: 'IN_PROGRESS' }, { status: 'COMPLETED', conclusion: 'FAILURE' }]), 'failure')
   assert.equal(toSummary(summary({ statusCheckRollup: [{ state: 'ERROR' }] })).checks, 'failure')
+})
+
+test('taslak geçişi gh pr ready ile yapılır; taslağa çevirme --undo ekler', async () => {
+  await withFakeGh('true', async ({ repo, log }) => {
+    await setPullRequestDraft(repo, 7, false)
+    await setPullRequestDraft(repo, 7, true)
+    assert.deepEqual(log(), ['pr ready 7', 'pr ready 7 --undo'])
+  })
 })

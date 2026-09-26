@@ -2607,6 +2607,8 @@ test('GitHub uçları çalışma alanı dışındaki depoyu ve geçersiz PR numa
     assert.equal((await api.get<{ code: string }>(`${base}/pulls/abc`)).body.code, 'validation')
     const review = await api.post<{ code: string }>(`${base}/pulls/3/review`, { commitId: 'x', comments: [] })
     assert.equal(review.body.code, 'validation')
+    assert.equal((await api.post<{ code: string }>(`${base}/pulls/3/draft`, { draft: 'evet' })).body.code, 'validation')
+    assert.equal((await api.post<{ code: string }>(`/api/projects/${projectId}/github/pulls/3/draft`, {})).body.code, 'validation')
   })
 })
 

@@ -2447,6 +2447,19 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   app.get('/api/projects/:id/github/pulls/:number', projectGithubRoute(async (dir, req) =>
     github.pullRequestDetail(dir, prNumber(req.params.number))))
 
+  /** Taslak/hazır geçişi; liste önbelleği düşer ki kenar çubuğu ve liste yeni durumu görsün. */
+  const readDraft = (raw: unknown): boolean => {
+    const draft = (raw as { draft?: unknown } | undefined)?.draft
+    if (typeof draft !== 'boolean') throw new HttpError(400, 'validation', 'draft true veya false olmalı')
+    return draft
+  }
+  app.post('/api/projects/:id/github/pulls/:number/draft', projectGithubRoute(async (dir, req) => {
+    const draft = readDraft(req.body)
+    await github.setPullRequestDraft(dir, prNumber(req.params.number), draft)
+    pullListCache.clear()
+    return { ok: true, draft }
+  }))
+
   app.post('/api/projects/:id/github/pulls/:number/review', projectGithubRoute(async (dir, req) =>
     github.publishReview(dir, prNumber(req.params.number), ...readReview(req.body))))
 
@@ -2470,6 +2483,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     return { pullRequest: await github.createPullRequest(cwd, {
       branch, base: body.base.trim(), title: body.title.trim(), body: typeof body.body === 'string' ? body.body : '', draft: body.draft === true,
     }) }
+  }))
+
+  app.post('/api/sessions/:id/github/pulls/:number/draft', githubRoute(async (session, req) => {
+    const draft = readDraft(req.body)
+    const cwd = await githubRepoDir(session, (req.body ?? {}).repo)
+    await github.setPullRequestDraft(cwd, prNumber(req.params.number), draft)
+    pullListCache.clear()
+    return { ok: true, draft }
   }))
 
   app.post('/api/sessions/:id/github/pulls/:number/review', githubRoute(async (session, req) => {

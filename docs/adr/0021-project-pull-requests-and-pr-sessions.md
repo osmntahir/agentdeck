@@ -33,9 +33,11 @@ ADR 0001'in istisnası: PR oturumunun branch'i `agentdeck/` önekli olmayabilir.
 
 **Karar 6 — Proje incelemesinin notları PR başınadır.** Taslak `project:<id>` anahtarıyla tutulur. Panel ve gönderim yalnız açık PR'ın notlarını kapsar. Başka PR'a yazılmış not bu terminale gönderilmez.
 
+**Karar 7 — Taslaklar süzülür ve durumları buradan değişir.** Liste "Tümü · Hazır · Taslak" süzgeciyle ve her birinin sayısıyla açılır. Seçim tarayıcıda hatırlanır. Üstteki PR seçici ve oklar süzülmüş sırayı izler. Açık PR'ın başlığında durum düğmesi vardır: taslakta "İncelemeye hazır" (`gh pr ready`), hazır PR'da "Taslağa çevir" (`gh pr ready --undo`). Uçlar `POST /api/projects/:id/github/pulls/:n/draft {draft}` ve oturumdaki karşılığıdır. Geçiş geri alınabilir olduğu için onay sorulmaz. Sonuç düğme, durum rozeti ve panelde hemen görünür. Daemon'ın liste önbelleği düşer, ardından PR, liste ve kenar çubuğu yeniden okunur. Taslak PR'da başlığın altında kısa bir not durur: inceleme istenmez ve birleştirilemez.
+
 Bilinen sınırlar:
 - Korunan branch paneli yalnız `refs/heads/agentdeck/` okur. PR'ın kendi adını alan oturum branch'i orada görünmez.
 - Fork PR'ında ajanın değişikliği PR'a gönderilmez. Kullanıcı ayrı bir PR açar veya uzak depoyu kendisi ayarlar.
 - Liste yalnız açık PR'ları gösterir (en çok 50). Kapanmış ve birleşmiş PR'lar için GitHub kullanılır.
 
-Doğrulama: `npm test`, `npm run typecheck`, `npm run test:browser`. `tests/api.test.ts` gerçek bir bare "origin" ile şunları sınar: PR oturumunun PR head'inden açılması, `origin/<head>`'i izlemesi ve ikinci oturumda ayrı branch'e düşmesi. `tests/browser/pulls.mjs` şu akışı sürer: kenar çubuğundaki sayı, liste, arama, CI ve karar rozetleri, inceleme, terminal seçilmeden gönderimin kapalı olması, Esc ile geri dönüş, PR kipinde yeni oturum penceresi, oturumun PR branch'inde doğması, notun o ajana gitmesi ve paletten açılış. Gerçek GitHub'a karşı kullanıcı kabulü yapılmadı.
+Doğrulama: `npm test`, `npm run typecheck`, `npm run test:browser`. `tests/api.test.ts` gerçek bir bare "origin" ile şunları sınar: PR oturumunun PR head'inden açılması, `origin/<head>`'i izlemesi ve ikinci oturumda ayrı branch'e düşmesi. `tests/browser/pulls.mjs` şu akışı sürer: kenar çubuğundaki sayı, liste, arama, CI ve karar rozetleri, inceleme, terminal seçilmeden gönderimin kapalı olması, Esc ile geri dönüş, PR kipinde yeni oturum penceresi, oturumun PR branch'inde doğması, notun o ajana gitmesi, paletten açılış, taslak süzgeci ve boş durumu, taslağa çevirip geri alma. Gerçek GitHub'a karşı kullanıcı kabulü yapılmadı.
