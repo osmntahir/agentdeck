@@ -1189,9 +1189,7 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
-  animation: frame-glow 9s linear infinite;
 }
-@keyframes frame-glow { to { --frame-glow-angle: 360deg; } }
 :root[data-theme='galatasaray'] .terminal-grid .dv-groupview.dv-active-group::after {
   background: conic-gradient(from var(--frame-glow-angle), transparent 0deg 240deg, color-mix(in srgb, var(--gs-red) 70%, transparent) 295deg, color-mix(in srgb, var(--accent) 90%, transparent) 340deg, transparent 360deg);
 }
@@ -1230,12 +1228,6 @@ button.stat-attention:hover { background: color-mix(in srgb, var(--amber) 20%, t
 .grid-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
 .grid-empty-keys { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: 8px; font-size: 12px; }
 .grid-empty-mark { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 8px; border: 1px solid var(--border-2); border-radius: 14px; background: var(--surface-2); color: var(--accent); }
-/* Grid imleçleri odaktan bağımsız olarak birlikte yanıp söner (tarayıcı testi bunu doğrular). */
-.grid-dock .xterm .xterm-cursor { animation: none !important; }
-.grid-dock .xterm .xterm-cursor::before { animation: none !important; }
-/* Outrank xterm's five-class !important rule for non-blinking block cursors. */
-.grid-cursor-off .terminal-grid .grid-dock .xterm .xterm-rows .xterm-cursor { background-color: transparent !important; color: inherit !important; outline-color: transparent !important; border-color: transparent !important; box-shadow: none !important; }
-.grid-cursor-off .grid-dock .xterm .xterm-cursor::before { visibility: hidden; }
 .grid-size-actions { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border-2); border-radius: 10px; }
 .grid-size-actions legend { padding: 0 4px; color: var(--text-2); font-size: 12px; font-weight: 600; }
 
@@ -1709,7 +1701,9 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 .claude-mascot .m-body > rect, .claude-mascot .m-legs-a rect, .claude-mascot .m-legs-b rect { fill: #d97757; }
 .claude-mascot .m-eyes rect { fill: #17171c; }
 .claude-mascot .m-all, .claude-mascot .m-body, .claude-mascot .m-eyes, .claude-mascot .m-legs-a, .claude-mascot .m-legs-b { transform-box: fill-box; transform-origin: center bottom; }
-.claude-mascot .m-eyes { transform-origin: center; animation: m-blink 4.6s infinite; }
+.claude-mascot .m-eyes { transform-origin: center; }
+/* Kırpma JS ile arada bir açılır; :where uyku, numara ve atıştırma kurallarının önüne geçmez. */
+.claude-mascot:where([data-blink]) .m-eyes { animation: m-blink 0.32s 1; }
 .claude-mascot .m-arm-l { transform-box: fill-box; transform-origin: right center; }
 .claude-mascot .m-arm-r { transform-box: fill-box; transform-origin: left center; }
 
@@ -1754,7 +1748,7 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 .claude-mascot[data-petting] .m-legs-b { animation: m-step 0.32s steps(1) infinite 0.16s; }
 @keyframes m-purr { 0%, 100% { transform: scale(1, 1) rotate(0deg); } 25% { transform: scale(1.06, 0.92) rotate(-4deg); } 75% { transform: scale(1.06, 0.92) rotate(4deg); } }
 
-@keyframes m-blink { 0%, 93%, 100% { transform: scaleY(1); } 95%, 97% { transform: scaleY(0.12); } }
+@keyframes m-blink { 0%, 100% { transform: scaleY(1); } 30%, 60% { transform: scaleY(0.12); } }
 @keyframes m-bob { 50% { transform: translateY(-0.6px); } }
 @keyframes m-step { 50% { transform: translateY(-0.8px); } }
 @keyframes m-wave { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-70deg); } }
@@ -1768,6 +1762,8 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 @keyframes m-breathe { 50% { transform: scaleY(0.94); } }
 @keyframes m-float { 0% { opacity: 0; transform: translate(0, 4px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(4px, -10px); } }
 @media (prefers-reduced-motion: reduce) { .claude-mascot, .claude-mascot * { animation: none !important; } }
+/* Pencere odakta değilken kimse izlemiyor; kare üretmesin. */
+.claude-mascot[data-away], .claude-mascot[data-away] * { animation-play-state: paused !important; }
 
 /* Gözler yakındaki fareyi izler (--gaze, -0.8…0.8 birim). */
 .claude-mascot .m-gaze { transform: translateX(calc(var(--gaze, 0) * 1px)); transition: transform 140ms ease-out; }
@@ -1812,8 +1808,9 @@ button.project-name:hover > span:first-child { color: var(--project-color); }
 .claude-mascot .m-gaze { transform: translate(calc(var(--gaze, 0) * 1px), var(--eye-drop, 0px)); }
 /* Mutsuzken gözler aşağı bakar; gece gözler yarı kapalı. */
 .claude-mascot[data-pout] { --eye-drop: 0.5px; }
-.claude-mascot[data-night]:not([data-petting]):not([data-snack]) .m-eyes { animation: m-blink-sleepy 3.4s infinite; }
-@keyframes m-blink-sleepy { 0%, 88%, 100% { transform: scaleY(0.55) translateY(0.4px); } 92%, 95% { transform: scaleY(0.12) translateY(0.8px); } }
+.claude-mascot[data-night]:not([data-petting]):not([data-snack]) .m-eyes { animation: none; transform: scaleY(0.55) translateY(0.4px); }
+.claude-mascot[data-night][data-blink]:not([data-petting]):not([data-snack]) .m-eyes { animation: m-blink-sleepy 0.41s 1; }
+@keyframes m-blink-sleepy { 0%, 100% { transform: scaleY(0.55) translateY(0.4px); } 33%, 58% { transform: scaleY(0.12) translateY(0.8px); } }
 /* Hızlı yazılırken ayaklar tempoya uyar. */
 .claude-mascot[data-typing] .m-legs-a { animation: m-step 0.16s steps(1) infinite; }
 .claude-mascot[data-typing] .m-legs-b { animation: m-step 0.16s steps(1) infinite 0.08s; }

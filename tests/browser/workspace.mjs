@@ -25,7 +25,8 @@ try {
   const project = await post('projects', { path: repo })
   const sessions = []
   for (let i = 1; i <= 3; i++) sessions.push(await post('sessions', { projectId: project.id, name: `Terminal ${i}`, command: "for i in $(seq 1 200); do echo history-line-$i; done; exec bash --noprofile --norc", isolation: 'shared' }))
-  browser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox'] })
+  // Terminal metni DOM'dan okunur: WebGL kapalıyken terminaller DOM çizimine döner.
+  browser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-3d-apis'] })
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
@@ -61,18 +62,9 @@ try {
   console.log('PASS: visible branch creation button creates and switches')
   for (const s of sessions.slice(0, 2)) await page.getByRole('button', { name: `${s.name} oturumunu yan yana aç`, exact: true }).click()
   await page.waitForFunction(() => document.querySelectorAll('.grid-panel .xterm').length === 2)
-  // Grid cursors must blink immediately, without focusing either terminal.
+  // Opening side by side must not steal focus into either terminal.
   assert.equal(await page.locator('.grid-panel .xterm.focus').count(), 0)
-  await page.waitForFunction(() => document.querySelectorAll('.grid-panel .xterm-cursor').length === 2)
-  for (const off of [false, true, false]) {
-    await page.waitForFunction(off => {
-      if (document.documentElement.classList.contains('grid-cursor-off') !== off) return false
-      const cursors = [...document.querySelectorAll('.grid-panel .xterm-cursor')]
-      return cursors.length === 2 && cursors.every(cursor =>
-        (getComputedStyle(cursor).backgroundColor === 'rgba(0, 0, 0, 0)') === off)
-    }, off, { timeout: 2500 })
-  }
-  console.log('PASS: focused and unfocused grid cursors blink together')
+  console.log('PASS: side-by-side panels open without taking terminal focus')
   await page.locator(`#session-row-${sessions[0].id}`).click()
   assert.equal(await page.locator('.grid-panel .xterm').count(), 2)
   assert.equal(await page.locator('.clean-topbar').count(), 0)

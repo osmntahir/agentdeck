@@ -5,6 +5,7 @@ import { Icon } from './Icon'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { SessionView } from '../../shared/types'
 import { inputChunks, TerminalStream, type StreamStatus } from '../../shared/terminalStream'
@@ -78,7 +79,7 @@ export function TerminalPane({
       fontSize: 13,
       lineHeight: 1.15,
       fontFamily: TERMINAL_FONT,
-      cursorBlink: !compact, cursorInactiveStyle: 'block', disableStdin: true,
+      cursorBlink: true, cursorInactiveStyle: 'block', disableStdin: true,
       theme: {
         ...THEMES[preferences.theme].terminal,
         // Uygulamanın kaydırma çubuklarıyla aynı palet.
@@ -97,6 +98,8 @@ export function TerminalPane({
     let reconnect: ReturnType<typeof setTimeout> | null = null
     let attempts = 0
     let requestedSize = ''
+    // Önerilen boyut layout okur; her çıktı mesajında değil, yalnız yerleşim değişince ölçülür.
+    let proposed: ReturnType<FitAddon['proposeDimensions']> | null = null
 
     const send = (message: object) => {
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
@@ -106,7 +109,8 @@ export function TerminalPane({
       if (disposed || !stream?.status.ready) return
       if (!stream.status.live) { fit.fit(); return }
       if (!canInput()) return
-      const size = fit.proposeDimensions()
+      proposed ??= fit.proposeDimensions()
+      const size = proposed
       if (!size) return
       const cols = Math.max(2, Math.min(300, size.cols))
       const rows = Math.max(1, Math.min(120, size.rows))
@@ -199,7 +203,13 @@ export function TerminalPane({
     }
     term.textarea?.addEventListener('focus', onTermFocus)
     let resizeFrame = 0
-    const scheduleResize = () => { cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(resize) }
+    const scheduleResize = () => { proposed = null; cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(resize) }
+    // GPU ile çizim; bağlam kaybolursa (ör. çok panel) xterm'in DOM çizimine döner.
+    try {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => { webgl.dispose(); scheduleResize() })
+      term.loadAddon(webgl)
+    } catch { /* WebGL yok: DOM çizimi kalır */ }
     document.fonts.ready.then(() => { if (!disposed) scheduleResize() })
     window.addEventListener('resize', scheduleResize)
     const observer = new ResizeObserver(scheduleResize)

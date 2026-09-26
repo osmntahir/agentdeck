@@ -31,6 +31,8 @@ const DIZZY_FALL_PX = 120
 const CELEBRATE_AFTER_MS = 20_000
 /** Pencereye bu kadar süre bakılmazsa dönüşte "Neredeydin?" der. */
 const AWAY_MS = 5 * 60_000
+/** Tek göz kırpmanın süresi; CSS'teki m-blink ve m-blink-sleepy bundan kısadır. */
+const BLINK_MS = 450
 const BOT_WIDTH = 46
 const BOT_TOP = 3
 
@@ -128,12 +130,17 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
   const [floaters, setFloaters] = useState<{ id: number; x: number; size: number; char: string; kind?: string }[]>([])
   const [menu, setMenu] = useState<MenuPosition | null>(null)
   const [birthdayOpen, setBirthdayOpen] = useState(false)
+  /** Pencere odakta değil: animasyonlar durur, gezinme ve numaralar bekler. */
+  const [away, setAway] = useState(false)
   const track = useRef<HTMLDivElement>(null)
+  /** Şerit genişliği; yürürken her karede layout okunmasın diye ResizeObserver'dan tutulur. */
+  const trackWidth = useRef(0)
   const bot = useRef<HTMLButtonElement>(null)
   const pos = useRef(Number.MAX_SAFE_INTEGER)
   const lastTouch = useRef(Date.now())
   const idCounter = useRef(0)
-  const walkToken = useRef(0)
+  /** Süren yürüyüş; hareketi compositor yürütür, ana thread her karede çalışmaz. */
+  const walk = useRef<Animation | null>(null)
   /** Süren yürüyüşü kim başlattı; gezinme yalnız kendi yürüyüşünü iptal eder. */
   const walkOwner = useRef<'wander' | 'scene' | null>(null)
   const press = useRef<{ timer: number; petted: boolean; lastHeart: number; startX: number; startY: number; grabX: number; grabY: number; dragging: boolean } | null>(null)
@@ -148,7 +155,7 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
 
   // --- yardımcılar -----------------------------------------------------------
 
-  const room = () => Math.max(0, (track.current?.clientWidth ?? 0) - BOT_WIDTH)
+  const room = () => Math.max(0, trackWidth.current - BOT_WIDTH)
   const place = () => {
     pos.current = Math.min(Math.max(0, pos.current), room())
     const el = bot.current
@@ -164,7 +171,8 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
   const speak = (text: string | undefined) => {
     if (!text) return
     // Balon, robotun daha çok boşluk olan tarafına açılır.
-    setSay({ text, side: room() - pos.current > pos.current ? 'right' : 'left' })
+    const x = here()
+    setSay({ text, side: room() - x > x ? 'right' : 'left' })
   }
 
   /** Sayacı ve mutluluğu günceller; eşik geçildiyse kutlar. */
@@ -192,34 +200,47 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
     }
   }
 
+  /** Yürürken ekrandaki konum; durunca pos ile aynıdır. */
+  const here = () => {
+    const el = bot.current
+    if (!walk.current || !el) return pos.current
+    return new DOMMatrixReadOnly(getComputedStyle(el).transform).m41
+  }
+  /** Süren yürüyüşü bulunduğu yerde bitirir; bekleyen walkTo false döner. */
+  const halt = () => {
+    const current = walk.current
+    if (!current) return
+    pos.current = here()
+    walk.current = null
+    current.cancel()
+    place()
+  }
   /** Hedefe yürür; yeni bir yürüyüş ya da iptal eski yürüyüşü bitirir. */
   const walkTo = (target: number, speed: number, owner: 'wander' | 'scene' = 'scene') => new Promise<boolean>((resolve) => {
-    const token = ++walkToken.current
+    halt()
     walkOwner.current = owner
     const goal = Math.min(Math.max(0, target), room())
-    if (Math.abs(goal - pos.current) < 1 || reducedMotion()) { pos.current = goal; place(); resolve(true); return }
+    const el = bot.current
+    if (!el || Math.abs(goal - pos.current) < 1 || reducedMotion()) { pos.current = goal; place(); resolve(true); return }
     const dir = goal > pos.current ? 1 : -1
     setWalking(dir)
-    let last = performance.now()
-    const tick = (time: number) => {
-      if (walkToken.current !== token) { resolve(false); return }
-      pos.current += dir * speed * Math.min(0.1, (time - last) / 1000)
-      last = time
-      if ((dir > 0 && pos.current >= goal) || (dir < 0 && pos.current <= goal)) {
-        pos.current = goal
-        place()
-        setWalking(0)
-        resolve(true)
-        return
-      }
+    const step = el.animate(
+      [{ transform: `translateX(${pos.current}px)` }, { transform: `translateX(${goal}px)` }],
+      { duration: (Math.abs(goal - pos.current) / speed) * 1000, easing: 'linear' },
+    )
+    walk.current = step
+    step.finished.then(() => {
+      if (walk.current !== step) return resolve(false)
+      walk.current = null
+      pos.current = goal
       place()
-      requestAnimationFrame(tick)
-    }
-    requestAnimationFrame(tick)
+      setWalking(0)
+      resolve(true)
+    }, () => resolve(false))
   })
   const stopWalking = (owner?: 'wander') => {
     if (owner && walkOwner.current !== owner) return
-    walkToken.current += 1
+    halt()
     walkOwner.current = null
     setWalking(0)
   }
@@ -229,8 +250,9 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
 
   // İlk görünüşte çubuğun sağ ucunda durur; çubuk daralırsa içeride kalır.
   useLayoutEffect(() => {
-    place()
-    const observer = new ResizeObserver(place)
+    const measure = () => { trackWidth.current = track.current?.clientWidth ?? 0; place() }
+    measure()
+    const observer = new ResizeObserver(measure)
     if (track.current) observer.observe(track.current)
     return () => observer.disconnect()
   }, [])
@@ -297,8 +319,9 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
   // Uzun süre pencereye bakılmazsa dönüşte koşup gelir.
   useEffect(() => {
     let awaySince: number | null = null
-    const away = () => { awaySince ??= Date.now() }
+    const away = () => { awaySince ??= Date.now(); setAway(true) }
     const back = () => {
+      setAway(false)
       const since = awaySince
       awaySince = null
       if (since === null || Date.now() - since < AWAY_MS) return
@@ -350,7 +373,7 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
 
   // Uyanıkken çubukta rastgele bir yere yürür.
   useEffect(() => {
-    if (mood === 'sleeping' || mood === 'attention' || busy || reducedMotion()) return
+    if (mood === 'sleeping' || mood === 'attention' || busy || away || reducedMotion()) return
     let timer = 0
     const plan = () => {
       timer = window.setTimeout(() => {
@@ -361,11 +384,11 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
     }
     plan()
     return () => { window.clearTimeout(timer); stopWalking('wander') }
-  }, [mood, busy, part, happiness < 30, typing])
+  }, [mood, busy, away, part, happiness < 30, typing])
 
   // 8-20 sn'de bir kendi başına bir şey yapar: numara, uğraş, saklanma ya da laf.
   useEffect(() => {
-    if (mood === 'sleeping' || scene !== null) return
+    if (mood === 'sleeping' || scene !== null || away) return
     let timer = 0
     let last: Trick | null = null
     const schedule = () => {
@@ -386,14 +409,31 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
     }
     schedule()
     return () => window.clearTimeout(timer)
-  }, [mood, scene, part, happiness < 30, hungry])
+  }, [mood, scene, away, part, happiness < 30, hungry])
+
+  // Göz kırpma arada bir tetiklenir; sürekli CSS animasyonu her karede yeniden çizim ister.
+  useEffect(() => {
+    const el = bot.current
+    if (!el || away) return
+    const every = part === 'night' ? 3400 : 4600
+    let timer = 0
+    const blink = () => {
+      el.dataset.blink = ''
+      timer = window.setTimeout(() => {
+        delete el.dataset.blink
+        timer = window.setTimeout(blink, every - BLINK_MS)
+      }, BLINK_MS)
+    }
+    timer = window.setTimeout(blink, every)
+    return () => { window.clearTimeout(timer); delete el.dataset.blink }
+  }, [away, part])
 
   // --- oyunlar ----------------------------------------------------------------
 
   /** Saklambaç: bir kenara gidip çubuğun altına saklanır, yalnız gözleri görünür. */
   const hideAndSeek = async () => {
     setScene('hide')
-    const edge = pos.current > room() / 2 ? room() : 0
+    const edge = here() > room() / 2 ? room() : 0
     const arrived = await walkTo(edge, walkSpeed(40))
     if (!arrived) { setScene(null); return }
     speak('Ara beni! 🙈')
@@ -415,7 +455,7 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
   /** Topu at: robot koşup alır, başladığı yere getirir. */
   const fetchBall = async (target?: number) => {
     if (sceneRef.current !== null) return
-    const home = pos.current
+    const home = here()
     const x = target ?? (home > room() / 2 ? Math.random() * room() * 0.3 : room() * (0.7 + Math.random() * 0.3))
     setScene('fetch')
     setBall({ x: Math.min(Math.max(0, x), room()) + BOT_WIDTH / 2 - 6, carried: false })
@@ -529,7 +569,7 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
       speak(pick(TICKLE_PHRASES))
       reward((s) => s, 3)
       // Kıkırdayarak fareden biraz uzaklaşır.
-      window.setTimeout(() => { void walkTo(pos.current + (dir > 0 ? 50 : -50), 90) }, 1300)
+      window.setTimeout(() => { void walkTo(here() + (dir > 0 ? 50 : -50), 90) }, 1300)
     }
   }
 
@@ -614,6 +654,7 @@ export function ClaudeMascot({ sessions, now, onOpen }: { sessions: SessionView[
         data-pout={happiness < 30 || undefined}
         data-night={part === 'night' || undefined}
         data-walking={walking !== 0 ? (walking > 0 ? 'right' : 'left') : undefined}
+        data-away={away || undefined}
         title={menu || scene === 'drag' ? undefined : title}
         aria-label={`Claude ${LABEL[mood]}`}
         onContextMenu={(event) => {

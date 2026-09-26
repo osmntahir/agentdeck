@@ -291,15 +291,6 @@ const CLOSED_LIMIT = 20
 const closedTabs = new Map<string, string[]>()
 
 export function TerminalGrid({ gridId, onRefresh, state, healthy, pendingAdd, onPendingHandled, onDetail, onAction, onSessionMenu, onPanelsChange, onVisibleChange, toolbar, onAddLive, onNewTab }: Props) {
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>
-    const tick = () => {
-      document.documentElement.classList.toggle('grid-cursor-off', Math.floor(Date.now() / 600) % 2 === 1)
-      timer = setTimeout(tick, 600 - Date.now() % 600)
-    }
-    tick()
-    return () => { clearTimeout(timer); document.documentElement.classList.remove('grid-cursor-off') }
-  }, [])
   const [api, setApi] = useState<DockviewApi | null>(null)
   const [panelIds, setPanelIds] = useState<string[]>([])
   const [focusRequest, setFocusRequest] = useState<{ sessionId: string; sequence: number; origin: HTMLElement } | null>(null)
