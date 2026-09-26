@@ -2746,17 +2746,33 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   }
 
   /** Proje düzeyinde PR işleri proje kökünde yapılır; yalnız git projesinde vardır. */
-  function githubProject(id: string): string {
+  function githubProject(id: string): Project {
     const project = store.get().projects.find(p => p.id === id)
     if (!project) throw new HttpError(404, 'not_found', 'Proje yok')
-    if (project.kind !== 'git' || project.general) throw new HttpError(409, 'git_required', 'PR listesi yalnız git projelerinde vardır')
-    return project.path
+    if (project.general) throw new HttpError(409, 'git_required', 'Projesiz oturumların PR listesi yoktur')
+    return project
+  }
+
+  /**
+   * PR işleminin deposu. Git projesinde kökün kendisidir; klasör projesinde
+   * `repo` taramada bulunan bir Alt depo olmalıdır (ADR 0025).
+   */
+  async function githubProjectDir(id: string, rawRepo: unknown): Promise<string> {
+    const project = githubProject(id)
+    const repo = typeof rawRepo === 'string' && rawRepo !== '' ? rawRepo : '.'
+    if (project.kind === 'git') {
+      if (repo !== '.') throw new HttpError(400, 'validation', 'Git projesinde depo yalnız "." olabilir')
+      return project.path
+    }
+    const scan = await findSubRepos(project.path)
+    if (repo === '.' || !scan.repos.includes(repo)) throw new HttpError(404, 'repo_not_found', `Klasörde böyle bir alt depo yok: ${repo}`)
+    return path.join(project.path, repo)
   }
 
   function projectGithubRoute(handler: (dir: string, req: express.Request) => Promise<unknown>): express.RequestHandler {
     return async (req, res) => {
       try {
-        res.json(await handler(githubProject(String(req.params.id)), req))
+        res.json(await handler(await githubProjectDir(String(req.params.id), req.query.repo), req))
       } catch (err) {
         if (err instanceof GithubError) return jsonError(res, 409, err.state, err.message)
         sendError(res, err)
@@ -2770,17 +2786,49 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
    */
   const pullListCache = new Map<string, { at: number; read: Promise<PullRequestSummary[]> }>()
   const PULL_LIST_TTL_MS = 60_000
-  app.get('/api/projects/:id/github/pulls', projectGithubRoute(async (dir, req) => {
+  function cachedPullRequests(dir: string, fresh: boolean): Promise<PullRequestSummary[]> {
     let cached = pullListCache.get(dir)
-    if (!cached || req.query.fresh === '1' || Date.now() - cached.at >= PULL_LIST_TTL_MS) {
+    if (!cached || fresh || Date.now() - cached.at >= PULL_LIST_TTL_MS) {
       const read = github.listPullRequests(dir)
       cached = { at: Date.now(), read }
       pullListCache.set(dir, cached)
       // Hata önbellekte kalmaz; sonraki istek yeniden dener.
       read.catch(() => { if (pullListCache.get(dir)?.read === read) pullListCache.delete(dir) })
     }
-    return { pullRequests: await cached.read }
-  }))
+    return cached.read
+  }
+
+  /**
+   * Git projesinde kökün PR'ları. Klasör projesinde bütün alt depoların PR'ları
+   * `repo` alanıyla ve depo başına durumla gelir; GitHub'a bağlı olmayan depo
+   * listeyi bozmaz. Hiçbir depo okunamıyorsa (ör. gh girişi yok) ilk hata döner.
+   */
+  app.get('/api/projects/:id/github/pulls', async (req, res) => {
+    try {
+      const project = githubProject(String(req.params.id))
+      const fresh = req.query.fresh === '1'
+      if (project.kind === 'git') return res.json({ pullRequests: await cachedPullRequests(project.path, fresh) })
+      const scan = await findSubRepos(project.path)
+      const results = await Promise.all(scan.repos.map(async (repo) => {
+        try {
+          const list = await cachedPullRequests(path.join(project.path, repo), fresh)
+          return { repo, list, error: null }
+        } catch (err) {
+          const error = err instanceof GithubError ? { code: err.state, message: err.message } : { code: 'error', message: (err as Error).message }
+          return { repo, list: [] as PullRequestSummary[], error }
+        }
+      }))
+      const blocking = results.find((r) => r.error && (r.error.code === 'gh_missing' || r.error.code === 'unauthenticated'))
+      if (blocking && results.every((r) => r.error)) return jsonError(res, 409, blocking.error!.code, blocking.error!.message)
+      res.json({
+        pullRequests: results.flatMap((r) => r.list.map((pr) => ({ ...pr, repo: r.repo }))),
+        repos: results.map((r) => ({ path: r.repo, count: r.list.length, error: r.error })),
+        truncated: scan.truncated,
+      })
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
 
   app.get('/api/projects/:id/github/pulls/:number', projectGithubRoute(async (dir, req) =>
     github.pullRequestDetail(dir, prNumber(req.params.number))))

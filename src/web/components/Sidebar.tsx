@@ -274,7 +274,7 @@ export function Sidebar({
                   {rows.length > 0 && <span className="project-count">{rows.length}</span>}
                 </button>
                 {(pullCounts[project.id] ?? 0) > 0 && <button className="project-prs" title={`${pullCounts[project.id]} açık pull request`} aria-label={`${project.name}: ${pullCounts[project.id]} açık pull request`} onClick={() => onPulls(project.id)}>
-                  <Icon name="branch" size={11} />{pullCounts[project.id]}
+                  <Icon name="branch" size={12} />{pullCounts[project.id]}<span className="project-prs-label">PR</span>
                 </button>}
                 <div className="project-actions">
                   <button className="icon-button ghost" title="Yeni oturum" aria-label={`${project.name} içinde yeni oturum`} onClick={() => onNewSession(project)}>
@@ -349,8 +349,8 @@ export function Sidebar({
       {projectMenu && <ActionMenu label="Proje işlemleri" position={projectMenu.position} onClose={() => setProjectMenu(null)} actions={[
         { label: 'Yeni oturum…', icon: 'plus', run: () => { const p = state.projects.find(p => p.id === projectMenu.id); if (p) onNewSession(p) } },
         { label: 'Yeni iş…', icon: 'work', description: 'Yeni iş ve ilk terminali birlikte açılır.', run: () => { const p = state.projects.find(p => p.id === projectMenu.id); if (p) onNewSession(p, 'new') } },
-        ...(state.projects.find(p => p.id === projectMenu.id)?.kind === 'git' && !state.projects.find(p => p.id === projectMenu.id)?.general
-          ? [{ label: 'Pull request\'ler', icon: 'branch' as const, description: 'Projenin açık PR\'larını listele ve incele.', run: () => onPulls(projectMenu.id) }]
+        ...(state.projects.find(p => p.id === projectMenu.id) && !state.projects.find(p => p.id === projectMenu.id)?.general
+          ? [{ label: 'Pull request\'ler', icon: 'branch' as const, description: 'Projenin (klasörde her alt deponun) açık PR\'larını listele ve incele.', run: () => onPulls(projectMenu.id) }]
           : []),
         { label: 'Proje rengi…', icon: 'palette', run: () => setColorProject(projectMenu) },
         { label: 'Projeyi kaldır…', icon: 'trash', danger: true, run: () => { const p = state.projects.find(p => p.id === projectMenu.id); if (p) onRemoveProject(p) } },

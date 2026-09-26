@@ -32,7 +32,7 @@ export interface TargetPicker {
   sessions: SessionView[]
   selected: string | null
   onSelect: (id: string) => void
-  onStartAgent: () => void
+  onStartAgent?: () => void
 }
 
 export function ReviewPanel({ comments, current, summary, onSummary, delivery, instant, submit, onPrefs, onJump, onDelete, onClearSent, onSend, github, notes, forwardedNotes, onForwardNote, onClose, status, picker }: {
@@ -82,7 +82,7 @@ export function ReviewPanel({ comments, current, summary, onSummary, delivery, i
             </option>)}
           </select>
         </label>
-        <button className="ghost-button" onClick={picker.onStartAgent}><Icon name="play" size={12} />Bu PR üzerinde ajan başlat</button>
+        {picker.onStartAgent && <button className="ghost-button" onClick={picker.onStartAgent}><Icon name="play" size={12} />Bu PR üzerinde ajan başlat</button>}
       </div>}
 
       {pending.length === 0 && sent.length === 0 && <div className="review-empty">

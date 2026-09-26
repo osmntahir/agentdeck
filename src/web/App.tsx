@@ -25,7 +25,7 @@ import { Sidebar, navigationIds } from './components/Sidebar'
 import { SidebarShell } from './components/SidebarShell'
 import { TerminalPane } from './components/TerminalPane'
 import { DiffView } from './components/DiffView'
-import { ProjectPullRequests } from './components/ProjectPullRequests'
+import { ProjectPullRequests, type PullRef } from './components/ProjectPullRequests'
 import { NewSessionDialog } from './components/NewSessionDialog'
 import { AssignWorkDialog, WorkNameDialog, type WorkChoice } from './components/WorkDialogs'
 import { ClaudeSessionPicker } from './components/ClaudeSessions'
@@ -115,7 +115,7 @@ export function App() {
   const [state, setState] = useState<StateResponse>(EMPTY)
   const [activeId, setActiveId] = useState<string | null>(null)
   /** Proje PR sayfası; pr null ise liste açıktır. */
-  const [prView, setPrView] = useState<{ projectId: string; pr: number | null } | null>(null)
+  const [prView, setPrView] = useState<{ projectId: string; pr: PullRef | null } | null>(null)
   /** "Bu PR üzerinde ajan başlat": yeni oturum penceresi PR'ın branch'inde izole açılır. */
   const [dialogPr, setDialogPr] = useState<{ number: number; title: string; headRefName: string } | null>(null)
   const [pullCounts, setPullCounts] = useState<Record<string, number>>({})
@@ -382,7 +382,7 @@ export function App() {
     setDialogProject(project)
   }
 
-  const openPulls = (projectId: string, pr: number | null = null) => {
+  const openPulls = (projectId: string, pr: PullRef | null = null) => {
     setActiveId(null)
     setPendingDelete(null)
     setPrView({ projectId, pr })
@@ -396,9 +396,10 @@ export function App() {
     setDialogProject(project)
   }
 
-  // Kenar çubuğundaki açık PR sayısı: git projeleri birkaç dakikada bir sorulur.
+  // Kenar çubuğundaki açık PR sayısı: git ve klasör projeleri birkaç dakikada bir sorulur;
+  // klasör projesinde alt depoların toplamıdır (ADR 0025).
   // gh yoksa veya depo GitHub değilse sayı gösterilmez; hata kullanıcıya taşınmaz.
-  const gitProjectIds = state.projects.filter(p => p.kind === 'git' && !p.general).map(p => p.id).join(',')
+  const gitProjectIds = state.projects.filter(p => !p.general).map(p => p.id).join(',')
   useEffect(() => {
     if (!gitProjectIds) return
     let cancelled = false
@@ -912,7 +913,7 @@ export function App() {
     { id: 'grid-live', label: 'Çalışan oturumları yan yana aç', icon: 'layout', keywords: 'hepsi tümü canlı grid', run: addLiveToGrid },
     { id: 'sidebar', label: preferences.sidebarCollapsed ? 'Kenar çubuğunu genişlet' : 'Kenar çubuğunu daralt', icon: 'sidebar', hint: SHORTCUT_LABELS.sidebar, keywords: 'panel gizle', run: toggleSidebar },
     { id: 'new-session', label: 'Yeni oturum…', icon: 'plus', hint: SHORTCUT_LABELS.newSession, keywords: 'ajan terminal başlat', run: () => shortcutRef.current({ kind: 'new-session' }) },
-    ...state.projects.filter(p => p.kind === 'git' && !p.general).map(p => ({ id: `prs:${p.id}`, label: `Pull request'ler · ${p.name}`, icon: 'branch' as const, keywords: 'pr github inceleme review', run: () => openPulls(p.id) })),
+    ...state.projects.filter(p => !p.general).map(p => ({ id: `prs:${p.id}`, label: `Pull request'ler · ${p.name}`, icon: 'branch' as const, keywords: 'pr github inceleme review', run: () => openPulls(p.id) })),
     { id: 'add-project', label: 'Proje ekle…', icon: 'folder', keywords: 'klasör depo', run: () => setAddingProject(true) },
     { id: 'settings', label: 'Ayarlar', icon: 'settings', keywords: 'tercih', run: () => setSettingsOpen(true) },
     ...Object.entries(THEMES).filter(([id]) => id !== preferences.theme).map(([id, theme]) => ({ id: `theme:${id}`, label: `Tema: ${theme.label}`, icon: 'palette' as const, keywords: 'renk görünüm', run: () => { try { updatePreferences({ theme: id as ThemeName }) } catch { setError('Tema kaydedilemedi.') } } })),

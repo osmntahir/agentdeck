@@ -1317,8 +1317,26 @@ mark.word-del { border-radius: 3px; background: var(--diff-del-word); color: inh
 .review-target strong { overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .review-target small { color: var(--text-2); font-size: 11.5px; }
 .review-target.blocked { border-color: color-mix(in srgb, var(--amber) 35%, transparent); background: var(--amber-soft); color: var(--amber); }
-.project-prs { gap: 3px; min-width: 0; min-height: 20px; height: 20px; padding: 0 6px; border: 1px solid color-mix(in srgb, var(--green) 30%, transparent); border-radius: 999px; background: transparent; color: var(--green); font-size: 11px; font-variant-numeric: tabular-nums; }
-.project-prs:hover { background: color-mix(in srgb, var(--green) 12%, transparent); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+/* Açık PR sayısı kenar çubuğunda göze çarpar: dolu yeşil hap, kalın rakam, "PR" etiketi. */
+.project-prs {
+  flex: none;
+  gap: 4px;
+  min-width: 0;
+  min-height: 20px;
+  height: 20px;
+  padding: 0 7px 0 6px;
+  border: 1px solid color-mix(in srgb, var(--green) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--green) 18%, transparent);
+  color: color-mix(in srgb, var(--green) 90%, #fff);
+  font-size: 11.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 6%, transparent);
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+.project-prs:hover { background: color-mix(in srgb, var(--green) 28%, transparent); border-color: color-mix(in srgb, var(--green) 65%, transparent); transform: translateY(-1px); }
+.project-prs-label { color: color-mix(in srgb, var(--green) 70%, var(--text-2)); font-size: 10px; font-weight: 600; letter-spacing: 0.03em; }
 .review-picker { display: grid; gap: 8px; margin-top: -6px; }
 .review-picker label { display: grid; gap: 6px; color: var(--text-2); font-size: 12px; font-weight: 500; }
 .review-picker .ghost-button { justify-self: start; gap: 6px; min-height: 28px; font-size: 12.5px; }
@@ -1405,6 +1423,19 @@ mark.word-del { border-radius: 3px; background: var(--diff-del-word); color: inh
 .check-dot.pending { background: var(--amber-soft); color: var(--amber); }
 .agent-chip { gap: 4px; border-color: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--accent); }
 .pr-row-action { flex: none; align-self: center; gap: 6px; min-height: 30px; margin-right: 10px; font-size: 12.5px; }
+/* Klasör projesi: alt depo başına grup (ADR 0025). */
+.prs-repo { display: grid; gap: 8px; margin-top: 18px; }
+.prs-repo:first-of-type { margin-top: 4px; }
+.prs-repo-head { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 2px; color: var(--text-2); }
+.prs-repo-head svg { flex: none; color: var(--text-3); }
+.prs-repo-head strong { overflow: hidden; color: var(--text); font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.prs-repo-head .mono { overflow: hidden; font-family: var(--font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.prs-repo-count { display: inline-grid; place-items: center; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px; background: var(--surface-3); color: var(--text-3); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.prs-repo-count.has { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); }
+.prs-repo-note { display: flex; align-items: center; gap: 7px; margin: 0; padding: 10px 14px; border: 1px dashed var(--border-2); border-radius: 12px; color: var(--text-3); font-size: 12.5px; }
+.prs-repo-note.warn { border-style: solid; border-color: color-mix(in srgb, var(--amber) 30%, transparent); background: var(--amber-soft); color: var(--amber); }
+.repo-crumb { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); cursor: default; }
+a.pr-row-action { display: inline-flex; align-items: center; text-decoration: none; }
 .prs-empty { display: grid; justify-items: center; gap: 6px; padding: 36px 20px; border: 1px dashed var(--border-2); border-radius: 12px; color: var(--text-2); text-align: center; }
 .prs-empty p { max-width: 460px; margin: 0; color: var(--text-3); font-size: 12.5px; line-height: 1.55; }
 .prs-empty .ghost-button { gap: 6px; }

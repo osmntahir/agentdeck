@@ -9,6 +9,7 @@ import type {
   GithubStatus,
   Isolation,
   Project,
+  ProjectPullRequestList,
   PullRequestDetail,
   PullRequestSummary,
   SessionView,
@@ -221,17 +222,19 @@ export const createPullRequest = (id: string, input: { repo: string; base: strin
   call<{ pullRequest: PullRequestSummary }>(`/api/sessions/${id}/github/pulls`, { method: 'POST', body: JSON.stringify(input) })
 /** Proje düzeyinde PR'lar; liste daemon'da bir dakika önbelleklenir. */
 export const listProjectPullRequests = (projectId: string, fresh = false) =>
-  call<{ pullRequests: PullRequestSummary[] }>(`/api/projects/${projectId}/github/pulls${fresh ? '?fresh=1' : ''}`)
-export const getProjectPullRequest = (projectId: string, number: number) =>
-  call<PullRequestDetail>(`/api/projects/${projectId}/github/pulls/${number}`)
-export const publishProjectReview = (projectId: string, number: number, input: Parameters<typeof publishReview>[2]) =>
-  call<{ url: string }>(`/api/projects/${projectId}/github/pulls/${number}/review`, { method: 'POST', body: JSON.stringify(input) })
+  call<ProjectPullRequestList>(`/api/projects/${projectId}/github/pulls${fresh ? '?fresh=1' : ''}`)
+/** Klasör projesinde repo, PR'ın alt deposudur; git projesinde verilmez. */
+const repoParam = (repo?: string) => (repo && repo !== '.' ? `?repo=${encodeURIComponent(repo)}` : '')
+export const getProjectPullRequest = (projectId: string, number: number, repo?: string) =>
+  call<PullRequestDetail>(`/api/projects/${projectId}/github/pulls/${number}${repoParam(repo)}`)
+export const publishProjectReview = (projectId: string, number: number, input: Parameters<typeof publishReview>[2], repo?: string) =>
+  call<{ url: string }>(`/api/projects/${projectId}/github/pulls/${number}/review${repoParam(repo)}`, { method: 'POST', body: JSON.stringify(input) })
 
 /** draft=false taslağı incelemeye hazır işaretler, draft=true hazır PR'ı taslağa çevirir. */
 export const setPullRequestDraft = (id: string, number: number, draft: boolean) =>
   call<{ ok: true; draft: boolean }>(`/api/sessions/${id}/github/pulls/${number}/draft`, { method: 'POST', body: JSON.stringify({ repo: '.', draft }) })
-export const setProjectPullRequestDraft = (projectId: string, number: number, draft: boolean) =>
-  call<{ ok: true; draft: boolean }>(`/api/projects/${projectId}/github/pulls/${number}/draft`, { method: 'POST', body: JSON.stringify({ draft }) })
+export const setProjectPullRequestDraft = (projectId: string, number: number, draft: boolean, repo?: string) =>
+  call<{ ok: true; draft: boolean }>(`/api/projects/${projectId}/github/pulls/${number}/draft${repoParam(repo)}`, { method: 'POST', body: JSON.stringify({ draft }) })
 
 export const publishReview = (id: string, number: number, input: {
   repo: string

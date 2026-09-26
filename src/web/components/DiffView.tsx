@@ -47,13 +47,18 @@ const DECISION: Record<string, string> = { APPROVED: 'Onaylandı', CHANGES_REQUE
  */
 export type ReviewTarget =
   | { kind: 'session'; session: SessionView; projectKind: 'git' | 'folder' | undefined }
-  | { kind: 'project'; projectId: string; pr: number; sessions: SessionView[]; onStartAgent: () => void; onChanged?: () => void
+  | { kind: 'project'; projectId: string; pr: number; sessions: SessionView[]; onChanged?: () => void
+      /** Klasör projesinde PR'ın alt deposu (ADR 0025); git projesinde yoktur. */
+      repo?: string
+      /** PR üzerinde ajan başlatma; klasör projesinde yoktur. */
+      onStartAgent?: () => void
       /** Önceki/sonraki PR'a geçer; odak modunda üst çubuk gizliyken de [ ve ] ile kullanılır. */
       onStep?: (delta: 1 | -1) => void }
 
 export function DiffView({ target }: { target: ReviewTarget }) {
   const session = target.kind === 'session' ? target.session : null
   const projectId = target.kind === 'project' ? target.projectId : null
+  const prRepo = target.kind === 'project' ? target.repo : undefined
   const [source, setSource] = useState<Source>(target.kind === 'project' ? `pr:${target.pr}` : target.session.isolation === 'worktree' ? 'work' : 'uncommitted')
   const [fetched, setFetched] = useState<Loaded | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -62,7 +67,8 @@ export function DiffView({ target }: { target: ReviewTarget }) {
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [current, setCurrent] = useState<string | null>(null)
-  const [draft, updateDraft] = useReviewDraft(session ? session.id : `project:${projectId}`)
+  // Klasör projesinde iki depoda aynı numaralı PR olabilir; taslak depoya da bağlanır.
+  const [draft, updateDraft] = useReviewDraft(session ? session.id : prRepo ? `project:${projectId}:${prRepo}` : `project:${projectId}`)
   const [prefs, updatePrefs] = useReviewPrefs()
   const [github, setGithub] = useState<GithubStatus | null>(null)
   const [githubReload, setGithubReload] = useState(0)
@@ -91,7 +97,7 @@ export function DiffView({ target }: { target: ReviewTarget }) {
     setLoading(true); setError(null)
     const pr = prNumberOf(source)
     const request: Promise<Loaded> = pr !== null
-      ? (session ? api.getPullRequest(session.id, pr) : api.getProjectPullRequest(projectId!, pr)).then(detail => ({ kind: 'pr' as const, detail, source }))
+      ? (session ? api.getPullRequest(session.id, pr) : api.getProjectPullRequest(projectId!, pr, prRepo)).then(detail => ({ kind: 'pr' as const, detail, source }))
       : api.getDiff(session!.id, source as 'work' | 'uncommitted').then(result => ({ kind: 'local' as const, result, source }))
     request.then(next => { if (!cancelled) setFetched(next) })
       .catch(e => { if (!cancelled) { setError(e.message); setFetched(null) } })
@@ -190,7 +196,7 @@ export function DiffView({ target }: { target: ReviewTarget }) {
     ?? candidates.find(s => s.pullRequest?.number === prNumberOf(source))
   const receiver = session ?? candidates.find(s => s.id === targetId) ?? prSession ?? null
   const delivery: Delivery = useMemo(() => {
-    if (!receiver) return { ok: false, reason: 'Notların gideceği terminali seç veya bu PR üzerinde ajan başlat', target: 'Terminal seçilmedi' }
+    if (!receiver) return { ok: false, reason: prRepo ? 'Notların gideceği terminali seç' : 'Notların gideceği terminali seç veya bu PR üzerinde ajan başlat', target: 'Terminal seçilmedi' }
     const target = receiver.name
     if (receiver.archivedAt !== null) return { ok: false, reason: 'Oturum arşivde; önce arşivden çıkar', target }
     if (receiver.lifecycle !== 'live' || !receiver.runId) return { ok: false, reason: 'Terminal çalışmıyor; önce oturumu devam ettir', target }
@@ -363,7 +369,7 @@ export function DiffView({ target }: { target: ReviewTarget }) {
           repo: '.', commitId: detail.pullRequest.headRefOid, body: '',
           comments: publishable.map(c => ({ path: c.path!, side: c.side, line: c.line!, startLine: c.startLine, body: c.body })),
         }
-        await (session ? api.publishReview(session.id, prNumber, review) : api.publishProjectReview(projectId!, prNumber, review))
+        await (session ? api.publishReview(session.id, prNumber, review) : api.publishProjectReview(projectId!, prNumber, review, prRepo))
         published = new Set(publishable.map(c => c.id))
       } catch (e) {
         publishError = (e as Error).message
@@ -482,7 +488,7 @@ export function DiffView({ target }: { target: ReviewTarget }) {
 
   // Taslak/hazır geçişi GitHub'da yapılır; ardından PR, oturumun PR durumu ve proje listesi yenilenir.
   const setDraft = async (number: number, draft: boolean) => {
-    await (session ? api.setPullRequestDraft(session.id, number, draft) : api.setProjectPullRequestDraft(projectId!, number, draft))
+    await (session ? api.setPullRequestDraft(session.id, number, draft) : api.setProjectPullRequestDraft(projectId!, number, draft, prRepo))
     setReload(n => n + 1)
     setGithubReload(n => n + 1)
     if (target.kind === 'project') target.onChanged?.()

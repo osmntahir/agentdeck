@@ -83,7 +83,7 @@ try {
   // Kenar çubuğunda açık PR sayısı; tıklayınca liste açılır.
   const chip = page.locator('.project-prs')
   await chip.waitFor()
-  assert.equal((await chip.textContent()).trim(), '2')
+  assert.equal((await chip.textContent()).replace(/\s+/g, ''), '2PR')
   await chip.click()
   await page.waitForSelector('.pr-row')
   assert.equal(await page.locator('.pr-row').count(), 2)

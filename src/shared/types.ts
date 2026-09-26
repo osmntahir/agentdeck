@@ -332,6 +332,16 @@ export interface PullRequestSummary {
   updatedAt: string
   /** CI kontrollerinin özeti; kontrol yoksa null. */
   checks: 'success' | 'failure' | 'pending' | null
+  /** Klasör projesinde PR'ın alt deposu (proje köküne göre); git projesinde yoktur. */
+  repo?: string
+}
+
+/** Proje PR listesi; klasör projesinde depo başına durum da gelir (ADR 0025). */
+export interface ProjectPullRequestList {
+  pullRequests: PullRequestSummary[]
+  repos?: Array<{ path: string; count: number; error: { code: string; message: string } | null }>
+  /** Alt depo taraması sınırda kesildi; liste eksik olabilir. */
+  truncated?: boolean
 }
 
 /**
